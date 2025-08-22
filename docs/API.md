@@ -18,7 +18,7 @@ A collection of interconnected nodes that process data and state through a defin
 ## Installation
 
 ```bash
-go get github.com/eleven-am/graft/pkg/graft
+go get github.com/eleven-am/graft
 ```
 
 ## Quick Start
@@ -32,7 +32,7 @@ import (
     "log"
     "time"
     
-    "github.com/eleven-am/graft/pkg/graft"
+    "github.com/eleven-am/graft"
 )
 
 func main() {

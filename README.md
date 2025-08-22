@@ -38,7 +38,7 @@ import (
     "log"
     "time"
 
-    "github.com/eleven-am/graft/pkg/graft"
+    "github.com/eleven-am/graft"
 )
 
 // Define typed structures for type-safe workflow execution
