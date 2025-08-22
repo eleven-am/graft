@@ -224,3 +224,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [BadgerDB](https://github.com/dgraph-io/badger) for high-performance storage
 - [gRPC](https://grpc.io/) for efficient network communication
 - [Prometheus](https://prometheus.io/) for monitoring and metrics
+- With love from [Roy Ossai](https://github.com/eleven-am)
