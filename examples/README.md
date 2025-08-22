@@ -206,10 +206,9 @@ config.Resources.MaxConcurrentTotal = 1000
 
 ## Additional Resources
 
-- **[API Reference](../API.md)** - Complete API documentation
-- **[Architecture Guide](../ARCHITECTURE.md)** - System design and internals
-- **[Deployment Guide](../DEPLOYMENT.md)** - Production deployment patterns
-- **[Performance Guide](../PERFORMANCE.md)** - Tuning and optimization
+- **[API Reference](../docs/API.md)** - Complete API documentation
+- **[Architecture Guide](../docs/ARCHITECTURE.md)** - System design and internals
+- **[Deployment Guide](../docs/DEPLOYMENT.md)** - Production deployment patterns
 
 ## Troubleshooting
 

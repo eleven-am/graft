@@ -130,9 +130,9 @@ func main() {
 ## Documentation
 
 - **[Examples](./examples/README.md)** - Working examples for common use cases
-- **[API Reference](./API.md)** - Complete API documentation
-- **[Architecture](./ARCHITECTURE.md)** - System design and components
-- **[Deployment Guide](./DEPLOYMENT.md)** - Production deployment patterns
+- **[API Reference](./docs/API.md)** - Complete API documentation
+- **[Architecture](./docs/ARCHITECTURE.md)** - System design and components
+- **[Deployment Guide](./docs/DEPLOYMENT.md)** - Production deployment patterns
 
 ## How It Works
 
