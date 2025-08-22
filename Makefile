@@ -79,7 +79,8 @@ bump-patch:
 	fi; \
 	echo "Bumping version from $$current to $$new"; \
 	git tag $$new; \
-	echo "Tagged $$new"
+	git push origin $$new; \
+	echo "Tagged and pushed $$new"
 
 bump-minor:
 	@current=$$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"); \
@@ -90,7 +91,8 @@ bump-minor:
 	fi; \
 	echo "Bumping version from $$current to $$new"; \
 	git tag $$new; \
-	echo "Tagged $$new"
+	git push origin $$new; \
+	echo "Tagged and pushed $$new"
 
 bump-major:
 	@current=$$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"); \
@@ -101,4 +103,5 @@ bump-major:
 	fi; \
 	echo "Bumping version from $$current to $$new"; \
 	git tag $$new; \
-	echo "Tagged $$new"
+	git push origin $$new; \
+	echo "Tagged and pushed $$new"
