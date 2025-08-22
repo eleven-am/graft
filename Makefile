@@ -1,0 +1,67 @@
+.PHONY: proto proto-clean proto-gen test build clean mocks mock-clean
+
+PROTO_DIR := proto
+PROTO_GEN_DIR := $(PROTO_DIR)/gen
+PROTO_FILES := $(wildcard $(PROTO_DIR)/*.proto)
+
+proto: proto-clean proto-gen
+
+proto-clean:
+	@rm -rf $(PROTO_GEN_DIR)
+
+proto-gen:
+	@mkdir -p $(PROTO_GEN_DIR)
+	@protoc \
+		--proto_path=$(PROTO_DIR) \
+		--go_out=$(PROTO_GEN_DIR) \
+		--go_opt=paths=source_relative \
+		--go-grpc_out=$(PROTO_GEN_DIR) \
+		--go-grpc_opt=paths=source_relative \
+		$(PROTO_FILES)
+
+# Mock generation - managed by .mockery.yaml
+mocks: mock-clean
+	@echo "Generating mocks using .mockery.yaml configuration..."
+	@mockery
+	@echo "All mocks generated successfully"
+
+mock-clean:
+	@echo "Cleaning existing mocks..."
+	@find . -type d -name "mocks" -exec rm -rf {} + 2>/dev/null || true
+
+test:
+	@go test -v ./...
+
+test-coverage:
+	@go test -v -cover ./...
+
+test-team1:
+	@go test -v ./internal/adapters/transport/...
+
+test-team2:
+	@go test -v ./internal/adapters/discovery/...
+
+test-team3:
+	@go test -v ./internal/adapters/storage/...
+
+test-team4:
+	@go test -v ./internal/adapters/queue/...
+
+build:
+	@go build -v ./...
+
+clean:
+	@go clean -v ./...
+	@rm -rf $(PROTO_GEN_DIR)
+	@find . -type d -name "mocks" -exec rm -rf {} + 2>/dev/null || true
+
+deps:
+	@go mod download
+	@go mod tidy
+
+deps-install:
+	@which protoc > /dev/null || (echo "protoc is required but not installed. Please install Protocol Buffers compiler." && exit 1)
+	@protoc --version
+	@go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+	@go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
+	@go install github.com/vektra/mockery/v2@latest

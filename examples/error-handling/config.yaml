@@ -1,0 +1,32 @@
+node_id: "error-handling-node"
+service_name: "error-handling-cluster"
+service_port: 8080
+
+discovery:
+  strategy: "static"
+  
+transport:
+  listen_address: "127.0.0.1"
+  listen_port: 9090
+
+storage:
+  data_dir: "./data/error-handling"
+  
+queue:
+  data_dir: "./data/error-handling/queue"
+  
+resources:
+  max_concurrent_total: 15
+  default_per_type_limit: 5
+  max_concurrent_per_type:
+    unreliable-processor: 3
+    retry-processor: 3
+    timeout-processor: 2
+  
+engine:
+  max_concurrent_workflows: 8
+  node_execution_timeout: "10s"
+  retry_attempts: 3
+  retry_backoff: "1s"
+  
+log_level: "info"

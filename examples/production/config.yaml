@@ -1,0 +1,43 @@
+node_id: "production-node"
+service_name: "production-cluster"
+service_port: 8080
+
+discovery:
+  strategy: "static"
+  peers: []
+  
+transport:
+  listen_address: "0.0.0.0"
+  listen_port: 9090
+  enable_tls: false
+  tls_cert_file: "/certs/cert.pem"
+  tls_key_file: "/certs/key.pem"
+
+storage:
+  data_dir: "/data"
+  
+queue:
+  data_dir: "/data/queue"
+  
+resources:
+  max_concurrent_total: 100
+  default_per_type_limit: 20
+  max_concurrent_per_type:
+    critical-processor: 30
+    batch-processor: 10
+  
+engine:
+  max_concurrent_workflows: 50
+  node_execution_timeout: "60s"
+  
+log_level: "info"
+
+# Health and monitoring
+health:
+  check_interval: "10s"
+  timeout: "5s"
+  
+metrics:
+  enabled: true
+  port: 9091
+  path: "/metrics"

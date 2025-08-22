@@ -1,0 +1,98 @@
+package engine
+
+import (
+	"context"
+	"log/slog"
+	"time"
+
+	"github.com/eleven-am/graft/internal/domain"
+	"github.com/eleven-am/graft/internal/ports"
+)
+
+type RecoverableExecutor struct {
+	logger         *slog.Logger
+	metricsTracker *MetricsTracker
+}
+
+func NewRecoverableExecutor(logger *slog.Logger, metricsTracker *MetricsTracker) *RecoverableExecutor {
+	return &RecoverableExecutor{
+		logger:         logger.With("component", "recoverable-executor"),
+		metricsTracker: metricsTracker,
+	}
+}
+
+func (re *RecoverableExecutor) ExecuteWithRecovery(
+	ctx context.Context,
+	node ports.NodePort,
+	currentState interface{},
+	config interface{},
+	item *ports.QueueItem,
+) (result interface{}, nextNodes []ports.NextNode, err error) {
+	startTime := time.Now()
+	
+	defer func() {
+		if r := recover(); r != nil {
+			duration := time.Since(startTime)
+			panicErr := domain.NewPanicError(item.WorkflowID, item.NodeName, r)
+			
+			if re.metricsTracker != nil {
+				re.metricsTracker.RecordPanic(duration)
+			}
+			
+			re.logger.Error("node execution panicked",
+				"workflow_id", item.WorkflowID,
+				"node_name", item.NodeName,
+				"panic_value", r,
+				"duration", duration,
+				"stack_trace", panicErr.StackTrace,
+			)
+			
+			err = panicErr
+			result = nil
+			nextNodes = nil
+		}
+	}()
+	
+	re.logger.Debug("executing node with recovery protection",
+		"workflow_id", item.WorkflowID,
+		"node_name", item.NodeName,
+	)
+	
+	result, nextNodes, err = node.Execute(ctx, currentState, config)
+	
+	if err == nil {
+		duration := time.Since(startTime)
+		re.logger.Debug("node execution completed successfully",
+			"workflow_id", item.WorkflowID,
+			"node_name", item.NodeName,
+			"duration", duration,
+		)
+	}
+	
+	return result, nextNodes, err
+}
+
+func (re *RecoverableExecutor) HandlePanic(workflowID, nodeID string, panicValue interface{}) error {
+	panicErr := domain.NewPanicError(workflowID, nodeID, panicValue)
+	
+	re.logger.Error("handling panic for workflow node",
+		"workflow_id", workflowID,
+		"node_id", nodeID,
+		"panic_value", panicValue,
+		"recovered_at", panicErr.RecoveredAt,
+	)
+	
+	return panicErr
+}
+
+func (re *RecoverableExecutor) MarkNodeFailed(ctx context.Context, item *ports.QueueItem, reason string) *ports.ExecutedNode {
+	return &ports.ExecutedNode{
+		NodeName:   item.NodeName,
+		ExecutedAt: time.Now(),
+		Duration:   0,
+		Status:     ports.NodeExecutionStatusPanicFailed,
+		Config:     item.Config,
+		Results:    nil,
+		Error:      &reason,
+	}
+}
