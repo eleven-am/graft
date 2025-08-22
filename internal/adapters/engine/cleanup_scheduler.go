@@ -378,3 +378,7 @@ func powFloat(base, exp float64) float64 {
 	}
 	return result
 }
+
+func (cs *CleanupScheduler) GetOrchestrator() *CleanupOrchestrator {
+	return cs.orchestrator
+}

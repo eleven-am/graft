@@ -70,7 +70,7 @@ func TestQueue_DequeueReady_WithClaim(t *testing.T) {
 		NodeID:    "node-1",
 	}
 
-	queue, err := NewBadgerQueue(storage, config)
+	queue, err := NewBadgerQueue(storage, config, nil)
 	require.NoError(t, err)
 
 	item := ports.QueueItem{
@@ -103,7 +103,7 @@ func TestQueue_DequeueReady_WrongQueueType(t *testing.T) {
 		NodeID:    "node-1",
 	}
 
-	queue, err := NewBadgerQueue(storage, config)
+	queue, err := NewBadgerQueue(storage, config, nil)
 	require.NoError(t, err)
 
 	claimDuration := 5 * time.Minute
@@ -121,7 +121,7 @@ func TestQueue_DequeueReady_EmptyQueue(t *testing.T) {
 		NodeID:    "node-1",
 	}
 
-	queue, err := NewBadgerQueue(storage, config)
+	queue, err := NewBadgerQueue(storage, config, nil)
 	require.NoError(t, err)
 
 	claimDuration := 5 * time.Minute
@@ -139,7 +139,7 @@ func TestQueue_VerifyWorkClaim(t *testing.T) {
 		NodeID:    "node-1",
 	}
 
-	queue, err := NewBadgerQueue(storage, config)
+	queue, err := NewBadgerQueue(storage, config, nil)
 	require.NoError(t, err)
 
 	item := ports.QueueItem{
@@ -174,7 +174,7 @@ func TestQueue_ReleaseWorkClaim(t *testing.T) {
 		NodeID:    "node-1",
 	}
 
-	queue, err := NewBadgerQueue(storage, config)
+	queue, err := NewBadgerQueue(storage, config, nil)
 	require.NoError(t, err)
 
 	item := ports.QueueItem{
@@ -211,14 +211,14 @@ func TestQueue_MultiNodeClaimConflict(t *testing.T) {
 		QueueType: QueueTypeReady,
 		NodeID:    "node-1",
 	}
-	queue1, err := NewBadgerQueue(storage, config1)
+	queue1, err := NewBadgerQueue(storage, config1, nil)
 	require.NoError(t, err)
 
 	config2 := Config{
 		QueueType: QueueTypeReady,
 		NodeID:    "node-2",
 	}
-	queue2, err := NewBadgerQueue(storage, config2)
+	queue2, err := NewBadgerQueue(storage, config2, nil)
 	require.NoError(t, err)
 
 	item1 := ports.QueueItem{
@@ -276,7 +276,7 @@ func TestQueue_ClaimExpiration(t *testing.T) {
 		NodeID:    "node-1",
 	}
 
-	queue, err := NewBadgerQueue(storage, config)
+	queue, err := NewBadgerQueue(storage, config, nil)
 	require.NoError(t, err)
 
 	item := ports.QueueItem{
@@ -310,7 +310,7 @@ func TestQueue_InvalidNodeIDConfig(t *testing.T) {
 		NodeID:    "",
 	}
 
-	queue, err := NewBadgerQueue(storage, config)
+	queue, err := NewBadgerQueue(storage, config, nil)
 	require.NoError(t, err)
 	item := ports.QueueItem{
 		ID:         "test-item",

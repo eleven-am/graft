@@ -67,7 +67,7 @@ func (n *UnreliableProcessor) Execute(ctx context.Context, state ProcessorState,
 	}
 
 	return graft.NodeResult{
-		Data: result,
+		GlobalState: result,
 	}, nil
 }
 
@@ -118,7 +118,7 @@ func (n *RetryProcessor) Execute(ctx context.Context, state ProcessorState, conf
 	}
 
 	return graft.NodeResult{
-		Data: result,
+		GlobalState: result,
 	}, nil
 }
 
@@ -247,9 +247,12 @@ func main() {
 		fmt.Printf("[ERROR] Workflow %s failed: %v\n", workflowID, err)
 	})
 
-	cluster.OnComplete(func(workflowID string, finalState interface{}) {
+	cluster.OnComplete(func(ctx context.Context, data graft.WorkflowCompletionData) error {
 		fmt.Printf("[SUCCESS] Workflow %s completed with state: %+v\n",
-			workflowID, finalState)
+			data.WorkflowID, data.FinalState)
+		fmt.Printf("  Duration: %v\n", data.Duration)
+		fmt.Printf("  Executed nodes: %d\n", len(data.ExecutedNodes))
+		return nil
 	})
 
 	workflows := []struct {

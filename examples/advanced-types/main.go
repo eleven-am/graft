@@ -26,7 +26,7 @@ func (n *ArrayConfigProcessor) GetName() string {
 	return "array-config-processor"
 }
 
-func (n *ArrayConfigProcessor) Execute(ctx context.Context, state ListProcessorState, config ArrayConfig) (graft.NodeResult, error) {
+func (n *ArrayConfigProcessor) Execute(ctx context.Context, state ListProcessorState, config ArrayConfig) (*graft.NodeResult, error) {
 	var processedItems []string
 
 	for _, item := range state.Items {
@@ -44,8 +44,8 @@ func (n *ArrayConfigProcessor) Execute(ctx context.Context, state ListProcessorS
 		processedItems = append(processedItems, processed)
 	}
 
-	return graft.NodeResult{
-		Data: ListResult{
+	return &graft.NodeResult{
+		GlobalState: ListResult{
 			ProcessedItems: processedItems,
 			Count:          len(processedItems),
 		},
@@ -69,12 +69,12 @@ func (n *StringConfigProcessor) GetName() string {
 	return "string-config-processor"
 }
 
-func (n *StringConfigProcessor) Execute(ctx context.Context, state MessageState, config StringConfig) (graft.NodeResult, error) {
+func (n *StringConfigProcessor) Execute(ctx context.Context, state MessageState, config StringConfig) (*graft.NodeResult, error) {
 	template := string(config)
 	formatted := strings.ReplaceAll(template, "{text}", state.Text)
 
-	return graft.NodeResult{
-		Data: MessageResult{
+	return &graft.NodeResult{
+		GlobalState: MessageResult{
 			FormattedMessage: formatted,
 			Template:         template,
 		},
@@ -112,14 +112,14 @@ func (n *NestedConfigProcessor) GetName() string {
 	return "nested-config-processor"
 }
 
-func (n *NestedConfigProcessor) Execute(ctx context.Context, state WorkloadState, config NestedConfig) (graft.NodeResult, error) {
+func (n *NestedConfigProcessor) Execute(ctx context.Context, state WorkloadState, config NestedConfig) (*graft.NodeResult, error) {
 	start := time.Now()
 
 	timeout, _ := time.ParseDuration(config.Processing.Timeout)
 	select {
 	case <-time.After(timeout):
 	case <-ctx.Done():
-		return graft.NodeResult{}, fmt.Errorf("processing cancelled")
+		return &graft.NodeResult{}, fmt.Errorf("processing cancelled")
 	}
 
 	processingInfo := fmt.Sprintf("%s:%d/%d_workers",
@@ -127,8 +127,8 @@ func (n *NestedConfigProcessor) Execute(ctx context.Context, state WorkloadState
 		config.Database.Port,
 		config.Processing.Workers)
 
-	return graft.NodeResult{
-		Data: ProcessingResult{
+	return &graft.NodeResult{
+		GlobalState: ProcessingResult{
 			JobID:       state.JobID,
 			ProcessedBy: processingInfo,
 			DataSize:    len(state.Data),
@@ -143,9 +143,9 @@ func (n *MinimalProcessor) GetName() string {
 	return "minimal-processor"
 }
 
-func (n *MinimalProcessor) Execute(ctx context.Context) (graft.NodeResult, error) {
-	return graft.NodeResult{
-		Data: map[string]interface{}{
+func (n *MinimalProcessor) Execute(ctx context.Context) (*graft.NodeResult, error) {
+	return &graft.NodeResult{
+		GlobalState: map[string]interface{}{
 			"message":   "Minimal processing completed",
 			"timestamp": time.Now().Format(time.RFC3339),
 		},
@@ -179,7 +179,7 @@ func main() {
 
 	fmt.Println("Cluster started successfully")
 
-	nodes := []graft.NodeInterface{
+	nodes := []interface{}{
 		&ArrayConfigProcessor{},
 		&StringConfigProcessor{},
 		&NestedConfigProcessor{},
@@ -190,11 +190,14 @@ func main() {
 		if err := cluster.RegisterNode(node); err != nil {
 			log.Fatalf("Failed to register node %T: %v", node, err)
 		}
-		fmt.Printf("Registered node: %s\n", node.GetName())
+		fmt.Printf("Registered node: %T\n", node)
 	}
 
-	cluster.OnComplete(func(workflowID string, finalState interface{}) {
-		fmt.Printf("[SUCCESS] Workflow %s completed with state: %+v\n", workflowID, finalState)
+	cluster.OnComplete(func(ctx context.Context, data graft.WorkflowCompletionData) error {
+		fmt.Printf("[SUCCESS] Workflow %s completed with state: %+v\n", data.WorkflowID, data.FinalState)
+		fmt.Printf("  Duration: %v\n", data.Duration)
+		fmt.Printf("  Executed nodes: %d\n", len(data.ExecutedNodes))
+		return nil
 	})
 
 	cluster.OnError(func(workflowID string, finalState interface{}, err error) {

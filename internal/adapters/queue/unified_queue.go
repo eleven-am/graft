@@ -15,9 +15,13 @@ type UnifiedQueue struct {
 	logger       *slog.Logger
 }
 
-func NewUnifiedBadgerQueue(storage ports.StoragePort, config Config) (*UnifiedQueue, error) {
+func NewUnifiedBadgerQueue(storage ports.StoragePort, config Config, logger *slog.Logger) (*UnifiedQueue, error) {
 	if storage == nil {
 		return nil, domain.NewValidationError("storage", "storage port is required")
+	}
+
+	if logger == nil {
+		logger = slog.Default()
 	}
 
 	nodeID := config.NodeID
@@ -26,7 +30,7 @@ func NewUnifiedBadgerQueue(storage ports.StoragePort, config Config) (*UnifiedQu
 	}
 
 	instanceID := fmt.Sprintf("%p", storage)[:8]
-	logger := slog.Default().With(
+	logger = logger.With(
 		"component", "unified-queue",
 		"node_id", nodeID,
 		"instance_id", instanceID,
@@ -50,7 +54,7 @@ func NewUnifiedBadgerQueue(storage ports.StoragePort, config Config) (*UnifiedQu
 		NodeID:         config.NodeID,
 	}
 
-	readyQueue, err := NewBadgerQueue(storage, readyConfig)
+	readyQueue, err := NewBadgerQueue(storage, readyConfig, logger)
 	if err != nil {
 		return nil, domain.Error{
 			Type:    domain.ErrorTypeInternal,
@@ -61,7 +65,7 @@ func NewUnifiedBadgerQueue(storage ports.StoragePort, config Config) (*UnifiedQu
 		}
 	}
 
-	pendingQueue, err := NewBadgerQueue(storage, pendingConfig)
+	pendingQueue, err := NewBadgerQueue(storage, pendingConfig, logger)
 	if err != nil {
 		return nil, domain.Error{
 			Type:    domain.ErrorTypeInternal,

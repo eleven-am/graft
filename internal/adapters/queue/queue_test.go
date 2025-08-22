@@ -70,7 +70,7 @@ func TestNewBadgerQueue(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			storage := tt.setupMock()
-			queue, err := NewBadgerQueue(storage, tt.config)
+			queue, err := NewBadgerQueue(storage, tt.config, nil)
 
 			if tt.wantError {
 				assert.Error(t, err)
@@ -93,7 +93,7 @@ func TestIsEmpty(t *testing.T) {
 
 		queue, err := NewBadgerQueue(mockStorage, Config{
 			QueueType: QueueTypeReady,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		mockStorage.EXPECT().List(ctx, "queue:ready:").Return([]ports.KeyValue{}, nil)
@@ -108,7 +108,7 @@ func TestIsEmpty(t *testing.T) {
 
 		queue, err := NewBadgerQueue(mockStorage, Config{
 			QueueType: QueueTypeReady,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		mockStorage.EXPECT().List(ctx, "queue:ready:").Return([]ports.KeyValue{
@@ -127,7 +127,7 @@ func TestGetSize(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	metaData := []byte(`{"v":1,"size":3,"updated":1755776269766210000}`)
@@ -144,7 +144,7 @@ func TestClearReady(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	keys := []ports.KeyValue{
@@ -168,7 +168,7 @@ func TestClearPending(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypePending,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	keys := []ports.KeyValue{
@@ -192,7 +192,7 @@ func TestStorageErrors(t *testing.T) {
 		mockStorage := mocks.NewMockStoragePort(t)
 		queue, err := NewBadgerQueue(mockStorage, Config{
 			QueueType: QueueTypeReady,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		internalErr := domain.Error{Type: domain.ErrorTypeInternal, Message: "storage error"}
@@ -209,7 +209,7 @@ func TestStorageErrors(t *testing.T) {
 		mockStorage := mocks.NewMockStoragePort(t)
 		queue, err := NewBadgerQueue(mockStorage, Config{
 			QueueType: QueueTypeReady,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		keys := []ports.KeyValue{
@@ -235,7 +235,7 @@ func TestEnqueueReady(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	item := ports.QueueItem{
@@ -262,7 +262,7 @@ func TestEnqueuePending(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypePending,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	item := ports.QueueItem{
@@ -290,7 +290,7 @@ func TestDequeueReady(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	item := ports.QueueItem{
@@ -329,7 +329,7 @@ func TestDequeueReadyEmpty(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	mockStorage.EXPECT().List(ctx, "queue:ready:").Return([]ports.KeyValue{}, nil)
@@ -345,7 +345,7 @@ func TestGetPendingItems(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypePending,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	item1 := ports.QueueItem{
@@ -379,7 +379,7 @@ func TestMovePendingToReady(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypePending,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	item := ports.QueueItem{
@@ -415,7 +415,7 @@ func TestRemoveFromPending(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypePending,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	itemID := "test-id"
@@ -439,7 +439,7 @@ func TestGetSizeWithMissingMetadata(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	keyNotFoundErr := fmt.Errorf("key not found")
@@ -486,7 +486,7 @@ func TestQueueTypeValidationErrors(t *testing.T) {
 		mockStorage := mocks.NewMockStoragePort(t)
 		queue, err := NewBadgerQueue(mockStorage, Config{
 			QueueType: QueueTypePending,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		item := ports.QueueItem{
@@ -507,7 +507,7 @@ func TestQueueTypeValidationErrors(t *testing.T) {
 		mockStorage := mocks.NewMockStoragePort(t)
 		queue, err := NewBadgerQueue(mockStorage, Config{
 			QueueType: QueueTypeReady,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		item := ports.QueueItem{
@@ -528,7 +528,7 @@ func TestQueueTypeValidationErrors(t *testing.T) {
 		mockStorage := mocks.NewMockStoragePort(t)
 		queue, err := NewBadgerQueue(mockStorage, Config{
 			QueueType: QueueTypePending,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		_, err = queue.DequeueReady(ctx)
@@ -542,7 +542,7 @@ func TestQueueTypeValidationErrors(t *testing.T) {
 		mockStorage := mocks.NewMockStoragePort(t)
 		queue, err := NewBadgerQueue(mockStorage, Config{
 			QueueType: QueueTypeReady,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		_, err = queue.GetPendingItems(ctx)
@@ -556,7 +556,7 @@ func TestQueueTypeValidationErrors(t *testing.T) {
 		mockStorage := mocks.NewMockStoragePort(t)
 		queue, err := NewBadgerQueue(mockStorage, Config{
 			QueueType: QueueTypeReady,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		err = queue.RemoveFromPending(ctx, "test-id")
@@ -573,7 +573,7 @@ func TestDequeueWithVisibility(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	item := ports.QueueItem{
@@ -613,7 +613,7 @@ func TestDequeueWithVisibilityPutError(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
-	})
+	}, nil)
 	require.NoError(t, err)
 
 	item := ports.QueueItem{
@@ -661,7 +661,7 @@ func TestGetPendingItemsWithLimitEdgeCases(t *testing.T) {
 		mockStorage := mocks.NewMockStoragePort(t)
 		queue, err := NewBadgerQueue(mockStorage, Config{
 			QueueType: QueueTypePending,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		mockStorage.EXPECT().List(ctx, "queue:pending:").Return([]ports.KeyValue{}, nil)
@@ -675,7 +675,7 @@ func TestGetPendingItemsWithLimitEdgeCases(t *testing.T) {
 		mockStorage := mocks.NewMockStoragePort(t)
 		queue, err := NewBadgerQueue(mockStorage, Config{
 			QueueType: QueueTypePending,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		mockStorage.EXPECT().List(ctx, "queue:pending:").Return([]ports.KeyValue{}, nil)
@@ -689,7 +689,7 @@ func TestGetPendingItemsWithLimitEdgeCases(t *testing.T) {
 		mockStorage := mocks.NewMockStoragePort(t)
 		queue, err := NewBadgerQueue(mockStorage, Config{
 			QueueType: QueueTypePending,
-		})
+		}, nil)
 		require.NoError(t, err)
 
 		mockStorage.EXPECT().List(ctx, "queue:pending:").Return(nil, fmt.Errorf("storage error"))

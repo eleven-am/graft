@@ -155,7 +155,7 @@ func (f *ComponentFactory) CreateQueueWithStorage(storage ports.StoragePort) (po
 		NodeID:         f.config.NodeID,
 	}
 
-	queue, err := queue2.NewUnifiedBadgerQueue(storage, config)
+	queue, err := queue2.NewUnifiedBadgerQueue(storage, config, f.logger)
 	if err != nil {
 		return nil, domain.Error{
 			Type:    domain.ErrorTypeInternal,

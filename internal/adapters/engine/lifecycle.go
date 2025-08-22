@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -50,10 +51,10 @@ func NewLifecycleManager(logger *slog.Logger, config HandlerConfig, metricsTrack
 func (lm *LifecycleManager) RegisterHandlers(completion []ports.CompletionHandler, error []ports.ErrorHandler) {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
-	
+
 	lm.completionHandlers = append(lm.completionHandlers, completion...)
 	lm.errorHandlers = append(lm.errorHandlers, error...)
-	
+
 	lm.logger.Info("lifecycle handlers registered",
 		"completion_handlers", len(completion),
 		"error_handlers", len(error),
@@ -62,28 +63,34 @@ func (lm *LifecycleManager) RegisterHandlers(completion []ports.CompletionHandle
 	)
 }
 
-func (lm *LifecycleManager) TriggerCompletion(workflowID string, finalState interface{}) error {
+func (lm *LifecycleManager) TriggerCompletion(ctx context.Context, data domain.WorkflowCompletionData) error {
 	lm.mu.RLock()
 	handlers := make([]ports.CompletionHandler, len(lm.completionHandlers))
 	copy(handlers, lm.completionHandlers)
 	lm.mu.RUnlock()
 
-	event := domain.WorkflowCompletedEvent{
-		WorkflowID:  workflowID,
-		FinalState:  finalState,
-		CompletedAt: time.Now(),
-	}
-
 	lm.logger.Info("triggering workflow completion handlers",
-		"workflow_id", workflowID,
+		"workflow_id", data.WorkflowID,
 		"handler_count", len(handlers),
 	)
 
+	handlerErrors := make(chan error, len(handlers))
+
 	for i, handler := range handlers {
-		go lm.executeCompletionHandler(i, handler, event)
+		go func(i int, h ports.CompletionHandler) {
+			err := lm.executeCompletionHandler(ctx, i, h, data)
+			handlerErrors <- err
+		}(i, handler)
 	}
 
-	return nil
+	var firstError error
+	for i := 0; i < len(handlers); i++ {
+		if err := <-handlerErrors; err != nil && firstError == nil {
+			firstError = err
+		}
+	}
+
+	return firstError
 }
 
 func (lm *LifecycleManager) TriggerError(workflowID string, currentState interface{}, err error) error {
@@ -137,14 +144,13 @@ func (lm *LifecycleManager) TriggerProgress(workflowID, nodeCompleted string, cu
 	return nil
 }
 
-func (lm *LifecycleManager) executeCompletionHandler(handlerIndex int, handler ports.CompletionHandler, event domain.WorkflowCompletedEvent) {
+func (lm *LifecycleManager) executeCompletionHandler(ctx context.Context, handlerIndex int, handler ports.CompletionHandler, data domain.WorkflowCompletionData) error {
 	result := lm.executeWithRecovery(
 		"completion",
 		handlerIndex,
-		event.WorkflowID,
+		data.WorkflowID,
 		func() error {
-			handler(event.WorkflowID, event.FinalState)
-			return nil
+			return handler(ctx, data)
 		},
 	)
 
@@ -154,17 +160,19 @@ func (lm *LifecycleManager) executeCompletionHandler(handlerIndex int, handler p
 
 	if result.Success {
 		lm.logger.Debug("completion handler executed successfully",
-			"workflow_id", event.WorkflowID,
+			"workflow_id", data.WorkflowID,
 			"handler_index", handlerIndex,
 			"duration", result.Duration,
 		)
+		return nil
 	} else {
 		lm.logger.Error("completion handler failed",
-			"workflow_id", event.WorkflowID,
+			"workflow_id", data.WorkflowID,
 			"handler_index", handlerIndex,
 			"error", result.Error,
 			"retries", result.Retries,
 		)
+		return fmt.Errorf("completion handler %d failed: %s", handlerIndex, result.Error)
 	}
 }
 
@@ -243,7 +251,7 @@ func (lm *LifecycleManager) executeWithRecovery(handlerType string, handlerIndex
 		}
 
 		startTime := time.Now()
-		
+
 		func() {
 			defer func() {
 				result.Duration = time.Since(startTime)
@@ -265,13 +273,13 @@ func (lm *LifecycleManager) executeWithRecovery(handlerType string, handlerIndex
 							"attempt", attempt+1,
 						)
 						done <- domain.Error{
-						Type:    domain.ErrorTypeInternal,
-						Message: "handler panicked during execution",
-						Details: map[string]interface{}{
-							"panic_value": r,
-							"handler_type": "lifecycle",
-						},
-					}
+							Type:    domain.ErrorTypeInternal,
+							Message: "handler panicked during execution",
+							Details: map[string]interface{}{
+								"panic_value":  r,
+								"handler_type": "lifecycle",
+							},
+						}
 						return
 					}
 				}()

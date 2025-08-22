@@ -6,135 +6,20 @@ import (
 	"testing"
 	"time"
 
+	enginemocks "github.com/eleven-am/graft/internal/adapters/engine/mocks"
 	"github.com/eleven-am/graft/internal/ports"
+	"github.com/eleven-am/graft/internal/ports/mocks"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"log/slog"
 	"os"
 )
 
-type MockStoragePort struct {
-	mock.Mock
-}
-
-func (m *MockStoragePort) Get(ctx context.Context, key string) ([]byte, error) {
-	args := m.Called(ctx, key)
-	return args.Get(0).([]byte), args.Error(1)
-}
-
-func (m *MockStoragePort) Put(ctx context.Context, key string, value []byte) error {
-	args := m.Called(ctx, key, value)
-	return args.Error(0)
-}
-
-func (m *MockStoragePort) Delete(ctx context.Context, key string) error {
-	args := m.Called(ctx, key)
-	return args.Error(0)
-}
-
-func (m *MockStoragePort) List(ctx context.Context, prefix string) ([]ports.KeyValue, error) {
-	args := m.Called(ctx, prefix)
-	return args.Get(0).([]ports.KeyValue), args.Error(1)
-}
-
-func (m *MockStoragePort) Batch(ctx context.Context, ops []ports.Operation) error {
-	args := m.Called(ctx, ops)
-	return args.Error(0)
-}
-
-type MockQueuePort struct {
-	mock.Mock
-}
-
-func (m *MockQueuePort) EnqueueReady(ctx context.Context, item ports.QueueItem) error {
-	args := m.Called(ctx, item)
-	return args.Error(0)
-}
-
-func (m *MockQueuePort) DequeueReady(ctx context.Context, opts ...ports.DequeueOption) (*ports.QueueItem, error) {
-	args := m.Called(ctx, opts)
-	return args.Get(0).(*ports.QueueItem), args.Error(1)
-}
-
-func (m *MockQueuePort) EnqueuePending(ctx context.Context, item ports.QueueItem) error {
-	args := m.Called(ctx, item)
-	return args.Error(0)
-}
-
-func (m *MockQueuePort) GetPendingItems(ctx context.Context) ([]ports.QueueItem, error) {
-	args := m.Called(ctx)
-	return args.Get(0).([]ports.QueueItem), args.Error(1)
-}
-
-func (m *MockQueuePort) IsEmpty(ctx context.Context) (bool, error) {
-	args := m.Called(ctx)
-	return args.Bool(0), args.Error(1)
-}
-
-func (m *MockQueuePort) MovePendingToReady(ctx context.Context, itemID string) error {
-	args := m.Called(ctx, itemID)
-	return args.Error(0)
-}
-
-func (m *MockQueuePort) RemoveFromPending(ctx context.Context, itemID string) error {
-	args := m.Called(ctx, itemID)
-	return args.Error(0)
-}
-
-func (m *MockQueuePort) VerifyWorkClaim(ctx context.Context, workItemID string, nodeID string) error {
-	args := m.Called(ctx, workItemID, nodeID)
-	return args.Error(0)
-}
-
-func (m *MockQueuePort) ReleaseWorkClaim(ctx context.Context, workItemID string, nodeID string) error {
-	args := m.Called(ctx, workItemID, nodeID)
-	return args.Error(0)
-}
-
-type MockQueueCleaner struct {
-	mock.Mock
-}
-
-func (m *MockQueueCleaner) RemoveWorkflowItems(ctx context.Context, workflowID string) error {
-	args := m.Called(ctx, workflowID)
-	return args.Error(0)
-}
-
-func (m *MockQueueCleaner) RemovePendingItems(ctx context.Context, workflowID string) error {
-	args := m.Called(ctx, workflowID)
-	return args.Error(0)
-}
-
-func (m *MockQueueCleaner) ReleaseWorkflowClaims(ctx context.Context, workflowID string) error {
-	args := m.Called(ctx, workflowID)
-	return args.Error(0)
-}
-
-func (m *MockQueueCleaner) GetWorkflowItemCount(ctx context.Context, workflowID string) int {
-	args := m.Called(ctx, workflowID)
-	return args.Int(0)
-}
-
-func (m *MockQueueCleaner) RemoveAllWorkflowData(ctx context.Context, workflowID string) error {
-	args := m.Called(ctx, workflowID)
-	return args.Error(0)
-}
-
-func (m *MockQueueCleaner) BatchRemoveWorkflows(ctx context.Context, workflowIDs []string) error {
-	args := m.Called(ctx, workflowIDs)
-	return args.Error(0)
-}
-
-func (m *MockQueueCleaner) GetOrphanedItems(ctx context.Context) ([]ports.QueueItem, error) {
-	args := m.Called(ctx)
-	return args.Get(0).([]ports.QueueItem), args.Error(1)
-}
-
 func TestCleanupOrchestrator_CleanupWorkflow(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	mockStorage := new(MockStoragePort)
-	mockQueue := new(MockQueuePort)
-	mockCleaner := new(MockQueueCleaner)
+	mockStorage := mocks.NewMockStoragePort(t)
+	mockQueue := mocks.NewMockQueuePort(t)
+	mockCleaner := enginemocks.NewMockQueueCleaner(t)
 
 	orchestrator := NewCleanupOrchestrator(mockStorage, mockQueue, mockCleaner, nil, logger)
 
@@ -147,6 +32,7 @@ func TestCleanupOrchestrator_CleanupWorkflow(t *testing.T) {
 	}
 
 	mockCleaner.On("RemoveAllWorkflowData", mock.Anything, workflowID).Return(nil)
+	mockStorage.On("List", mock.Anything, mock.AnythingOfType("string")).Return([]ports.KeyValue{}, nil)
 	mockStorage.On("Batch", mock.Anything, mock.Anything).Return(nil)
 
 	err := orchestrator.CleanupWorkflow(context.Background(), workflowID, options)
@@ -158,9 +44,9 @@ func TestCleanupOrchestrator_CleanupWorkflow(t *testing.T) {
 
 func TestCleanupOrchestrator_CleanupBatch(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	mockStorage := new(MockStoragePort)
-	mockQueue := new(MockQueuePort)
-	mockCleaner := new(MockQueueCleaner)
+	mockStorage := mocks.NewMockStoragePort(t)
+	mockQueue := mocks.NewMockQueuePort(t)
+	mockCleaner := enginemocks.NewMockQueueCleaner(t)
 
 	orchestrator := NewCleanupOrchestrator(mockStorage, mockQueue, mockCleaner, nil, logger)
 
@@ -175,7 +61,8 @@ func TestCleanupOrchestrator_CleanupBatch(t *testing.T) {
 	for _, workflowID := range workflowIDs {
 		mockCleaner.On("RemoveAllWorkflowData", mock.Anything, workflowID).Return(nil)
 	}
-	mockStorage.On("Batch", mock.Anything, mock.Anything).Return(nil).Times(len(workflowIDs) * 2)
+	mockStorage.On("List", mock.Anything, mock.AnythingOfType("string")).Return([]ports.KeyValue{}, nil)
+	mockStorage.On("Batch", mock.Anything, mock.Anything).Return(nil)
 
 	err := orchestrator.CleanupBatch(context.Background(), workflowIDs, options)
 	assert.NoError(t, err)
@@ -186,9 +73,9 @@ func TestCleanupOrchestrator_CleanupBatch(t *testing.T) {
 
 func TestCleanupOrchestrator_ScheduleCleanup(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	mockStorage := new(MockStoragePort)
-	mockQueue := new(MockQueuePort)
-	mockCleaner := new(MockQueueCleaner)
+	mockStorage := mocks.NewMockStoragePort(t)
+	mockQueue := mocks.NewMockQueuePort(t)
+	mockCleaner := enginemocks.NewMockQueueCleaner(t)
 
 	orchestrator := NewCleanupOrchestrator(mockStorage, mockQueue, mockCleaner, nil, logger)
 
@@ -204,6 +91,7 @@ func TestCleanupOrchestrator_ScheduleCleanup(t *testing.T) {
 	assert.NoError(t, err)
 
 	mockCleaner.On("RemoveAllWorkflowData", mock.Anything, workflowID).Return(nil)
+	mockStorage.On("List", mock.Anything, mock.AnythingOfType("string")).Return([]ports.KeyValue{}, nil)
 	mockStorage.On("Batch", mock.Anything, mock.Anything).Return(nil)
 
 	time.Sleep(time.Millisecond * 200)
@@ -214,9 +102,9 @@ func TestCleanupOrchestrator_ScheduleCleanup(t *testing.T) {
 
 func TestCleanupOrchestrator_ValidateCleanupSafety(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	mockStorage := new(MockStoragePort)
-	mockQueue := new(MockQueuePort)
-	mockCleaner := new(MockQueueCleaner)
+	mockStorage := mocks.NewMockStoragePort(t)
+	mockQueue := mocks.NewMockQueuePort(t)
+	mockCleaner := enginemocks.NewMockQueueCleaner(t)
 
 	orchestrator := NewCleanupOrchestrator(mockStorage, mockQueue, mockCleaner, nil, logger)
 
@@ -251,9 +139,9 @@ func TestCleanupOrchestrator_ValidateCleanupSafety(t *testing.T) {
 
 func TestCleanupOrchestrator_BuildOperations(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	mockStorage := new(MockStoragePort)
-	mockQueue := new(MockQueuePort)
-	mockCleaner := new(MockQueueCleaner)
+	mockStorage := mocks.NewMockStoragePort(t)
+	mockQueue := mocks.NewMockQueuePort(t)
+	mockCleaner := enginemocks.NewMockQueueCleaner(t)
 
 	orchestrator := NewCleanupOrchestrator(mockStorage, mockQueue, mockCleaner, nil, logger)
 

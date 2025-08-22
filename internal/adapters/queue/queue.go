@@ -38,7 +38,7 @@ type Config struct {
 	NodeID         string
 }
 
-func NewBadgerQueue(storage ports.StoragePort, config Config) (*Queue, error) {
+func NewBadgerQueue(storage ports.StoragePort, config Config, logger *slog.Logger) (*Queue, error) {
 	if storage == nil {
 		return nil, domain.NewValidationError("storage", "storage port is required")
 	}
@@ -47,21 +47,25 @@ func NewBadgerQueue(storage ports.StoragePort, config Config) (*Queue, error) {
 		return nil, domain.NewValidationError("queueType", "must be 'ready' or 'pending'")
 	}
 
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	nodeID := config.NodeID
 	claimingEnabled := nodeID != ""
 	if nodeID == "" {
 		nodeID = "default"
 	}
 
-	instanceID := fmt.Sprintf("%p", storage)[:8] // Use storage pointer as instance ID for debugging
-	logger := slog.Default().With(
+	instanceID := fmt.Sprintf("%p", storage)[:8]
+	logger = logger.With(
 		"component", "queue",
 		"queue_type", string(config.QueueType),
 		"node_id", nodeID,
 		"instance_id", instanceID,
 	)
 
-	claimManager := NewClaimManager(storage, nodeID)
+	claimManager := NewClaimManager(storage, nodeID, logger)
 
 	maxSize := config.MaxSize
 	if maxSize <= 0 {
@@ -110,11 +114,15 @@ func (q *Queue) DequeueReady(ctx context.Context, opts ...ports.DequeueOption) (
 		opt(options)
 	}
 
-	if options.NodeID == "" && options.ClaimDuration > 0 {
-		return nil, domain.NewValidationError("nodeID", "node ID is required when claiming")
+	// Set defaults to make claiming mandatory
+	if options.NodeID == "" {
+		options.NodeID = q.claimManager.nodeID
+	}
+	if options.ClaimDuration <= 0 {
+		options.ClaimDuration = 5 * time.Minute // Default claim duration
 	}
 
-	if !q.claimingEnabled && options.ClaimDuration > 0 {
+	if !q.claimingEnabled {
 		return nil, domain.NewValidationError("nodeID", "queue was created without a valid node ID, claiming not supported")
 	}
 
@@ -132,24 +140,20 @@ func (q *Queue) DequeueReady(ctx context.Context, opts ...ports.DequeueOption) (
 		return nil, nil
 	}
 
-	if options.NodeID != "" && options.ClaimDuration > 0 {
-		if err := q.claimManager.ClaimWork(ctx, item.ID, options.ClaimDuration); err != nil {
-			if putBackErr := q.enqueue(ctx, *item, QueueTypeReady); putBackErr != nil {
-				q.logger.Error("failed to put item back after claim failure",
-					"item_id", item.ID,
-					"error", putBackErr)
-			}
-			return nil, err
+	// Always claim work items
+	if err := q.claimManager.ClaimWork(ctx, item.ID, options.ClaimDuration); err != nil {
+		if putBackErr := q.enqueue(ctx, *item, QueueTypeReady); putBackErr != nil {
+			q.logger.Error("failed to put item back after claim failure",
+				"item_id", item.ID,
+				"error", putBackErr)
 		}
-
-		q.logger.Info("work item dequeued with claim",
-			"item_id", item.ID,
-			"node_id", options.NodeID,
-			"claim_duration", options.ClaimDuration)
-	} else {
-		q.logger.Info("work item dequeued without claim",
-			"item_id", item.ID)
+		return nil, err
 	}
+
+	q.logger.Info("work item dequeued with claim",
+		"item_id", item.ID,
+		"node_id", options.NodeID,
+		"claim_duration", options.ClaimDuration)
 
 	return item, nil
 }

@@ -16,11 +16,15 @@ type ClaimManager struct {
 	logger  *slog.Logger
 }
 
-func NewClaimManager(storage ports.StoragePort, nodeID string) *ClaimManager {
+func NewClaimManager(storage ports.StoragePort, nodeID string, logger *slog.Logger) *ClaimManager {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	return &ClaimManager{
 		storage: storage,
 		nodeID:  nodeID,
-		logger:  slog.Default().With("component", "claim_manager", "node_id", nodeID),
+		logger:  logger.With("component", "claim_manager", "node_id", nodeID),
 	}
 }
 

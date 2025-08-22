@@ -283,12 +283,24 @@ func (c *Cluster) OnComplete(handler ports.CompletionHandler) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.completionHandlers = append(c.completionHandlers, handler)
+	c.updateLifecycleHandlers()
 }
 
 func (c *Cluster) OnError(handler ports.ErrorHandler) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.errorHandlers = append(c.errorHandlers, handler)
+	c.updateLifecycleHandlers()
+}
+
+func (c *Cluster) updateLifecycleHandlers() {
+	if engine, ok := c.workflowEngine.(*workflowEngine.Engine); ok {
+		engine.RegisterLifecycleHandlers(c.completionHandlers, c.errorHandlers)
+		c.logger.Debug("updated lifecycle handlers",
+			"completion_handlers", len(c.completionHandlers),
+			"error_handlers", len(c.errorHandlers),
+		)
+	}
 }
 
 func (c *Cluster) GetClusterInfo() ports.ClusterInfo {

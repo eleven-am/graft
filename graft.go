@@ -18,20 +18,8 @@ const (
 	StrategyKubernetes = discovery.StrategyKubernetes
 )
 
-type NodeInterface interface {
-	GetName() string
-}
-
-type Cluster interface {
-	Start(ctx context.Context) error
-	Stop() error
-	RegisterNode(node NodeInterface) error
-	StartWorkflow(workflowID string, trigger WorkflowTrigger) error
-	GetWorkflowState(workflowID string) (WorkflowState, error)
-	GetClusterInfo() ClusterInfo
-	OnComplete(handler CompletionHandler)
-	OnError(handler ErrorHandler)
-}
+type NodeResult = ports.NodeResult
+type NextNode = ports.NextNode
 
 type Config struct {
 	NodeID      string `json:"node_id" yaml:"node_id"`
@@ -101,18 +89,12 @@ type EngineConfig struct {
 	RetryBackoff           string `json:"retry_backoff" yaml:"retry_backoff"`
 }
 
-type NodeResult struct {
-	Data         interface{}      `json:"data"`
-	NextNodes    []NextNodeConfig `json:"next_nodes,omitempty"`
-	StateUpdates interface{}      `json:"state_updates,omitempty"`
-	Metadata     NodeMetadata     `json:"metadata,omitempty"`
-}
-
 type NextNodeConfig struct {
-	NodeName string         `json:"node_name"`
-	Config   interface{}    `json:"config"`
-	Priority int            `json:"priority,omitempty"`
-	Delay    *time.Duration `json:"delay,omitempty"`
+	NodeName       string         `json:"node_name"`
+	Config         interface{}    `json:"config"`
+	Priority       int            `json:"priority,omitempty"`
+	Delay          *time.Duration `json:"delay,omitempty"`
+	IdempotencyKey *string        `json:"idempotency_key,omitempty"`
 }
 
 type NodeMetadata struct {
@@ -133,41 +115,7 @@ type NodeConfig struct {
 	Config interface{} `json:"config"`
 }
 
-type WorkflowState struct {
-	WorkflowID    string         `json:"workflow_id"`
-	Status        string         `json:"status"`
-	CurrentState  interface{}    `json:"current_state"`
-	StartedAt     string         `json:"started_at"`
-	CompletedAt   *string        `json:"completed_at,omitempty"`
-	ExecutedNodes []ExecutedNode `json:"executed_nodes"`
-	PendingNodes  []PendingNode  `json:"pending_nodes"`
-	ReadyNodes    []ReadyNode    `json:"ready_nodes"`
-	LastError     *string        `json:"last_error,omitempty"`
-}
-
-type ExecutedNode struct {
-	NodeName    string      `json:"node_name"`
-	StartedAt   string      `json:"started_at"`
-	CompletedAt string      `json:"completed_at"`
-	Status      string      `json:"status"`
-	Input       interface{} `json:"input"`
-	Output      interface{} `json:"output"`
-	Error       *string     `json:"error,omitempty"`
-}
-
-type PendingNode struct {
-	NodeName     string      `json:"node_name"`
-	Dependencies []string    `json:"dependencies"`
-	Config       interface{} `json:"config"`
-	Priority     int         `json:"priority"`
-}
-
-type ReadyNode struct {
-	NodeName string      `json:"node_name"`
-	Config   interface{} `json:"config"`
-	Priority int         `json:"priority"`
-	QueuedAt string      `json:"queued_at"`
-}
+type WorkflowState = ports.WorkflowStatus
 
 type ClusterInfo struct {
 	NodeID          string          `json:"node_id"`
@@ -209,14 +157,21 @@ type ClusterMember struct {
 	IsLeader bool   `json:"is_leader"`
 }
 
-type CompletionHandler func(workflowID string, finalState interface{})
-type ErrorHandler func(workflowID string, finalState interface{}, err error)
+type WorkflowCompletionData = domain.WorkflowCompletionData
+type ExecutedNodeData = domain.ExecutedNodeData
+type CheckpointData = domain.CheckpointData
+type QueueItemData = domain.QueueItemData
+type IdempotencyKeyData = domain.IdempotencyKeyData
+type ClaimData = domain.ClaimData
 
-type graftCluster struct {
+type CompletionHandler = ports.CompletionHandler
+type ErrorHandler = ports.ErrorHandler
+
+type Cluster struct {
 	internal *api.GraftCluster
 }
 
-func New(config Config) (Cluster, error) {
+func New(config Config) (*Cluster, error) {
 	internalConfig, err := api.ConvertConfig(config)
 	if err != nil {
 		return nil, domain.NewConfigurationError("config conversion", "failed to convert graft config to internal config", "verify configuration structure and values")
@@ -249,7 +204,7 @@ func New(config Config) (Cluster, error) {
 		}
 	}
 
-	return &graftCluster{
+	return &Cluster{
 		internal: internalCluster,
 	}, nil
 }
@@ -298,24 +253,19 @@ func DefaultConfig() Config {
 	}
 }
 
-func (c *graftCluster) Start(ctx context.Context) error {
+func (c *Cluster) Start(ctx context.Context) error {
 	return c.internal.Start(ctx)
 }
 
-func (c *graftCluster) Stop() error {
+func (c *Cluster) Stop() error {
 	return c.internal.Stop()
 }
 
-func (c *graftCluster) RegisterNode(node NodeInterface) error {
-	adapter := api.NewNodeAdapter(node)
-	if adapter == nil {
-		return domain.NewValidationError("node.Execute", "node must implement Execute method")
-	}
-
-	return c.internal.RegisterNode(adapter)
+func (c *Cluster) RegisterNode(node interface{}) error {
+	return c.internal.RegisterNode(node)
 }
 
-func (c *graftCluster) StartWorkflow(workflowID string, trigger WorkflowTrigger) error {
+func (c *Cluster) StartWorkflow(workflowID string, trigger WorkflowTrigger) error {
 	internalTrigger := ports.WorkflowTrigger{
 		WorkflowID:   workflowID,
 		InitialState: trigger.InitialState,
@@ -330,25 +280,14 @@ func (c *graftCluster) StartWorkflow(workflowID string, trigger WorkflowTrigger)
 		}
 	}
 
-	return c.internal.StartWorkflow(workflowID, internalTrigger)
+	return c.internal.StartWorkflow(internalTrigger)
 }
 
-func (c *graftCluster) GetWorkflowState(workflowID string) (WorkflowState, error) {
-	status, err := c.internal.GetWorkflowState(workflowID)
-	if err != nil {
-		return WorkflowState{}, err
-	}
-
-	converted := api.ConvertWorkflowStatus(*status)
-	var result WorkflowState
-	if err := api.ConvertViaJSON(converted, &result); err != nil {
-		return WorkflowState{}, err
-	}
-
-	return result, nil
+func (c *Cluster) GetWorkflowState(workflowID string) (*WorkflowState, error) {
+	return c.internal.GetWorkflowState(workflowID)
 }
 
-func (c *graftCluster) GetClusterInfo() ClusterInfo {
+func (c *Cluster) GetClusterInfo() ClusterInfo {
 	info := c.internal.GetClusterInfo()
 	converted := api.ConvertClusterInfo(info)
 
@@ -360,10 +299,10 @@ func (c *graftCluster) GetClusterInfo() ClusterInfo {
 	return result
 }
 
-func (c *graftCluster) OnComplete(handler CompletionHandler) {
-	c.internal.OnComplete(ports.CompletionHandler(handler))
+func (c *Cluster) OnComplete(handler CompletionHandler) {
+	c.internal.OnComplete(handler)
 }
 
-func (c *graftCluster) OnError(handler ErrorHandler) {
-	c.internal.OnError(ports.ErrorHandler(handler))
+func (c *Cluster) OnError(handler ErrorHandler) {
+	c.internal.OnError(handler)
 }

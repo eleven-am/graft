@@ -12,7 +12,7 @@ import (
 )
 
 type NodeExecutor struct {
-	engine            *Engine
+	engine              *Engine
 	recoverableExecutor *RecoverableExecutor
 }
 
@@ -30,10 +30,42 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 		"item_id", item.ID,
 	)
 
+	// Ensure claim is always released when execution completes
+	defer func() {
+		if err := ne.engine.queue.ReleaseWorkClaim(ctx, item.ID, ne.engine.nodeID); err != nil {
+			ne.engine.logger.Error("failed to release work claim",
+				"workflow_id", item.WorkflowID,
+				"node_name", item.NodeName,
+				"item_id", item.ID,
+				"error", err.Error(),
+			)
+		} else {
+			ne.engine.logger.Debug("work claim released successfully",
+				"workflow_id", item.WorkflowID,
+				"node_name", item.NodeName,
+				"item_id", item.ID,
+			)
+		}
+	}()
+
+	ne.engine.logger.Debug("about to get workflow",
+		"workflow_id", item.WorkflowID,
+		"item_id", item.ID,
+	)
+
 	workflow, err := ne.getWorkflow(item.WorkflowID)
 	if err != nil {
+		ne.engine.logger.Error("failed to get workflow",
+			"workflow_id", item.WorkflowID,
+			"error", err.Error(),
+		)
 		return err
 	}
+
+	ne.engine.logger.Debug("about to get node from registry",
+		"workflow_id", item.WorkflowID,
+		"node_name", item.NodeName,
+	)
 
 	node, err := ne.engine.nodeRegistry.GetNode(item.NodeName)
 	if err != nil {
@@ -79,7 +111,16 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 	currentState := workflow.CurrentState
 	workflow.mu.RUnlock()
 
-	if !node.CanStart(ctx, currentState, item.Config) {
+	canStart := node.CanStart(ctx, currentState, item.Config)
+	ne.engine.logger.Debug("checking if node can start",
+		"workflow_id", item.WorkflowID,
+		"node_name", item.NodeName,
+		"can_start", canStart,
+		"current_state", currentState,
+		"config", item.Config,
+	)
+
+	if !canStart {
 		ne.engine.logger.Debug("node cannot start with current state",
 			"workflow_id", item.WorkflowID,
 			"node_name", item.NodeName,
@@ -106,7 +147,7 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 	if err != nil {
 		errorStr := err.Error()
 		executedNode.Error = &errorStr
-		
+
 		if panicErr, isPanic := err.(*domain.WorkflowPanicError); isPanic {
 			executedNode.Status = ports.NodeExecutionStatusPanicFailed
 			ne.engine.logger.Error("node execution panicked",
@@ -288,6 +329,14 @@ func (ne *NodeExecutor) updateWorkflowState(ctx context.Context, workflow *Workf
 		}
 	}
 
+	if err := ne.persistExecutedNode(ctx, workflow.ID, executedNode); err != nil {
+		ne.engine.logger.Error("failed to persist executed node",
+			"workflow_id", workflow.ID,
+			"node_name", executedNode.NodeName,
+			"error", err.Error(),
+		)
+	}
+
 	stateKeyCount := 0
 	if stateMap, ok := workflow.CurrentState.(map[string]interface{}); ok {
 		stateKeyCount = len(stateMap)
@@ -302,10 +351,9 @@ func (ne *NodeExecutor) updateWorkflowState(ctx context.Context, workflow *Workf
 	return ne.persistWorkflowState(ctx, workflow)
 }
 
-
 func (ne *NodeExecutor) persistWorkflowState(ctx context.Context, workflow *WorkflowInstance) error {
 	stateKey := fmt.Sprintf("workflow:state:%s", workflow.ID)
-	
+
 	workflowData := map[string]interface{}{
 		"id":            workflow.ID,
 		"status":        string(workflow.Status),
@@ -371,6 +419,26 @@ func (ne *NodeExecutor) queueNextNode(ctx context.Context, workflowID string, ne
 		return err
 	}
 
+	if nextNode.IdempotencyKey != nil && *nextNode.IdempotencyKey != "" {
+		if err := ne.checkAndClaimIdempotencyKey(ctx, workflowID, *nextNode.IdempotencyKey); err != nil {
+			if _, isAlreadyClaimed := err.(*IdempotencyKeyClaimedError); isAlreadyClaimed {
+				ne.engine.logger.Debug("skipping node due to idempotency key already claimed",
+					"workflow_id", workflowID,
+					"node_name", nextNode.NodeName,
+					"idempotency_key", *nextNode.IdempotencyKey,
+				)
+				return nil
+			}
+			return err
+		}
+
+		ne.engine.logger.Debug("claimed idempotency key for node",
+			"workflow_id", workflowID,
+			"node_name", nextNode.NodeName,
+			"idempotency_key", *nextNode.IdempotencyKey,
+		)
+	}
+
 	workflow.mu.RLock()
 	currentState := workflow.CurrentState
 	workflow.mu.RUnlock()
@@ -394,6 +462,71 @@ func serializeWorkflowData(data map[string]interface{}) ([]byte, error) {
 	return json.Marshal(data)
 }
 
+type IdempotencyKeyClaimedError struct {
+	WorkflowID     string
+	IdempotencyKey string
+}
+
+func (e *IdempotencyKeyClaimedError) Error() string {
+	return fmt.Sprintf("idempotency key '%s' already claimed for workflow '%s'", e.IdempotencyKey, e.WorkflowID)
+}
+
+func (ne *NodeExecutor) checkAndClaimIdempotencyKey(ctx context.Context, workflowID, idempotencyKey string) error {
+	if ne.engine.storage == nil {
+		return domain.Error{
+			Type:    domain.ErrorTypeInternal,
+			Message: "storage not available for idempotency check",
+			Details: map[string]interface{}{
+				"workflow_id":     workflowID,
+				"idempotency_key": idempotencyKey,
+			},
+		}
+	}
+
+	storageKey := fmt.Sprintf("workflow:idempotency:%s:%s", workflowID, idempotencyKey)
+
+	_, err := ne.engine.storage.Get(ctx, storageKey)
+	if err == nil {
+		return &IdempotencyKeyClaimedError{
+			WorkflowID:     workflowID,
+			IdempotencyKey: idempotencyKey,
+		}
+	}
+
+	keyData := map[string]interface{}{
+		"workflow_id":     workflowID,
+		"idempotency_key": idempotencyKey,
+		"claimed_at":      time.Now(),
+	}
+
+	serializedData, err := json.Marshal(keyData)
+	if err != nil {
+		return domain.Error{
+			Type:    domain.ErrorTypeInternal,
+			Message: "failed to serialize idempotency key data",
+			Details: map[string]interface{}{
+				"workflow_id":     workflowID,
+				"idempotency_key": idempotencyKey,
+				"error":           err.Error(),
+			},
+		}
+	}
+
+	if err := ne.engine.storage.Put(ctx, storageKey, serializedData); err != nil {
+		return domain.Error{
+			Type:    domain.ErrorTypeInternal,
+			Message: "failed to claim idempotency key",
+			Details: map[string]interface{}{
+				"workflow_id":     workflowID,
+				"idempotency_key": idempotencyKey,
+				"error":           err.Error(),
+			},
+		}
+	}
+
+	return nil
+}
+
 func (ne *NodeExecutor) triggerEvaluationAfterExecution(ctx context.Context, workflowID, nodeName string, currentState interface{}) error {
 	if ne.engine.evaluationTrigger == nil {
 		return nil
@@ -411,3 +544,46 @@ func (ne *NodeExecutor) triggerEvaluationAfterExecution(ctx context.Context, wor
 	return ne.engine.evaluationTrigger.TriggerEvaluation(ctx, event)
 }
 
+func (ne *NodeExecutor) persistExecutedNode(ctx context.Context, workflowID string, executedNode *ports.ExecutedNode) error {
+	executionKey := fmt.Sprintf("workflow:execution:%s:%s_%d", workflowID, executedNode.NodeName, executedNode.ExecutedAt.UnixNano())
+
+	nodeData := map[string]interface{}{
+		"node_name":   executedNode.NodeName,
+		"executed_at": executedNode.ExecutedAt.Format(time.RFC3339Nano),
+		"duration":    executedNode.Duration.Nanoseconds(),
+		"status":      string(executedNode.Status),
+		"config":      executedNode.Config,
+		"results":     executedNode.Results,
+	}
+
+	if executedNode.Error != nil {
+		nodeData["error"] = *executedNode.Error
+	}
+
+	serializedData, err := json.Marshal(nodeData)
+	if err != nil {
+		return domain.Error{
+			Type:    domain.ErrorTypeInternal,
+			Message: "failed to serialize executed node",
+			Details: map[string]interface{}{
+				"workflow_id": workflowID,
+				"node_name":   executedNode.NodeName,
+				"error":       err.Error(),
+			},
+		}
+	}
+
+	if err := ne.engine.storage.Put(ctx, executionKey, serializedData); err != nil {
+		return domain.Error{
+			Type:    domain.ErrorTypeInternal,
+			Message: "failed to persist executed node",
+			Details: map[string]interface{}{
+				"workflow_id": workflowID,
+				"node_name":   executedNode.NodeName,
+				"error":       err.Error(),
+			},
+		}
+	}
+
+	return nil
+}

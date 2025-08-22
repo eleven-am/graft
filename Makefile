@@ -1,4 +1,4 @@
-.PHONY: proto proto-clean proto-gen test build clean mocks mock-clean bump-patch bump-minor bump-major current-version
+.PHONY: proto proto-clean proto-gen test build clean mocks mock-clean bump-patch bump-minor bump-major current-version debug-basic
 
 PROTO_DIR := proto
 PROTO_GEN_DIR := $(PROTO_DIR)/gen
@@ -94,6 +94,15 @@ bump-minor:
 	git push origin $$new; \
 	echo "Tagged and pushed $$new"
 
+# Debug basic example - cleanup and run with logging
+debug-basic:
+	@echo "Cleaning up any existing processes..."
+	@lsof -ti:7000 | xargs kill -9 2>/dev/null || true
+	@pkill -f "go run main.go" 2>/dev/null || true
+	@sleep 1
+	@echo "Starting basic example with debug logging..."
+	@cd examples/basic && rm -rf data/ && go run main.go
+
 bump-major:
 	@current=$$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"); \
 	if [ "$$current" = "v0.0.0" ]; then \
@@ -105,3 +114,12 @@ bump-major:
 	git tag $$new; \
 	git push origin $$new; \
 	echo "Tagged and pushed $$new"
+
+# Debug basic example - cleanup and run with logging
+debug-basic:
+	@echo "Cleaning up any existing processes..."
+	@lsof -ti:7000 | xargs kill -9 2>/dev/null || true
+	@pkill -f "go run main.go" 2>/dev/null || true
+	@sleep 1
+	@echo "Starting basic example with debug logging..."
+	@cd examples/basic && rm -rf data/ && go run main.go

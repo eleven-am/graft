@@ -254,6 +254,11 @@ func (co *CleanupOrchestrator) buildCleanupOperations(options CleanupOptions) []
 		Action: "delete",
 	})
 
+	operations = append(operations, raftimpl.CleanupOp{
+		Target: "idempotency",
+		Action: "delete",
+	})
+
 	if !options.PreserveAudit {
 		action := "delete"
 		if options.ArchiveLocation != "" {
@@ -402,6 +407,8 @@ func (co *CleanupOrchestrator) executeCleanupOperation(ctx context.Context, work
 	switch op.Target {
 	case "queue":
 		return co.queueCleaner.RemoveAllWorkflowData(ctx, workflowID)
+	case "idempotency":
+		return co.cleanupIdempotencyKeys(ctx, workflowID)
 	case "state", "claims", "audit":
 		cmd := raftimpl.NewCleanupCommand(workflowID, []raftimpl.CleanupOp{op})
 		data, err := cmd.Marshal()
@@ -430,6 +437,54 @@ func (co *CleanupOrchestrator) executeCleanupOperation(ctx context.Context, work
 			},
 		}
 	}
+}
+
+func (co *CleanupOrchestrator) cleanupIdempotencyKeys(ctx context.Context, workflowID string) error {
+	prefix := fmt.Sprintf("workflow:idempotency:%s:", workflowID)
+
+	items, err := co.storage.List(ctx, prefix)
+	if err != nil {
+		return domain.Error{
+			Type:    domain.ErrorTypeInternal,
+			Message: "failed to list idempotency keys for cleanup",
+			Details: map[string]interface{}{
+				"workflow_id": workflowID,
+				"error":       err.Error(),
+			},
+		}
+	}
+
+	if len(items) == 0 {
+		co.logger.Debug("no idempotency keys found for cleanup",
+			"workflow_id", workflowID)
+		return nil
+	}
+
+	var operations []ports.Operation
+	for _, item := range items {
+		operations = append(operations, ports.Operation{
+			Type: ports.OpDelete,
+			Key:  item.Key,
+		})
+	}
+
+	if err := co.storage.Batch(ctx, operations); err != nil {
+		return domain.Error{
+			Type:    domain.ErrorTypeInternal,
+			Message: "failed to delete idempotency keys",
+			Details: map[string]interface{}{
+				"workflow_id": workflowID,
+				"key_count":   len(items),
+				"error":       err.Error(),
+			},
+		}
+	}
+
+	co.logger.Debug("idempotency keys cleaned up",
+		"workflow_id", workflowID,
+		"deleted_keys", len(items))
+
+	return nil
 }
 
 func (co *CleanupOrchestrator) rollbackCleanup(ctx context.Context, workflowID string, operations []raftimpl.CleanupOp) error {

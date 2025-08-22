@@ -37,7 +37,7 @@ func TestNodeExecutor_ExecuteNode_NodeNotFound(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
 	engine.SetNodeRegistry(mockComponents.NodeRegistry)
-	
+
 	executor := NewNodeExecutor(engine)
 
 	workflowInstance := workflow.CreateTestWorkflowForExecution("test-workflow")
@@ -59,11 +59,11 @@ func TestNodeExecutor_ExecuteNode_NodeNotFound(t *testing.T) {
 func TestNodeExecutor_ExecuteNode_InsufficientResources(t *testing.T) {
 	engine := NewEngine(Config{RetryBackoff: time.Millisecond}, slog.Default())
 	mockComponents, workflowInstance := workflow.SetupNodeExecutionTest(t, "test-workflow", "test-node")
-	
+
 	engine.SetNodeRegistry(mockComponents.NodeRegistry)
 	engine.SetResourceManager(mockComponents.ResourceManager)
 	engine.SetQueue(mockComponents.Queue)
-	
+
 	executor := NewNodeExecutor(engine)
 
 	engine.activeWorkflows["test-workflow"] = &WorkflowInstance{
@@ -87,11 +87,11 @@ func TestNodeExecutor_ExecuteNode_InsufficientResources(t *testing.T) {
 func TestNodeExecutor_ExecuteNode_CannotStart(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
-	
+
 	engine.SetNodeRegistry(mockComponents.NodeRegistry)
 	engine.SetResourceManager(mockComponents.ResourceManager)
 	engine.SetQueue(mockComponents.Queue)
-	
+
 	executor := NewNodeExecutor(engine)
 
 	engine.activeWorkflows["test-workflow"] = &WorkflowInstance{
@@ -122,11 +122,11 @@ func TestNodeExecutor_ExecuteNode_CannotStart(t *testing.T) {
 func TestNodeExecutor_ExecuteNode_ExecutionFailure(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
-	
+
 	engine.SetNodeRegistry(mockComponents.NodeRegistry)
 	engine.SetResourceManager(mockComponents.ResourceManager)
 	engine.SetStorage(mockComponents.Storage)
-	
+
 	executor := NewNodeExecutor(engine)
 
 	workflowInstance := workflow.CreateTestWorkflowForExecution("test-workflow")
@@ -159,12 +159,12 @@ func TestNodeExecutor_ExecuteNode_ExecutionFailure(t *testing.T) {
 func TestNodeExecutor_ExecuteNode_Success(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
-	
+
 	engine.SetNodeRegistry(mockComponents.NodeRegistry)
 	engine.SetResourceManager(mockComponents.ResourceManager)
 	engine.SetStorage(mockComponents.Storage)
 	engine.SetQueue(mockComponents.Queue)
-	
+
 	executor := NewNodeExecutor(engine)
 
 	workflowObj := &WorkflowInstance{
@@ -198,7 +198,7 @@ func TestNodeExecutor_ExecuteNode_Success(t *testing.T) {
 
 	assert.NoError(t, err)
 	assert.Equal(t, ports.WorkflowStateRunning, workflowObj.Status)
-	
+
 	if stateMap, ok := workflowObj.CurrentState.(map[string]interface{}); ok {
 		assert.Equal(t, "success", stateMap["result"])
 		assert.Equal(t, 42, stateMap["count"])
@@ -211,10 +211,10 @@ func TestNodeExecutor_ExecuteNode_Success(t *testing.T) {
 func TestNodeExecutor_ExecuteNode_AcquireResourcesFails(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents, workflowInstance := workflow.SetupNodeExecutionTest(t, "test-workflow", "test-node")
-	
+
 	engine.SetNodeRegistry(mockComponents.NodeRegistry)
 	engine.SetResourceManager(mockComponents.ResourceManager)
-	
+
 	executor := NewNodeExecutor(engine)
 
 	engine.activeWorkflows["test-workflow"] = &WorkflowInstance{
@@ -239,7 +239,7 @@ func TestNodeExecutor_QueueNextNode_NodeNotFound(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
 	engine.SetNodeRegistry(mockComponents.NodeRegistry)
-	
+
 	executor := NewNodeExecutor(engine)
 
 	nextNode := ports.NextNode{
@@ -258,10 +258,10 @@ func TestNodeExecutor_QueueNextNode_NodeNotFound(t *testing.T) {
 func TestNodeExecutor_QueueNextNode_CanStart(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
-	
+
 	engine.SetNodeRegistry(mockComponents.NodeRegistry)
 	engine.SetQueue(mockComponents.Queue)
-	
+
 	executor := NewNodeExecutor(engine)
 
 	engine.activeWorkflows["test-workflow"] = &WorkflowInstance{
@@ -289,10 +289,10 @@ func TestNodeExecutor_QueueNextNode_CanStart(t *testing.T) {
 func TestNodeExecutor_QueueNextNode_CannotStart(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
-	
+
 	engine.SetNodeRegistry(mockComponents.NodeRegistry)
 	engine.SetQueue(mockComponents.Queue)
-	
+
 	executor := NewNodeExecutor(engine)
 
 	engine.activeWorkflows["test-workflow"] = &WorkflowInstance{
@@ -326,7 +326,7 @@ func TestNodeExecutor_HandleExecutionFailure(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
 	engine.SetStorage(mockComponents.Storage)
-	
+
 	executor := NewNodeExecutor(engine)
 
 	workflowInstance := workflow.CreateTestWorkflowForExecution("test-workflow")
@@ -355,7 +355,7 @@ func TestNodeExecutor_UpdateWorkflowState(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
 	engine.SetStorage(mockComponents.Storage)
-	
+
 	executor := NewNodeExecutor(engine)
 
 	workflowObj := &WorkflowInstance{
@@ -381,7 +381,7 @@ func TestNodeExecutor_UpdateWorkflowState(t *testing.T) {
 	err := executor.updateWorkflowState(context.Background(), workflowObj, results, &executedNode)
 
 	assert.NoError(t, err)
-	
+
 	if stateMap, ok := workflowObj.CurrentState.(map[string]interface{}); ok {
 		assert.Equal(t, "new_value", stateMap["new_key"])
 		assert.Equal(t, "updated_value", stateMap["existing"])
@@ -394,7 +394,7 @@ func TestNodeExecutor_UpdateWorkflowState_NonMapResults(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
 	engine.SetStorage(mockComponents.Storage)
-	
+
 	executor := NewNodeExecutor(engine)
 
 	workflowObj := &WorkflowInstance{
@@ -415,7 +415,7 @@ func TestNodeExecutor_UpdateWorkflowState_NonMapResults(t *testing.T) {
 	err := executor.updateWorkflowState(context.Background(), workflowObj, results, &executedNode)
 
 	assert.NoError(t, err)
-	
+
 	if stateMap, ok := workflowObj.CurrentState.(map[string]interface{}); ok {
 		assert.Equal(t, "value", stateMap["existing"])
 	} else {
@@ -438,3 +438,141 @@ func TestSerializeWorkflowData(t *testing.T) {
 	assert.Contains(t, string(serialized), "running")
 }
 
+func TestNodeExecutor_CheckAndClaimIdempotencyKey_FirstTime(t *testing.T) {
+	engine := NewEngine(Config{}, slog.Default())
+	mockComponents := workflow.SetupMockComponents(t)
+	engine.SetStorage(mockComponents.Storage)
+
+	executor := NewNodeExecutor(engine)
+
+	mockComponents.Storage.EXPECT().Get(mock.Anything, "workflow:idempotency:test-workflow:test-key").Return(nil, domain.NewNotFoundError("key", "not found"))
+	mockComponents.Storage.EXPECT().Put(mock.Anything, "workflow:idempotency:test-workflow:test-key", mock.AnythingOfType("[]uint8")).Return(nil)
+
+	err := executor.checkAndClaimIdempotencyKey(context.Background(), "test-workflow", "test-key")
+
+	assert.NoError(t, err)
+}
+
+func TestNodeExecutor_CheckAndClaimIdempotencyKey_AlreadyClaimed(t *testing.T) {
+	engine := NewEngine(Config{}, slog.Default())
+	mockComponents := workflow.SetupMockComponents(t)
+	engine.SetStorage(mockComponents.Storage)
+
+	executor := NewNodeExecutor(engine)
+
+	existingData := []byte(`{"workflow_id":"test-workflow","idempotency_key":"test-key","claimed_at":"2023-01-01T00:00:00Z"}`)
+	mockComponents.Storage.EXPECT().Get(mock.Anything, "workflow:idempotency:test-workflow:test-key").Return(existingData, nil)
+
+	err := executor.checkAndClaimIdempotencyKey(context.Background(), "test-workflow", "test-key")
+
+	assert.Error(t, err)
+	assert.IsType(t, &IdempotencyKeyClaimedError{}, err)
+}
+
+func TestNodeExecutor_CheckAndClaimIdempotencyKey_NoStorage(t *testing.T) {
+	engine := NewEngine(Config{}, slog.Default())
+	executor := NewNodeExecutor(engine)
+
+	err := executor.checkAndClaimIdempotencyKey(context.Background(), "test-workflow", "test-key")
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "storage not available")
+}
+
+func TestNodeExecutor_QueueNextNode_WithIdempotencyKey_FirstTime(t *testing.T) {
+	engine := NewEngine(Config{}, slog.Default())
+	mockComponents := workflow.SetupMockComponents(t)
+
+	engine.SetNodeRegistry(mockComponents.NodeRegistry)
+	engine.SetStorage(mockComponents.Storage)
+	engine.SetQueue(mockComponents.Queue)
+
+	workflowInstance := &WorkflowInstance{
+		ID:           "test-workflow",
+		Status:       ports.WorkflowStateRunning,
+		CurrentState: map[string]interface{}{"test": "data"},
+	}
+	engine.activeWorkflows["test-workflow"] = workflowInstance
+
+	executor := NewNodeExecutor(engine)
+	mockNode := workflow.CreateSuccessfulTestNode("test-node")
+
+	idempotencyKey := "test-key"
+	nextNode := ports.NextNode{
+		NodeName:       "test-node",
+		Config:         map[string]interface{}{"test": "config"},
+		IdempotencyKey: &idempotencyKey,
+	}
+
+	mockComponents.NodeRegistry.EXPECT().GetNode("test-node").Return(mockNode, nil)
+	mockComponents.Storage.EXPECT().Get(mock.Anything, "workflow:idempotency:test-workflow:test-key").Return(nil, domain.NewNotFoundError("key", "not found"))
+	mockComponents.Storage.EXPECT().Put(mock.Anything, "workflow:idempotency:test-workflow:test-key", mock.AnythingOfType("[]uint8")).Return(nil)
+	mockComponents.Queue.EXPECT().EnqueueReady(mock.Anything, mock.AnythingOfType("ports.QueueItem")).Return(nil)
+
+	err := executor.queueNextNode(context.Background(), "test-workflow", nextNode)
+
+	assert.NoError(t, err)
+}
+
+func TestNodeExecutor_QueueNextNode_WithIdempotencyKey_AlreadyClaimed(t *testing.T) {
+	engine := NewEngine(Config{}, slog.Default())
+	mockComponents := workflow.SetupMockComponents(t)
+
+	engine.SetNodeRegistry(mockComponents.NodeRegistry)
+	engine.SetStorage(mockComponents.Storage)
+
+	workflowInstance := &WorkflowInstance{
+		ID:           "test-workflow",
+		Status:       ports.WorkflowStateRunning,
+		CurrentState: map[string]interface{}{"test": "data"},
+	}
+	engine.activeWorkflows["test-workflow"] = workflowInstance
+
+	executor := NewNodeExecutor(engine)
+	mockNode := workflow.CreateSuccessfulTestNode("test-node")
+
+	idempotencyKey := "test-key"
+	nextNode := ports.NextNode{
+		NodeName:       "test-node",
+		Config:         map[string]interface{}{"test": "config"},
+		IdempotencyKey: &idempotencyKey,
+	}
+
+	existingData := []byte(`{"workflow_id":"test-workflow","idempotency_key":"test-key","claimed_at":"2023-01-01T00:00:00Z"}`)
+	mockComponents.NodeRegistry.EXPECT().GetNode("test-node").Return(mockNode, nil)
+	mockComponents.Storage.EXPECT().Get(mock.Anything, "workflow:idempotency:test-workflow:test-key").Return(existingData, nil)
+
+	err := executor.queueNextNode(context.Background(), "test-workflow", nextNode)
+
+	assert.NoError(t, err)
+}
+
+func TestNodeExecutor_QueueNextNode_WithoutIdempotencyKey(t *testing.T) {
+	engine := NewEngine(Config{}, slog.Default())
+	mockComponents := workflow.SetupMockComponents(t)
+
+	engine.SetNodeRegistry(mockComponents.NodeRegistry)
+	engine.SetQueue(mockComponents.Queue)
+
+	workflowInstance := &WorkflowInstance{
+		ID:           "test-workflow",
+		Status:       ports.WorkflowStateRunning,
+		CurrentState: map[string]interface{}{"test": "data"},
+	}
+	engine.activeWorkflows["test-workflow"] = workflowInstance
+
+	executor := NewNodeExecutor(engine)
+	mockNode := workflow.CreateSuccessfulTestNode("test-node")
+
+	nextNode := ports.NextNode{
+		NodeName: "test-node",
+		Config:   map[string]interface{}{"test": "config"},
+	}
+
+	mockComponents.NodeRegistry.EXPECT().GetNode("test-node").Return(mockNode, nil)
+	mockComponents.Queue.EXPECT().EnqueueReady(mock.Anything, mock.AnythingOfType("ports.QueueItem")).Return(nil)
+
+	err := executor.queueNextNode(context.Background(), "test-workflow", nextNode)
+
+	assert.NoError(t, err)
+}

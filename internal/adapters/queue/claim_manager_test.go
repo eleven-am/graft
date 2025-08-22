@@ -65,7 +65,7 @@ func (m *mockStorage) Batch(ctx context.Context, ops []ports.Operation) error {
 func TestClaimManager_ClaimWork(t *testing.T) {
 	ctx := context.Background()
 	storage := newMockStorage()
-	cm := NewClaimManager(storage, "node-1")
+	cm := NewClaimManager(storage, "node-1", nil)
 
 	tests := []struct {
 		name          string
@@ -122,8 +122,8 @@ func TestClaimManager_ClaimWork(t *testing.T) {
 func TestClaimManager_ClaimConflict(t *testing.T) {
 	ctx := context.Background()
 	storage := newMockStorage()
-	cm1 := NewClaimManager(storage, "node-1")
-	cm2 := NewClaimManager(storage, "node-2")
+	cm1 := NewClaimManager(storage, "node-1", nil)
+	cm2 := NewClaimManager(storage, "node-2", nil)
 
 	workItemID := "work-conflict"
 	duration := 5 * time.Minute
@@ -139,7 +139,7 @@ func TestClaimManager_ClaimConflict(t *testing.T) {
 func TestClaimManager_ReleaseClaim(t *testing.T) {
 	ctx := context.Background()
 	storage := newMockStorage()
-	cm := NewClaimManager(storage, "node-1")
+	cm := NewClaimManager(storage, "node-1", nil)
 
 	workItemID := "work-release"
 	duration := 5 * time.Minute
@@ -158,7 +158,7 @@ func TestClaimManager_ReleaseClaim(t *testing.T) {
 func TestClaimManager_ReleaseNonExistentClaim(t *testing.T) {
 	ctx := context.Background()
 	storage := newMockStorage()
-	cm := NewClaimManager(storage, "node-1")
+	cm := NewClaimManager(storage, "node-1", nil)
 
 	err := cm.ReleaseClaim(ctx, "non-existent")
 	require.Error(t, err)
@@ -168,8 +168,8 @@ func TestClaimManager_ReleaseNonExistentClaim(t *testing.T) {
 func TestClaimManager_ReleaseClaimNotOwned(t *testing.T) {
 	ctx := context.Background()
 	storage := newMockStorage()
-	cm1 := NewClaimManager(storage, "node-1")
-	cm2 := NewClaimManager(storage, "node-2")
+	cm1 := NewClaimManager(storage, "node-1", nil)
+	cm2 := NewClaimManager(storage, "node-2", nil)
 
 	workItemID := "work-not-owned"
 	duration := 5 * time.Minute
@@ -185,8 +185,8 @@ func TestClaimManager_ReleaseClaimNotOwned(t *testing.T) {
 func TestClaimManager_VerifyClaim(t *testing.T) {
 	ctx := context.Background()
 	storage := newMockStorage()
-	cm1 := NewClaimManager(storage, "node-1")
-	cm2 := NewClaimManager(storage, "node-2")
+	cm1 := NewClaimManager(storage, "node-1", nil)
+	cm2 := NewClaimManager(storage, "node-2", nil)
 
 	workItemID := "work-verify"
 	duration := 5 * time.Minute
@@ -205,7 +205,7 @@ func TestClaimManager_VerifyClaim(t *testing.T) {
 func TestClaimManager_VerifyExpiredClaim(t *testing.T) {
 	ctx := context.Background()
 	storage := newMockStorage()
-	cm := NewClaimManager(storage, "node-1")
+	cm := NewClaimManager(storage, "node-1", nil)
 
 	workItemID := "work-expired"
 	duration := 1 * time.Millisecond
@@ -223,8 +223,8 @@ func TestClaimManager_VerifyExpiredClaim(t *testing.T) {
 func TestClaimManager_ListMyClaims(t *testing.T) {
 	ctx := context.Background()
 	storage := newMockStorage()
-	cm1 := NewClaimManager(storage, "node-1")
-	cm2 := NewClaimManager(storage, "node-2")
+	cm1 := NewClaimManager(storage, "node-1", nil)
+	cm2 := NewClaimManager(storage, "node-2", nil)
 
 	duration := 5 * time.Minute
 
@@ -254,7 +254,7 @@ func TestClaimManager_ListMyClaims(t *testing.T) {
 func TestClaimManager_CleanupExpiredClaims(t *testing.T) {
 	ctx := context.Background()
 	storage := newMockStorage()
-	cm := NewClaimManager(storage, "node-1")
+	cm := NewClaimManager(storage, "node-1", nil)
 
 	shortDuration := 1 * time.Millisecond
 	longDuration := 1 * time.Hour
@@ -281,8 +281,8 @@ func TestClaimManager_CleanupExpiredClaims(t *testing.T) {
 func TestClaimManager_ReclaimAfterExpiry(t *testing.T) {
 	ctx := context.Background()
 	storage := newMockStorage()
-	cm1 := NewClaimManager(storage, "node-1")
-	cm2 := NewClaimManager(storage, "node-2")
+	cm1 := NewClaimManager(storage, "node-1", nil)
+	cm2 := NewClaimManager(storage, "node-2", nil)
 
 	workItemID := "work-reclaim"
 	shortDuration := 1 * time.Millisecond

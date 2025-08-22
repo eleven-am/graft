@@ -32,21 +32,22 @@ func (n *ProcessorNode) GetName() string {
 	return "data-processor"
 }
 
-func (n *ProcessorNode) Execute(ctx context.Context, state ProcessorState, config ProcessorConfig) (graft.NodeResult, error) {
+func (n *ProcessorNode) Execute(ctx context.Context, state ProcessorState, config ProcessorConfig) (*graft.NodeResult, error) {
 	delay := config.DelayMS
 	if delay == 0 {
 		delay = 100
 	}
-	time.Sleep(time.Duration(delay) * time.Millisecond)
 
+	time.Sleep(time.Duration(delay) * time.Millisecond)
 	result := ProcessorResult{
 		ProcessedData: fmt.Sprintf("%s (processed)", state.Input),
 		Timestamp:     time.Now().Format(time.RFC3339),
 		NodeName:      n.GetName(),
 	}
 
-	return graft.NodeResult{
-		Data: result,
+	return &graft.NodeResult{
+		GlobalState: result,
+		NextNodes:   nil,
 	}, nil
 }
 
@@ -76,7 +77,6 @@ func main() {
 		log.Fatalf("Failed to load configuration: %v", err)
 	}
 
-	// Create debug logger to see detailed workflow execution
 	debugLogger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
@@ -106,6 +106,18 @@ func main() {
 	}
 
 	fmt.Printf("Node registered: %s\n", processor.GetName())
+
+	cluster.OnComplete(func(ctx context.Context, data graft.WorkflowCompletionData) error {
+		fmt.Printf("COMPLETION HANDLER CALLED for workflow: %s\n", data.WorkflowID)
+		fmt.Printf("   Status: %s\n", data.Status)
+		fmt.Printf("   Final State: %+v\n", data.FinalState)
+		return nil
+	})
+
+	cluster.OnError(func(workflowID string, finalState interface{}, err error) {
+		fmt.Printf("ERROR HANDLER CALLED for workflow: %s\n", workflowID)
+		fmt.Printf("   Error: %v\n", err)
+	})
 
 	workflowID := "workflow-001"
 	trigger := graft.WorkflowTrigger{
@@ -137,7 +149,7 @@ func main() {
 		state, err := cluster.GetWorkflowState(workflowID)
 		if err != nil {
 			log.Printf("Error getting workflow state: %v", err)
-			continue
+			break
 		}
 
 		fmt.Printf("Workflow status: %s\n", state.Status)

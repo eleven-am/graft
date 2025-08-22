@@ -12,17 +12,18 @@ import (
 )
 
 type Engine struct {
-	nodeRegistry     ports.NodeRegistryPort
-	resourceManager  ports.ResourceManagerPort
-	storage          ports.StoragePort
-	queue            ports.QueuePort
-	transport        ports.TransportPort
-	discovery        ports.DiscoveryPort
+	nodeRegistry    ports.NodeRegistryPort
+	resourceManager ports.ResourceManagerPort
+	storage         ports.StoragePort
+	queue           ports.QueuePort
+	transport       ports.TransportPort
+	discovery       ports.DiscoveryPort
 
 	activeWorkflows   map[string]*WorkflowInstance
 	coordinator       *WorkflowCoordinator
 	stateManager      *StateManager
 	lifecycleManager  *LifecycleManager
+	dataCollector     *WorkflowDataCollector
 	metricsTracker    *MetricsTracker
 	pendingEvaluator  PendingEvaluator
 	evaluationTrigger EvaluationTrigger
@@ -30,6 +31,7 @@ type Engine struct {
 	mu                sync.RWMutex
 	logger            *slog.Logger
 	config            Config
+	nodeID            string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -57,11 +59,12 @@ type WorkflowInstance struct {
 
 func NewEngine(config Config, logger *slog.Logger) *Engine {
 	ctx, cancel := context.WithCancel(context.Background())
-	
+
 	engine := &Engine{
 		activeWorkflows: make(map[string]*WorkflowInstance),
 		logger:          logger,
 		config:          config,
+		nodeID:          uuid.New().String(),
 		ctx:             ctx,
 		cancel:          cancel,
 	}
@@ -73,16 +76,17 @@ func NewEngine(config Config, logger *slog.Logger) *Engine {
 		Timeout:    30 * time.Second,
 		MaxRetries: 3,
 	}, engine.metricsTracker)
-	
+
 	engine.pendingEvaluator = NewPendingEvaluator(engine, logger)
 	engine.evaluationTrigger = NewEvaluationTrigger(3, logger)
 	engine.evaluationTrigger.RegisterEvaluator(engine.pendingEvaluator)
-	
+
 	return engine
 }
 
 func (e *Engine) SetNodeRegistry(registry ports.NodeRegistryPort) {
 	e.nodeRegistry = registry
+	e.initializeDataCollector()
 }
 
 func (e *Engine) SetResourceManager(manager ports.ResourceManagerPort) {
@@ -91,10 +95,12 @@ func (e *Engine) SetResourceManager(manager ports.ResourceManagerPort) {
 
 func (e *Engine) SetStorage(storage ports.StoragePort) {
 	e.storage = storage
+	e.initializeDataCollector()
 }
 
 func (e *Engine) SetQueue(queue ports.QueuePort) {
 	e.queue = queue
+	e.initializeDataCollector()
 }
 
 func (e *Engine) SetTransport(transport ports.TransportPort) {
@@ -108,6 +114,12 @@ func (e *Engine) SetDiscovery(discovery ports.DiscoveryPort) {
 func (e *Engine) RegisterLifecycleHandlers(completion []ports.CompletionHandler, error []ports.ErrorHandler) {
 	if e.lifecycleManager != nil {
 		e.lifecycleManager.RegisterHandlers(completion, error)
+	}
+}
+
+func (e *Engine) initializeDataCollector() {
+	if e.storage != nil && e.queue != nil && e.nodeRegistry != nil && e.dataCollector == nil {
+		e.dataCollector = NewWorkflowDataCollector(e.storage, e.queue, e.nodeRegistry)
 	}
 }
 
@@ -126,26 +138,26 @@ func (e *Engine) Start(ctx context.Context) error {
 			},
 		}
 	}
-	
+
 	if e.storage == nil {
 		return domain.Error{
-		Type:    domain.ErrorTypeInternal,
-		Message: "FATAL: workflow engine requires storage for state persistence",
-		Details: map[string]interface{}{
-			"component": "workflow_engine",
-			"requirement": "storage",
-		},
-	}
+			Type:    domain.ErrorTypeInternal,
+			Message: "FATAL: workflow engine requires storage for state persistence",
+			Details: map[string]interface{}{
+				"component":   "workflow_engine",
+				"requirement": "storage",
+			},
+		}
 	}
 	if e.queue == nil {
 		return domain.Error{
-		Type:    domain.ErrorTypeInternal,
-		Message: "FATAL: workflow engine requires queue for distributed execution",
-		Details: map[string]interface{}{
-			"component": "workflow_engine",
-			"requirement": "queue",
-		},
-	}
+			Type:    domain.ErrorTypeInternal,
+			Message: "FATAL: workflow engine requires queue for distributed execution",
+			Details: map[string]interface{}{
+				"component":   "workflow_engine",
+				"requirement": "queue",
+			},
+		}
 	}
 	e.mu.Unlock()
 
@@ -290,12 +302,12 @@ func (e *Engine) GetExecutionMetrics() ports.EngineMetrics {
 	queueSizes := ports.QueueSizes{}
 	if e.queue != nil {
 		ctx := context.Background()
-		
+
 		isEmpty, err := e.queue.IsEmpty(ctx)
 		if err == nil && !isEmpty {
 			queueSizes.Ready = 1
 		}
-		
+
 		pendingItems, err := e.queue.GetPendingItems(ctx)
 		if err == nil {
 			queueSizes.Pending = len(pendingItems)
@@ -328,7 +340,6 @@ func (e *Engine) processReadyNodes() {
 	}
 }
 
-
 func (e *Engine) processWorkflowCompletions() {
 	defer e.wg.Done()
 
@@ -349,16 +360,16 @@ func (e *Engine) queueNodeForExecution(workflowID string, nodeConfig ports.NodeC
 			"workflow_id", workflowID,
 			"node_name", nodeConfig.Name,
 			"reason", reason)
-		
+
 		return domain.Error{
-		Type:    domain.ErrorTypeUnavailable,
-		Message: "queue not available for node execution",
-		Details: map[string]interface{}{
-			"component": "workflow_engine",
-		},
+			Type:    domain.ErrorTypeUnavailable,
+			Message: "queue not available for node execution",
+			Details: map[string]interface{}{
+				"component": "workflow_engine",
+			},
+		}
 	}
-	}
-	
+
 	item := &ports.QueueItem{
 		ID:         generateItemID(),
 		WorkflowID: workflowID,

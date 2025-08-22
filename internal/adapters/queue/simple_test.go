@@ -18,7 +18,7 @@ func TestSimpleDequeueWithClaim(t *testing.T) {
 		NodeID:    "test-node",
 	}
 
-	queue, err := NewBadgerQueue(storage, config)
+	queue, err := NewBadgerQueue(storage, config, nil)
 	require.NoError(t, err)
 
 	item, err := queue.DequeueReady(ctx)
