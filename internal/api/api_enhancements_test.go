@@ -26,10 +26,13 @@ func TestAPIEnhancements_ExecutedNodeStatus(t *testing.T) {
 		ReadyNodes:   []ports.ReadyNode{},
 	}
 
-	converted := convertWorkflowStatus(completedStatus)
+	converted := ConvertWorkflowStatus(completedStatus)
+	convertedMap := converted.(map[string]interface{})
+	executedNodes := convertedMap["executed_nodes"].([]interface{})
+	firstNode := executedNodes[0].(map[string]interface{})
 
-	assert.Equal(t, "completed", converted.ExecutedNodes[0].Status)
-	assert.Equal(t, "test-node", converted.ExecutedNodes[0].NodeName)
+	assert.Equal(t, "completed", firstNode["status"])
+	assert.Equal(t, "test-node", firstNode["node_name"])
 
 	failedStatus := ports.WorkflowStatus{
 		WorkflowID:   "test-workflow-failed",
@@ -49,11 +52,14 @@ func TestAPIEnhancements_ExecutedNodeStatus(t *testing.T) {
 		ReadyNodes:   []ports.ReadyNode{},
 	}
 
-	convertedFailed := convertWorkflowStatus(failedStatus)
+	convertedFailed := ConvertWorkflowStatus(failedStatus)
+	convertedFailedMap := convertedFailed.(map[string]interface{})
+	failedExecutedNodes := convertedFailedMap["executed_nodes"].([]interface{})
+	firstFailedNode := failedExecutedNodes[0].(map[string]interface{})
 
-	assert.Equal(t, "failed", convertedFailed.ExecutedNodes[0].Status)
-	assert.Equal(t, "failed-node", convertedFailed.ExecutedNodes[0].NodeName)
-	assert.NotNil(t, convertedFailed.ExecutedNodes[0].Error)
+	assert.Equal(t, "failed", firstFailedNode["status"])
+	assert.Equal(t, "failed-node", firstFailedNode["node_name"])
+	assert.NotNil(t, firstFailedNode["error"])
 }
 
 func TestAPIEnhancements_PendingNodePriority(t *testing.T) {
@@ -73,11 +79,14 @@ func TestAPIEnhancements_PendingNodePriority(t *testing.T) {
 		ReadyNodes: []ports.ReadyNode{},
 	}
 
-	converted := convertWorkflowStatus(status)
+	converted := ConvertWorkflowStatus(status)
+	convertedMap := converted.(map[string]interface{})
+	pendingNodes := convertedMap["pending_nodes"].([]interface{})
+	firstPendingNode := pendingNodes[0].(map[string]interface{})
 
-	assert.Equal(t, "pending-node", converted.PendingNodes[0].NodeName)
-	assert.Equal(t, 5, converted.PendingNodes[0].Priority)
-	assert.Equal(t, []string{"waiting for dependency"}, converted.PendingNodes[0].Dependencies)
+	assert.Equal(t, "pending-node", firstPendingNode["node_name"])
+	assert.Equal(t, 5, firstPendingNode["priority"])
+	assert.Equal(t, []string{"waiting for dependency"}, firstPendingNode["dependencies"])
 }
 
 func TestAPIEnhancements_ReadyNodePriority(t *testing.T) {
@@ -96,10 +105,13 @@ func TestAPIEnhancements_ReadyNodePriority(t *testing.T) {
 		}},
 	}
 
-	converted := convertWorkflowStatus(status)
+	converted := ConvertWorkflowStatus(status)
+	convertedMap := converted.(map[string]interface{})
+	readyNodes := convertedMap["ready_nodes"].([]interface{})
+	firstReadyNode := readyNodes[0].(map[string]interface{})
 
-	assert.Equal(t, "ready-node", converted.ReadyNodes[0].NodeName)
-	assert.Equal(t, 10, converted.ReadyNodes[0].Priority)
+	assert.Equal(t, "ready-node", firstReadyNode["node_name"])
+	assert.Equal(t, 10, firstReadyNode["priority"])
 }
 
 func TestAPIEnhancements_NodeExecutionStatusValues(t *testing.T) {
@@ -138,17 +150,24 @@ func TestAPIEnhancements_MultipleNodeTypes(t *testing.T) {
 		}},
 	}
 
-	converted := convertWorkflowStatus(status)
+	converted := ConvertWorkflowStatus(status)
+	convertedMap := converted.(map[string]interface{})
 
-	assert.Len(t, converted.ExecutedNodes, 1)
-	assert.Equal(t, "completed", converted.ExecutedNodes[0].Status)
-	assert.Equal(t, "completed-node", converted.ExecutedNodes[0].NodeName)
+	executedNodes := convertedMap["executed_nodes"].([]interface{})
+	assert.Len(t, executedNodes, 1)
+	firstExecutedNode := executedNodes[0].(map[string]interface{})
+	assert.Equal(t, "completed", firstExecutedNode["status"])
+	assert.Equal(t, "completed-node", firstExecutedNode["node_name"])
 
-	assert.Len(t, converted.PendingNodes, 1)
-	assert.Equal(t, 3, converted.PendingNodes[0].Priority)
-	assert.Equal(t, "waiting-node", converted.PendingNodes[0].NodeName)
+	pendingNodes := convertedMap["pending_nodes"].([]interface{})
+	assert.Len(t, pendingNodes, 1)
+	firstPendingNode := pendingNodes[0].(map[string]interface{})
+	assert.Equal(t, 3, firstPendingNode["priority"])
+	assert.Equal(t, "waiting-node", firstPendingNode["node_name"])
 
-	assert.Len(t, converted.ReadyNodes, 1)
-	assert.Equal(t, 8, converted.ReadyNodes[0].Priority)
-	assert.Equal(t, "next-node", converted.ReadyNodes[0].NodeName)
+	readyNodes := convertedMap["ready_nodes"].([]interface{})
+	assert.Len(t, readyNodes, 1)
+	firstReadyNode := readyNodes[0].(map[string]interface{})
+	assert.Equal(t, 8, firstReadyNode["priority"])
+	assert.Equal(t, "next-node", firstReadyNode["node_name"])
 }
