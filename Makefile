@@ -1,4 +1,4 @@
-.PHONY: proto proto-clean proto-gen test build clean mocks mock-clean
+.PHONY: proto proto-clean proto-gen test build clean mocks mock-clean bump-patch bump-minor bump-major current-version
 
 PROTO_DIR := proto
 PROTO_GEN_DIR := $(PROTO_DIR)/gen
@@ -65,3 +65,40 @@ deps-install:
 	@go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
 	@go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 	@go install github.com/vektra/mockery/v2@latest
+
+# Version management using git tags
+current-version:
+	@git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"
+
+bump-patch:
+	@current=$$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"); \
+	if [ "$$current" = "v0.0.0" ]; then \
+		new="v0.0.1"; \
+	else \
+		new=$$(echo $$current | awk -F. '{$$NF = $$NF + 1;} 1' | sed 's/ /./g'); \
+	fi; \
+	echo "Bumping version from $$current to $$new"; \
+	git tag $$new; \
+	echo "Tagged $$new"
+
+bump-minor:
+	@current=$$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"); \
+	if [ "$$current" = "v0.0.0" ]; then \
+		new="v0.1.0"; \
+	else \
+		new=$$(echo $$current | awk -F. '{$$(NF-1) = $$(NF-1) + 1; $$NF = 0;} 1' | sed 's/ /./g'); \
+	fi; \
+	echo "Bumping version from $$current to $$new"; \
+	git tag $$new; \
+	echo "Tagged $$new"
+
+bump-major:
+	@current=$$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"); \
+	if [ "$$current" = "v0.0.0" ]; then \
+		new="v1.0.0"; \
+	else \
+		new=$$(echo $$current | awk -F. '{$$(NF-2) = $$(NF-2) + 1; $$(NF-1) = 0; $$NF = 0;} 1' | sed 's/ /./g'); \
+	fi; \
+	echo "Bumping version from $$current to $$new"; \
+	git tag $$new; \
+	echo "Tagged $$new"
