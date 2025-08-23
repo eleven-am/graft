@@ -6,7 +6,9 @@ import (
 	"testing"
 
 	"github.com/eleven-am/graft/internal/ports"
+	"github.com/eleven-am/graft/internal/ports/mocks"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 )
 
 func TestWorkflowInstance_Mutex(t *testing.T) {
@@ -52,10 +54,18 @@ func TestWorkflowStateData_Fields(t *testing.T) {
 
 func TestHasNodesForWorkflow_EmptyQueues(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
+
+	// Need to set up mock storage since hasActiveClaimsForWorkflow checks storage
+	mockStorage := mocks.NewMockStoragePort(t)
+	engine.SetStorage(mockStorage)
+
 	coordinator := NewWorkflowCoordinator(engine)
 
 	isEmpty := true
 	pendingItems := []ports.QueueItem{}
+
+	// Mock the List call to return empty claims
+	mockStorage.EXPECT().List(mock.Anything, "claims:").Return([]ports.KeyValue{}, nil)
 
 	result := coordinator.hasNodesForWorkflow(context.TODO(), "test-workflow", isEmpty, pendingItems)
 

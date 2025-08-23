@@ -127,6 +127,7 @@ func TestGetSize(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
+		NodeID:    "test-node",
 	}, nil)
 	require.NoError(t, err)
 
@@ -144,6 +145,7 @@ func TestClearReady(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
+		NodeID:    "test-node",
 	}, nil)
 	require.NoError(t, err)
 
@@ -168,6 +170,7 @@ func TestClearPending(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypePending,
+		NodeID:    "test-node",
 	}, nil)
 	require.NoError(t, err)
 
@@ -235,6 +238,7 @@ func TestEnqueueReady(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
+		NodeID:    "test-node",
 	}, nil)
 	require.NoError(t, err)
 
@@ -262,6 +266,7 @@ func TestEnqueuePending(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypePending,
+		NodeID:    "test-node",
 	}, nil)
 	require.NoError(t, err)
 
@@ -290,6 +295,7 @@ func TestDequeueReady(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
+		NodeID:    "test-node",
 	}, nil)
 	require.NoError(t, err)
 
@@ -312,6 +318,9 @@ func TestDequeueReady(t *testing.T) {
 
 	mockStorage.EXPECT().Get(ctx, itemDataKey).Return(itemData, nil)
 	mockStorage.EXPECT().Get(ctx, "queue:meta:ready").Return([]byte(`{"v":1,"size":1,"updated":0}`), nil)
+	// Mock for claim manager access
+	mockStorage.EXPECT().Get(ctx, "claims:test-id").Return(nil, fmt.Errorf("not found")).Maybe()
+	mockStorage.EXPECT().Put(ctx, "claims:test-id", mock.AnythingOfType("[]uint8")).Return(nil).Maybe()
 
 	mockStorage.EXPECT().Batch(ctx, mock.MatchedBy(func(ops []ports.Operation) bool {
 		return len(ops) >= 2
@@ -329,6 +338,7 @@ func TestDequeueReadyEmpty(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
+		NodeID:    "test-node",
 	}, nil)
 	require.NoError(t, err)
 
@@ -345,6 +355,7 @@ func TestGetPendingItems(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypePending,
+		NodeID:    "test-node",
 	}, nil)
 	require.NoError(t, err)
 
@@ -379,6 +390,7 @@ func TestMovePendingToReady(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypePending,
+		NodeID:    "test-node",
 	}, nil)
 	require.NoError(t, err)
 
@@ -415,6 +427,7 @@ func TestRemoveFromPending(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypePending,
+		NodeID:    "test-node",
 	}, nil)
 	require.NoError(t, err)
 
@@ -439,6 +452,7 @@ func TestGetSizeWithMissingMetadata(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
+		NodeID:    "test-node",
 	}, nil)
 	require.NoError(t, err)
 
@@ -573,6 +587,7 @@ func TestDequeueWithVisibility(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
+		NodeID:    "test-node",
 	}, nil)
 	require.NoError(t, err)
 
@@ -613,6 +628,7 @@ func TestDequeueWithVisibilityPutError(t *testing.T) {
 
 	queue, err := NewBadgerQueue(mockStorage, Config{
 		QueueType: QueueTypeReady,
+		NodeID:    "test-node",
 	}, nil)
 	require.NoError(t, err)
 

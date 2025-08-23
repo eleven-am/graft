@@ -24,6 +24,7 @@ packages:
       NodeRegistryPort:
       WorkflowEnginePort:
       ClusterPort:
+      SemaphorePort:
 
   # Team 1 - Transport interfaces
   github.com/eleven-am/graft/internal/adapters/transport/grpc:
@@ -52,3 +53,8 @@ packages:
   github.com/eleven-am/graft/internal/domain:
     interfaces:
       EventHandler:
+
+  # Engine interfaces
+  github.com/eleven-am/graft/internal/adapters/engine:
+    interfaces:
+      QueueCleaner:

@@ -18,9 +18,15 @@ type MockNode struct {
 	mock.Mock
 }
 
-func (m *MockNode) Execute(ctx context.Context, globalState interface{}, config interface{}) (interface{}, []ports.NextNode, error) {
-	args := m.Called(ctx, globalState, config)
-	return args.Get(0), args.Get(1).([]ports.NextNode), args.Error(2)
+func (m *MockNode) Execute(ctx context.Context, args ...interface{}) (*ports.NodeResult, error) {
+	callArgs := m.Called(ctx, args)
+	result := callArgs.Get(0)
+	nextNodes := callArgs.Get(1).([]ports.NextNode)
+	err := callArgs.Error(2)
+	if err != nil {
+		return nil, err
+	}
+	return &ports.NodeResult{GlobalState: result, NextNodes: nextNodes}, nil
 }
 
 func (m *MockNode) GetName() string {
@@ -28,9 +34,9 @@ func (m *MockNode) GetName() string {
 	return args.String(0)
 }
 
-func (m *MockNode) CanStart(ctx context.Context, globalState interface{}, config interface{}) bool {
-	args := m.Called(ctx, globalState, config)
-	return args.Bool(0)
+func (m *MockNode) CanStart(ctx context.Context, args ...interface{}) bool {
+	callArgs := m.Called(ctx, args)
+	return callArgs.Bool(0)
 }
 
 func (m *MockNode) GetInputSchema() map[string]interface{} {
@@ -117,7 +123,7 @@ func TestRecoverableExecutor_ExecuteWithRecovery_NodeError(t *testing.T) {
 
 type PanicNode struct{}
 
-func (p *PanicNode) Execute(ctx context.Context, globalState interface{}, config interface{}) (interface{}, []ports.NextNode, error) {
+func (p *PanicNode) Execute(ctx context.Context, args ...interface{}) (*ports.NodeResult, error) {
 	panic("test panic message")
 }
 
@@ -125,7 +131,7 @@ func (p *PanicNode) GetName() string {
 	return "panic-node"
 }
 
-func (p *PanicNode) CanStart(ctx context.Context, globalState interface{}, config interface{}) bool {
+func (p *PanicNode) CanStart(ctx context.Context, args ...interface{}) bool {
 	return true
 }
 

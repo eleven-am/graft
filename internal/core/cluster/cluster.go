@@ -23,6 +23,7 @@ type Cluster struct {
 	nodeRegistry    ports.NodeRegistryPort
 	resourceManager ports.ResourceManagerPort
 	workflowEngine  ports.WorkflowEnginePort
+	semaphore       ports.SemaphorePort
 
 	nodeID    string
 	isRunning bool
@@ -442,6 +443,17 @@ func (c *Cluster) initializeComponents(factory *ComponentFactory) error {
 		}
 	}
 
+	c.semaphore, err = factory.CreateSemaphore(c.storage)
+	if err != nil {
+		return domain.Error{
+			Type:    domain.ErrorTypeInternal,
+			Message: "failed to create semaphore component",
+			Details: map[string]interface{}{
+				"error": err.Error(),
+			},
+		}
+	}
+
 	return nil
 }
 
@@ -506,6 +518,10 @@ func (c *Cluster) connectComponents() error {
 		if c.discovery != nil {
 			engine.SetDiscovery(c.discovery)
 			c.logger.Debug("injected discovery")
+		}
+		if c.semaphore != nil {
+			engine.SetSemaphore(c.semaphore)
+			c.logger.Debug("injected semaphore")
 		}
 
 		if len(c.completionHandlers) > 0 || len(c.errorHandlers) > 0 {

@@ -11,17 +11,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"github.com/eleven-am/graft/internal/ports"
 	"github.com/eleven-am/graft/internal/ports/mocks"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var testPortCounter int64
 
 func TestCluster_Integration_BasicWorkflow(t *testing.T) {
 	ctx := context.Background()
-	
+
 	config := createTestConfig(t)
 	logger := slog.Default()
 
@@ -37,7 +37,7 @@ func TestCluster_Integration_BasicWorkflow(t *testing.T) {
 		executeFunc: func(ctx context.Context, globalState interface{}, config interface{}) (interface{}, []ports.NextNode, error) {
 			time.Sleep(500 * time.Millisecond)
 			return map[string]interface{}{
-				"result": "success",
+				"result":          "success",
 				"processed_count": 42,
 			}, []ports.NextNode{}, nil
 		},
@@ -80,7 +80,7 @@ func TestCluster_Integration_BasicWorkflow(t *testing.T) {
 
 func TestCluster_Integration_MultiNodeWorkflow(t *testing.T) {
 	ctx := context.Background()
-	
+
 	config := createTestConfig(t)
 	logger := slog.Default()
 
@@ -97,7 +97,7 @@ func TestCluster_Integration_MultiNodeWorkflow(t *testing.T) {
 			time.Sleep(800 * time.Millisecond)
 			return map[string]interface{}{
 				"processed_data": []string{"item1", "item2", "item3"},
-				"count": 3,
+				"count":          3,
 			}, []ports.NextNode{}, nil
 		},
 	}
@@ -108,7 +108,7 @@ func TestCluster_Integration_MultiNodeWorkflow(t *testing.T) {
 			time.Sleep(800 * time.Millisecond)
 			return map[string]interface{}{
 				"validation_result": "passed",
-				"validated_count": 3,
+				"validated_count":   3,
 			}, []ports.NextNode{}, nil
 		},
 	}
@@ -119,7 +119,7 @@ func TestCluster_Integration_MultiNodeWorkflow(t *testing.T) {
 			time.Sleep(800 * time.Millisecond)
 			return map[string]interface{}{
 				"report_id": "report-12345",
-				"status": "generated",
+				"status":    "generated",
 			}, []ports.NextNode{}, nil
 		},
 	}
@@ -138,7 +138,7 @@ func TestCluster_Integration_MultiNodeWorkflow(t *testing.T) {
 		},
 		Metadata: map[string]string{
 			"workflow_type": "data-pipeline",
-			"priority": "high",
+			"priority":      "high",
 		},
 	}
 
@@ -154,7 +154,7 @@ func TestCluster_Integration_MultiNodeWorkflow(t *testing.T) {
 
 func TestCluster_Integration_ClusterInfo(t *testing.T) {
 	ctx := context.Background()
-	
+
 	config := createTestConfig(t)
 	logger := slog.Default()
 
@@ -180,7 +180,7 @@ func TestCluster_Integration_ClusterInfo(t *testing.T) {
 
 func TestCluster_Integration_ErrorHandling(t *testing.T) {
 	ctx := context.Background()
-	
+
 	config := createTestConfig(t)
 	logger := slog.Default()
 
@@ -222,7 +222,7 @@ func TestCluster_Integration_ErrorHandling(t *testing.T) {
 
 func TestCluster_Integration_ResourceLimits(t *testing.T) {
 	ctx := context.Background()
-	
+
 	config := createTestConfig(t)
 	config.Resources.MaxConcurrentTotal = 2
 	config.Resources.MaxConcurrentPerType = map[string]int{
@@ -269,7 +269,7 @@ func TestCluster_Integration_ResourceLimits(t *testing.T) {
 
 func TestCluster_Integration_ComponentFailure(t *testing.T) {
 	ctx := context.Background()
-	
+
 	config := createTestConfig(t)
 	logger := slog.Default()
 
@@ -288,7 +288,7 @@ func TestCluster_Integration_ComponentFailure(t *testing.T) {
 
 func TestCluster_Integration_ConcurrentWorkflows(t *testing.T) {
 	ctx := context.Background()
-	
+
 	config := createTestConfig(t)
 	config.Engine.MaxConcurrentWorkflows = 10
 	logger := slog.Default()
@@ -305,7 +305,7 @@ func TestCluster_Integration_ConcurrentWorkflows(t *testing.T) {
 		executeFunc: func(ctx context.Context, globalState interface{}, config interface{}) (interface{}, []ports.NextNode, error) {
 			time.Sleep(500 * time.Millisecond)
 			return map[string]interface{}{
-				"result": "processed",
+				"result":    "processed",
 				"timestamp": time.Now().Unix(),
 			}, []ports.NextNode{}, nil
 		},
@@ -351,16 +351,16 @@ func TestCluster_Integration_WithMocks(t *testing.T) {
 		},
 		Metadata: map[string]string{"source": "mock-test"},
 	}
-	
+
 	mockWorkflowEngine.On("ProcessTrigger", testTrigger).Return(nil)
-	
+
 	completedTime := time.Now()
 	mockWorkflowEngine.On("GetWorkflowStatus", "mock-workflow-001").Return(&ports.WorkflowStatus{
-		WorkflowID:    "mock-workflow-001",
-		Status:        ports.WorkflowStateCompleted,
-		CurrentState:  map[string]interface{}{"result": "mock-success"},
-		StartedAt:     time.Now().Add(-time.Minute),
-		CompletedAt:   &completedTime,
+		WorkflowID:   "mock-workflow-001",
+		Status:       ports.WorkflowStateCompleted,
+		CurrentState: map[string]interface{}{"result": "mock-success"},
+		StartedAt:    time.Now().Add(-time.Minute),
+		CompletedAt:  &completedTime,
 		ExecutedNodes: []ports.ExecutedNode{{
 			NodeName:   "mock-node",
 			Status:     ports.NodeExecutionStatusCompleted,
@@ -369,8 +369,8 @@ func TestCluster_Integration_WithMocks(t *testing.T) {
 			Config:     map[string]interface{}{},
 			Results:    map[string]interface{}{"result": "mock-success"},
 		}},
-		PendingNodes:  []ports.PendingNode{},
-		ReadyNodes:    []ports.ReadyNode{},
+		PendingNodes: []ports.PendingNode{},
+		ReadyNodes:   []ports.ReadyNode{},
 	}, nil)
 
 	mockWorkflowEngine.On("GetExecutionMetrics").Return(ports.EngineMetrics{
@@ -425,18 +425,24 @@ type TestNode struct {
 	executeFunc func(context.Context, interface{}, interface{}) (interface{}, []ports.NextNode, error)
 }
 
-func (n *TestNode) Execute(ctx context.Context, globalState interface{}, config interface{}) (interface{}, []ports.NextNode, error) {
+func (n *TestNode) Execute(ctx context.Context, args ...interface{}) (*ports.NodeResult, error) {
 	if n.executeFunc != nil {
-		return n.executeFunc(ctx, globalState, config)
+		globalState := args[0]
+		config := args[1]
+		result, nextNodes, err := n.executeFunc(ctx, globalState, config)
+		if err != nil {
+			return nil, err
+		}
+		return &ports.NodeResult{GlobalState: result, NextNodes: nextNodes}, nil
 	}
-	return map[string]interface{}{"result": "default"}, []ports.NextNode{}, nil
+	return &ports.NodeResult{GlobalState: map[string]interface{}{"result": "default"}}, nil
 }
 
 func (n *TestNode) GetName() string {
 	return n.name
 }
 
-func (n *TestNode) CanStart(ctx context.Context, globalState interface{}, config interface{}) bool {
+func (n *TestNode) CanStart(ctx context.Context, args ...interface{}) bool {
 	return true
 }
 
@@ -467,12 +473,12 @@ func createTestConfig(t *testing.T) ClusterConfig {
 	})
 
 	portOffset := atomic.AddInt64(&testPortCounter, 1)
-	
+
 	randBytes := make([]byte, 4)
 	_, err = rand.Read(randBytes)
 	require.NoError(t, err)
 	randValue := int(randBytes[0])<<8 | int(randBytes[1])
-	
+
 	config := DefaultClusterConfig()
 	config.NodeID = fmt.Sprintf("test-node-%d", portOffset)
 	config.ServiceName = "test-cluster"

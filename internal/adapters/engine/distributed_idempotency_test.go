@@ -8,6 +8,7 @@ import (
 
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/ports"
+	"github.com/eleven-am/graft/internal/ports/mocks"
 	"github.com/eleven-am/graft/internal/testutil/workflow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -19,7 +20,7 @@ func (n *DistributedIdempotencyTestNode) GetName() string {
 	return "distributed-idempotency-test-node"
 }
 
-func (n *DistributedIdempotencyTestNode) Execute(ctx context.Context, state interface{}, config interface{}) (interface{}, []ports.NextNode, error) {
+func (n *DistributedIdempotencyTestNode) Execute(ctx context.Context, args ...interface{}) (*ports.NodeResult, error) {
 	time.Sleep(10 * time.Millisecond)
 
 	result := map[string]interface{}{
@@ -48,21 +49,23 @@ func (n *DistributedIdempotencyTestNode) Execute(ctx context.Context, state inte
 		},
 	}
 
-	return result, nextNodes, nil
+	return &ports.NodeResult{GlobalState: result, NextNodes: nextNodes}, nil
 }
 
-func (n *DistributedIdempotencyTestNode) CanStart(ctx context.Context, state interface{}, config interface{}) bool {
+func (n *DistributedIdempotencyTestNode) CanStart(ctx context.Context, args ...interface{}) bool {
 	return true
 }
 
 func TestDistributedIdempotency(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
+	mockSemaphore := mocks.NewMockSemaphorePort(t)
 
 	engine.SetNodeRegistry(mockComponents.NodeRegistry)
 	engine.SetResourceManager(mockComponents.ResourceManager)
 	engine.SetStorage(mockComponents.Storage)
 	engine.SetQueue(mockComponents.Queue)
+	engine.SetSemaphore(mockSemaphore)
 
 	consumerNode := workflow.CreateSuccessfulTestNode("consumer-node")
 	testNode := &DistributedIdempotencyTestNode{}
@@ -117,6 +120,9 @@ func TestDistributedIdempotency(t *testing.T) {
 		return key == "workflow:state:distributed-test"
 	}), mock.AnythingOfType("[]uint8")).Return(nil)
 
+	// Add a catch-all for any other storage operations (execution data, etc.)
+	mockComponents.Storage.On("Put", mock.Anything, mock.Anything, mock.AnythingOfType("[]uint8")).Return(nil).Maybe()
+
 	mockComponents.Queue.On("EnqueueReady", mock.Anything, mock.AnythingOfType("ports.QueueItem")).Run(func(args mock.Arguments) {
 		item := args.Get(1).(ports.QueueItem)
 		enqueuedItems = append(enqueuedItems, item)
@@ -125,6 +131,13 @@ func TestDistributedIdempotency(t *testing.T) {
 	mockComponents.ResourceManager.EXPECT().CanExecuteNode("distributed-idempotency-test-node").Return(true).Maybe()
 	mockComponents.ResourceManager.EXPECT().AcquireNode("distributed-idempotency-test-node").Return(nil).Maybe()
 	mockComponents.ResourceManager.EXPECT().ReleaseNode("distributed-idempotency-test-node").Return(nil).Maybe()
+
+	// Mock the ReleaseWorkClaim call that happens in defer
+	mockComponents.Queue.EXPECT().ReleaseWorkClaim(mock.Anything, testItem.ID, mock.Anything).Return(nil).Maybe()
+
+	// Mock semaphore operations for workflow state locking
+	mockSemaphore.EXPECT().Acquire(mock.Anything, "distributed-test", mock.Anything, mock.Anything).Return(nil).Maybe()
+	mockSemaphore.EXPECT().Release(mock.Anything, "distributed-test", mock.Anything).Return(nil).Maybe()
 
 	err := executor.ExecuteNode(context.Background(), testItem)
 	assert.NoError(t, err)

@@ -27,10 +27,14 @@ func TestWorkflowCoordinator_ProcessNextReadyNode_EmptyQueue(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
 	engine.SetQueue(mockComponents.Queue)
-	
-	coordinator := NewWorkflowCoordinator(engine)
 
-	mockComponents.Queue.EXPECT().DequeueReady(mock.Anything).Return(nil, domain.NewNotFoundError("queue_item", "ready queue is empty"))
+	coordinator := NewWorkflowCoordinator(engine)
+	defer func() {
+		// Stop engine to clean up background goroutines
+		engine.Stop()
+	}()
+
+	mockComponents.Queue.EXPECT().DequeueReady(mock.Anything, mock.Anything).Return(nil, domain.NewNotFoundError("queue_item", "ready queue is empty"))
 
 	err := coordinator.processNextReadyNode(context.Background())
 
@@ -41,20 +45,24 @@ func TestWorkflowCoordinator_ProcessNextReadyNode_EmptyQueue(t *testing.T) {
 func TestWorkflowCoordinator_ProcessNextReadyNode_Success(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
-	
+
 	engine.SetQueue(mockComponents.Queue)
-	
+
 	coordinator := NewWorkflowCoordinator(engine)
+	defer func() {
+		// Stop engine to clean up background goroutines
+		engine.Stop()
+	}()
 
 	item := workflow.CreateTestQueueItem("workflow-123", "test-node", 1)
 
-	mockComponents.Queue.EXPECT().DequeueReady(mock.Anything).Return(item, nil)
+	mockComponents.Queue.EXPECT().DequeueReady(mock.Anything, mock.Anything).Return(item, nil)
+	mockComponents.Queue.EXPECT().ReleaseWorkClaim(mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	err := coordinator.processNextReadyNode(context.Background())
 
 	assert.NoError(t, err)
 }
-
 
 func TestWorkflowCoordinator_CheckWorkflowCompletion_NotRunning(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
@@ -74,7 +82,7 @@ func TestWorkflowCoordinator_CheckWorkflowCompletion_HasNodes(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockQueue := mocks.NewMockQueuePort(t)
 	engine.SetQueue(mockQueue)
-	
+
 	coordinator := NewWorkflowCoordinator(engine)
 
 	workflow := &WorkflowInstance{
@@ -95,10 +103,10 @@ func TestWorkflowCoordinator_CheckWorkflowCompletion_NoNodes(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockQueue := mocks.NewMockQueuePort(t)
 	mockStorage := mocks.NewMockStoragePort(t)
-	
+
 	engine.SetQueue(mockQueue)
 	engine.SetStorage(mockStorage)
-	
+
 	coordinator := NewWorkflowCoordinator(engine)
 
 	workflow := &WorkflowInstance{
@@ -111,6 +119,7 @@ func TestWorkflowCoordinator_CheckWorkflowCompletion_NoNodes(t *testing.T) {
 
 	mockQueue.EXPECT().IsEmpty(mock.Anything).Return(true, nil)
 	mockQueue.EXPECT().GetPendingItems(mock.Anything).Return([]ports.QueueItem{}, nil)
+	mockStorage.EXPECT().List(mock.Anything, "claims:").Return([]ports.KeyValue{}, nil)
 	mockStorage.EXPECT().Put(mock.Anything, "workflow:state:running-workflow", mock.AnythingOfType("[]uint8")).Return(nil)
 
 	err := coordinator.CheckWorkflowCompletion(context.Background(), workflow)
@@ -152,7 +161,7 @@ func TestWorkflowCoordinator_PauseWorkflow_Success(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockStorage := mocks.NewMockStoragePort(t)
 	engine.SetStorage(mockStorage)
-	
+
 	coordinator := NewWorkflowCoordinator(engine)
 
 	workflow := &WorkflowInstance{
@@ -174,7 +183,7 @@ func TestWorkflowCoordinator_ResumeWorkflow_Success(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockStorage := mocks.NewMockStoragePort(t)
 	engine.SetStorage(mockStorage)
-	
+
 	coordinator := NewWorkflowCoordinator(engine)
 
 	workflow := &WorkflowInstance{
@@ -196,7 +205,7 @@ func TestWorkflowCoordinator_StopWorkflow_Success(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockStorage := mocks.NewMockStoragePort(t)
 	engine.SetStorage(mockStorage)
-	
+
 	coordinator := NewWorkflowCoordinator(engine)
 
 	workflow := &WorkflowInstance{

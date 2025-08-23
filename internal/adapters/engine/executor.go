@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"time"
 
-	"dario.cat/mergo"
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/ports"
 )
@@ -30,7 +29,6 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 		"item_id", item.ID,
 	)
 
-	// Ensure claim is always released when execution completes
 	defer func() {
 		if err := ne.engine.queue.ReleaseWorkClaim(ctx, item.ID, ne.engine.nodeID); err != nil {
 			ne.engine.logger.Error("failed to release work claim",
@@ -303,6 +301,49 @@ func (ne *NodeExecutor) handleExecutionFailure(ctx context.Context, workflow *Wo
 }
 
 func (ne *NodeExecutor) updateWorkflowState(ctx context.Context, workflow *WorkflowInstance, results interface{}, executedNode *ports.ExecutedNode) error {
+	if ne.engine.semaphore == nil {
+		return domain.Error{
+			Type:    domain.ErrorTypeInternal,
+			Message: "semaphore is required for atomic workflow state updates",
+			Details: map[string]interface{}{
+				"workflow_id": workflow.ID,
+				"node_name":   executedNode.NodeName,
+			},
+		}
+	}
+
+	semaphoreTimeout := 30 * time.Second
+	if ne.engine.config.NodeExecutionTimeout > 0 {
+		semaphoreTimeout = ne.engine.config.NodeExecutionTimeout
+	}
+
+	if err := ne.engine.semaphore.Acquire(ctx, workflow.ID, ne.engine.nodeID, semaphoreTimeout); err != nil {
+		ne.engine.logger.Error("failed to acquire workflow state lock",
+			"workflow_id", workflow.ID,
+			"node_name", executedNode.NodeName,
+			"error", err.Error(),
+		)
+		return domain.Error{
+			Type:    domain.ErrorTypeConflict,
+			Message: "failed to acquire workflow state lock",
+			Details: map[string]interface{}{
+				"workflow_id": workflow.ID,
+				"node_name":   executedNode.NodeName,
+				"error":       err.Error(),
+			},
+		}
+	}
+
+	defer func() {
+		if err := ne.engine.semaphore.Release(ctx, workflow.ID, ne.engine.nodeID); err != nil {
+			ne.engine.logger.Error("failed to release workflow state lock",
+				"workflow_id", workflow.ID,
+				"node_name", executedNode.NodeName,
+				"error", err.Error(),
+			)
+		}
+	}()
+
 	workflow.mu.Lock()
 	defer workflow.mu.Unlock()
 
@@ -310,22 +351,27 @@ func (ne *NodeExecutor) updateWorkflowState(ctx context.Context, workflow *Workf
 		if workflow.CurrentState == nil {
 			workflow.CurrentState = results
 		} else {
-			if stateMap, stateIsMap := workflow.CurrentState.(map[string]interface{}); stateIsMap {
-				if resultsMap, resultsIsMap := results.(map[string]interface{}); resultsIsMap {
-					for key, value := range resultsMap {
-						stateMap[key] = value
-					}
-				} else {
-					stateMap["result"] = results
-				}
-			} else {
-				merged := workflow.CurrentState
-				if err := mergo.Merge(&merged, results, mergo.WithOverride); err == nil {
-					workflow.CurrentState = merged
-				} else {
-					workflow.CurrentState = results
+			ne.engine.logger.Info("merging states",
+				"current_state_type", fmt.Sprintf("%T", workflow.CurrentState),
+				"results_type", fmt.Sprintf("%T", results),
+				"workflow_id", workflow.ID,
+				"node_name", executedNode.NodeName,
+			)
+
+			merged, err := MergeStates(workflow.CurrentState, results)
+			if err != nil {
+				return domain.Error{
+					Type:    domain.ErrorTypeInternal,
+					Message: "failed to merge workflow states",
+					Details: map[string]interface{}{
+						"workflow_id": workflow.ID,
+						"node_name":   executedNode.NodeName,
+						"error":       err.Error(),
+					},
 				}
 			}
+
+			workflow.CurrentState = merged
 		}
 	}
 

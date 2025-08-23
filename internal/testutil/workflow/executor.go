@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-
 func CreateTestExecutionItem(workflowID, nodeName string) *ports.QueueItem {
 	return &ports.QueueItem{
 		ID:         "test-item-id",
@@ -19,7 +18,7 @@ func CreateTestExecutionItem(workflowID, nodeName string) *ports.QueueItem {
 		NodeName:   nodeName,
 		Config:     map[string]interface{}{"test": "config"},
 		Priority:   1,
-		EnqueuedAt:   time.Now(),
+		EnqueuedAt: time.Now(),
 	}
 }
 
@@ -31,25 +30,31 @@ func CreateTestNode(name string, executeFunc func(context.Context, interface{}, 
 }
 
 type TestNode struct {
-	name        string
-	executeFunc func(context.Context, interface{}, interface{}) (interface{}, []ports.NextNode, error)
-	CanStartFunc func(context.Context, interface{}, interface{}) bool
+	name         string
+	executeFunc  func(context.Context, interface{}, interface{}) (interface{}, []ports.NextNode, error)
+	CanStartFunc func(context.Context, ...interface{}) bool
 }
 
-func (n *TestNode) Execute(ctx context.Context, globalState interface{}, config interface{}) (interface{}, []ports.NextNode, error) {
+func (n *TestNode) Execute(ctx context.Context, args ...interface{}) (*ports.NodeResult, error) {
 	if n.executeFunc != nil {
-		return n.executeFunc(ctx, globalState, config)
+		globalState := args[0]
+		config := args[1]
+		result, nextNodes, err := n.executeFunc(ctx, globalState, config)
+		if err != nil {
+			return nil, err
+		}
+		return &ports.NodeResult{GlobalState: result, NextNodes: nextNodes}, nil
 	}
-	return map[string]interface{}{"result": "default"}, []ports.NextNode{}, nil
+	return &ports.NodeResult{GlobalState: map[string]interface{}{"result": "default"}}, nil
 }
 
 func (n *TestNode) GetName() string {
 	return n.name
 }
 
-func (n *TestNode) CanStart(ctx context.Context, globalState interface{}, config interface{}) bool {
+func (n *TestNode) CanStart(ctx context.Context, args ...interface{}) bool {
 	if n.CanStartFunc != nil {
-		return n.CanStartFunc(ctx, globalState, config)
+		return n.CanStartFunc(ctx, args...)
 	}
 	return true
 }
@@ -98,21 +103,21 @@ func SetupResourceManagerMock(mockRM *mocks.MockResourceManagerPort, nodeName st
 
 func SetupStorageMock(t *testing.T, mockStorage *mocks.MockStoragePort, workflowID string) {
 	t.Helper()
-	
+
 	mockStorage.On("Put", mock.Anything, mock.MatchedBy(func(key string) bool {
 		return key == "workflow:state:"+workflowID
 	}), mock.AnythingOfType("[]uint8")).Return(nil).Maybe()
-	
+
 	mockStorage.On("Get", mock.Anything, mock.MatchedBy(func(key string) bool {
 		return key == "workflow:state:"+workflowID
-	})).Return([]byte(`{"id":"` + workflowID + `","status":"running","current_state":{},"started_at":"2023-01-01T00:00:00Z","version":1,"updated_at":"2023-01-01T00:00:00Z"}`), nil).Maybe()
+	})).Return([]byte(`{"id":"`+workflowID+`","status":"running","current_state":{},"started_at":"2023-01-01T00:00:00Z","version":1,"updated_at":"2023-01-01T00:00:00Z"}`), nil).Maybe()
 }
 
 func ValidateExecutionResult(t *testing.T, result interface{}, expectedKeys ...string) {
 	t.Helper()
-	
+
 	assert.NotNil(t, result)
-	
+
 	if resultMap, ok := result.(map[string]interface{}); ok {
 		for _, key := range expectedKeys {
 			assert.Contains(t, resultMap, key, "Expected key %s in execution result", key)
@@ -124,12 +129,12 @@ func ValidateExecutionResult(t *testing.T, result interface{}, expectedKeys ...s
 
 func SetupNodeExecutorTest(t *testing.T, nodeName string) (*mocks.MockNodePort, *mocks.MockResourceManagerPort, *mocks.MockStoragePort, *mocks.MockQueuePort) {
 	t.Helper()
-	
+
 	mockNode := mocks.NewMockNodePort(t)
 	mockResourceManager := mocks.NewMockResourceManagerPort(t)
 	mockStorage := mocks.NewMockStoragePort(t)
 	mockQueue := mocks.NewMockQueuePort(t)
-	
+
 	return mockNode, mockResourceManager, mockStorage, mockQueue
 }
 
@@ -141,7 +146,7 @@ func SetupExecutorMockExpectations(mockRM *mocks.MockResourceManagerPort, mockSt
 	} else {
 		mockRM.EXPECT().CanExecuteNode(nodeName).Return(false)
 	}
-	
+
 	mockStorage.EXPECT().Put(mock.Anything, "workflow:state:"+workflowID, mock.AnythingOfType("[]uint8")).Return(nil).Maybe()
 }
 
@@ -159,7 +164,7 @@ func ConfigureAllMocks(mockComponents *MockComponents, workflowID, nodeName stri
 	if !shouldSucceed {
 		testNode = CreateFailingTestNode(nodeName, assert.AnError)
 	}
-	
+
 	mockComponents.NodeRegistry.EXPECT().GetNode(nodeName).Return(testNode, nil).Maybe()
 	mockComponents.ResourceManager.EXPECT().CanExecuteNode(nodeName).Return(canExecute).Maybe()
 	if canExecute {
@@ -173,26 +178,26 @@ func ConfigureAllMocks(mockComponents *MockComponents, workflowID, nodeName stri
 
 func SetupNodeExecutionTest(t *testing.T, workflowID, nodeName string) (*MockComponents, interface{}) {
 	t.Helper()
-	
+
 	mockComponents := SetupMockComponents(t)
 	workflowInstance := CreateTestWorkflowForExecution(workflowID)
-	
+
 	return mockComponents, workflowInstance
 }
 
 func CreateStandardExecutorTestSetup(t *testing.T, workflowID, nodeName string) (*MockComponents, interface{}, interface{}) {
 	t.Helper()
-	
+
 	mockComponents := SetupMockComponents(t)
 	workflowInstance := CreateTestWorkflowForExecution(workflowID)
-	
+
 	workflowObj := map[string]interface{}{
 		"ID":           workflowID,
 		"Status":       "running",
 		"CurrentState": workflowInstance["CurrentState"],
 		"StartedAt":    workflowInstance["StartedAt"],
 	}
-	
+
 	return mockComponents, workflowInstance, workflowObj
 }
 
@@ -203,7 +208,7 @@ func SetupExecutorMocksForSuccess(mockComponents *MockComponents, nodeName strin
 	mockComponents.ResourceManager.EXPECT().AcquireNode(nodeName).Return(nil)
 	mockComponents.ResourceManager.EXPECT().ReleaseNode(nodeName).Return(nil)
 	mockComponents.Storage.EXPECT().Put(mock.Anything, mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8")).Return(nil)
-	
+
 	if withNextNode {
 		mockComponents.Queue.EXPECT().EnqueueReady(mock.Anything, mock.AnythingOfType("ports.QueueItem")).Return(nil)
 	}
@@ -218,6 +223,10 @@ func SetupExecutorMocksForFailure(mockComponents *MockComponents, nodeName strin
 	mockComponents.Storage.EXPECT().Put(mock.Anything, mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8")).Return(nil)
 }
 
+func SetupReleaseWorkClaimMock(mockComponents *MockComponents, itemID, nodeID string) {
+	mockComponents.Queue.EXPECT().ReleaseWorkClaim(mock.Anything, itemID, nodeID).Return(nil).Maybe()
+}
+
 func SetupStandardExecutorMocks(mockComponents *MockComponents, nodeName string) {
 	mockComponents.NodeRegistry.EXPECT().GetNode(nodeName).Return(CreateSuccessfulTestNode(nodeName), nil)
 	mockComponents.ResourceManager.EXPECT().CanExecuteNode(nodeName).Return(true)
@@ -227,18 +236,18 @@ func SetupStandardExecutorMocks(mockComponents *MockComponents, nodeName string)
 
 func CreateExecutorTestWithStandardWorkflow(t *testing.T, workflowID, nodeName string, canExecute bool) (*MockComponents, interface{}, interface{}) {
 	t.Helper()
-	
+
 	mockComponents, workflowInstance, _ := CreateStandardExecutorTestSetup(t, workflowID, nodeName)
-	
+
 	workflowObj := map[string]interface{}{
 		"ID":           workflowID,
 		"Status":       "running",
 		"CurrentState": workflowInstance.(map[string]interface{})["CurrentState"],
 	}
-	
+
 	testNode := CreateSuccessfulTestNode(nodeName)
 	mockComponents.NodeRegistry.EXPECT().GetNode(nodeName).Return(testNode, nil)
 	mockComponents.ResourceManager.EXPECT().CanExecuteNode(nodeName).Return(canExecute)
-	
+
 	return mockComponents, workflowInstance, workflowObj
 }

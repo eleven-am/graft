@@ -11,17 +11,16 @@ import (
 	"github.com/stretchr/testify/mock"
 )
 
-
 func SetupQueueMockExpectations(mockQueue *mocks.MockQueuePort, workflowID string) {
 	mockQueue.On("EnqueueReady", mock.Anything, mock.AnythingOfType("*ports.QueueItem")).Return(nil).Maybe()
 	mockQueue.On("EnqueuePending", mock.Anything, mock.AnythingOfType("*ports.QueueItem")).Return(nil).Maybe()
-	mockQueue.On("DequeueReady", mock.Anything).Return(&ports.QueueItem{
+	mockQueue.On("DequeueReady", mock.Anything, mock.Anything).Return(&ports.QueueItem{
 		ID:         "test-item",
 		WorkflowID: workflowID,
 		NodeName:   "test-node",
 		Config:     map[string]interface{}{},
 		Priority:   1,
-		EnqueuedAt:   time.Now(),
+		EnqueuedAt: time.Now(),
 	}, nil).Maybe()
 	mockQueue.On("GetPendingItems", mock.Anything, mock.AnythingOfType("int")).Return([]*ports.QueueItem{}, nil).Maybe()
 	mockQueue.On("IsEmpty", mock.Anything).Return(true, nil).Maybe()
@@ -39,13 +38,13 @@ func CreateTestQueueItem(workflowID, nodeName string, priority int) *ports.Queue
 		NodeName:   nodeName,
 		Config:     map[string]interface{}{"test": "config"},
 		Priority:   priority,
-		EnqueuedAt:   time.Now(),
+		EnqueuedAt: time.Now(),
 	}
 }
 
 func ValidateNodeQueuing(t *testing.T, mockQueue *mocks.MockQueuePort, expectedNodeName string) {
 	t.Helper()
-	
+
 	mockQueue.AssertCalled(t, "EnqueueReady", mock.Anything, mock.MatchedBy(func(item *ports.QueueItem) bool {
 		return item.NodeName == expectedNodeName
 	}))
@@ -53,20 +52,19 @@ func ValidateNodeQueuing(t *testing.T, mockQueue *mocks.MockQueuePort, expectedN
 
 func SetupWorkflowTriggerTest(t *testing.T, mocks *MockComponents, workflowID string, nodeNames []string) {
 	t.Helper()
-	
+
 	SetupQueueMockExpectations(mocks.Queue, workflowID)
-	
+
 	for _, nodeName := range nodeNames {
 		testNode := CreateSuccessfulTestNode(nodeName)
 		SetupNodeRegistryMockExpectations(mocks.NodeRegistry, nodeName, testNode)
 	}
-	
+
 	mocks.ResourceManager.On("TryAcquire", mock.AnythingOfType("string")).Return(true, nil).Maybe()
 	mocks.ResourceManager.On("Release", mock.AnythingOfType("string")).Return().Maybe()
-	
+
 	mocks.Storage.On("Put", mock.Anything, mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8")).Return(nil).Maybe()
 }
-
 
 func CreateTestNextNodes(nodeNames []string) []ports.NextNode {
 	nextNodes := make([]ports.NextNode, len(nodeNames))
@@ -86,7 +84,7 @@ func CreateChainedTestNode(name string, nextNodeNames []string) *TestNode {
 			"processed":  true,
 			"chain_step": name,
 		}
-		
+
 		nextNodes := CreateTestNextNodes(nextNodeNames)
 		return result, nextNodes, nil
 	})
@@ -94,7 +92,7 @@ func CreateChainedTestNode(name string, nextNodeNames []string) *TestNode {
 
 func ValidateWorkflowChaining(t *testing.T, mocks *MockComponents, parentNode string, expectedNextNodes []string) {
 	t.Helper()
-	
+
 	for _, nodeName := range expectedNextNodes {
 		mockQueue := mocks.Queue
 		mockQueue.AssertCalled(t, "EnqueueReady", mock.Anything, mock.MatchedBy(func(item *ports.QueueItem) bool {
@@ -113,7 +111,7 @@ func SetupCoordinatorTestWorkflow(workflowID string, status string) map[string]i
 }
 
 func SetupCoordinatorMockExpectations(mocks *MockComponents, workflowID, nodeName string) {
-	mocks.Queue.On("DequeueReady", mock.Anything).Return(&ports.QueueItem{
+	mocks.Queue.On("DequeueReady", mock.Anything, mock.Anything).Return(&ports.QueueItem{
 		ID:         "test-item",
 		WorkflowID: workflowID,
 		NodeName:   nodeName,
@@ -121,21 +119,21 @@ func SetupCoordinatorMockExpectations(mocks *MockComponents, workflowID, nodeNam
 		Priority:   1,
 		EnqueuedAt: time.Now(),
 	}, nil).Maybe()
-	
+
 	mocks.Queue.On("GetPendingItems", mock.Anything).Return([]ports.QueueItem{}, nil).Maybe()
 	mocks.Queue.On("IsEmpty", mock.Anything).Return(true, nil).Maybe()
-	
+
 	testNode := CreateSuccessfulTestNode(nodeName)
 	SetupNodeRegistryMockExpectations(mocks.NodeRegistry, nodeName, testNode)
-	
+
 	mocks.ResourceManager.On("TryAcquire", mock.AnythingOfType("string")).Return(true, nil).Maybe()
 	mocks.ResourceManager.On("Release", mock.AnythingOfType("string")).Return().Maybe()
-	
+
 	mocks.Storage.On("Put", mock.Anything, mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8")).Return(nil).Maybe()
 }
 
 func SetupEmptyQueueMocks(mockQueue *mocks.MockQueuePort) {
-	mockQueue.On("DequeueReady", mock.Anything).Return(nil, assert.AnError).Maybe()
+	mockQueue.On("DequeueReady", mock.Anything, mock.Anything).Return(nil, assert.AnError).Maybe()
 	mockQueue.On("GetPendingItems", mock.Anything).Return([]ports.QueueItem{}, nil).Maybe()
 	mockQueue.On("IsEmpty", mock.Anything).Return(true, nil).Maybe()
 }

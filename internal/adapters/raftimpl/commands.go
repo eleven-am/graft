@@ -13,8 +13,6 @@ const (
 	CommandBatch
 	CommandStateUpdate
 	CommandQueueOperation
-	CommandClaimWork
-	CommandReleaseClaim
 	CommandCleanupWorkflow
 )
 
@@ -103,10 +101,6 @@ func (c CommandType) String() string {
 		return "STATE_UPDATE"
 	case CommandQueueOperation:
 		return "QUEUE_OPERATION"
-	case CommandClaimWork:
-		return "CLAIM_WORK"
-	case CommandReleaseClaim:
-		return "RELEASE_CLAIM"
 	case CommandCleanupWorkflow:
 		return "CLEANUP_WORKFLOW"
 	default:

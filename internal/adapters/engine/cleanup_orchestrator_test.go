@@ -152,9 +152,9 @@ func TestCleanupOrchestrator_BuildOperations(t *testing.T) {
 		}
 
 		operations := orchestrator.buildCleanupOperations(options)
-		assert.Len(t, operations, 4)
+		assert.Len(t, operations, 5)
 
-		expectedTargets := map[string]bool{"state": false, "queue": false, "claims": false, "audit": false}
+		expectedTargets := map[string]bool{"state": false, "queue": false, "claims": false, "idempotency": false, "audit": false}
 		for _, op := range operations {
 			expectedTargets[op.Target] = true
 			assert.Equal(t, "delete", op.Action)
@@ -173,7 +173,7 @@ func TestCleanupOrchestrator_BuildOperations(t *testing.T) {
 		}
 
 		operations := orchestrator.buildCleanupOperations(options)
-		assert.Len(t, operations, 4)
+		assert.Len(t, operations, 5)
 
 		stateAndAuditArchived := 0
 		for _, op := range operations {
@@ -194,9 +194,9 @@ func TestCleanupOrchestrator_BuildOperations(t *testing.T) {
 		}
 
 		operations := orchestrator.buildCleanupOperations(options)
-		assert.Len(t, operations, 2)
+		assert.Len(t, operations, 3)
 
-		expectedTargets := map[string]bool{"queue": false, "claims": false}
+		expectedTargets := map[string]bool{"queue": false, "claims": false, "idempotency": false}
 		for _, op := range operations {
 			expectedTargets[op.Target] = true
 			assert.Equal(t, "delete", op.Action)

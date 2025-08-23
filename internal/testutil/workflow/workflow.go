@@ -31,7 +31,6 @@ func DefaultTestConfig() TestConfig {
 	}
 }
 
-
 type MockComponents struct {
 	NodeRegistry    *mocks.MockNodeRegistryPort
 	ResourceManager *mocks.MockResourceManagerPort
@@ -43,7 +42,7 @@ type MockComponents struct {
 
 func SetupMockComponents(t *testing.T) *MockComponents {
 	t.Helper()
-	
+
 	return &MockComponents{
 		NodeRegistry:    mocks.NewMockNodeRegistryPort(t),
 		ResourceManager: mocks.NewMockResourceManagerPort(t),
@@ -70,11 +69,9 @@ func CreateTestNodeConfig(nodeName string) ports.NodeConfig {
 	}
 }
 
-
-
 func AssertWorkflowState(t *testing.T, status *ports.WorkflowStatus, expectedID string, expectedStatus ports.WorkflowState) {
 	t.Helper()
-	
+
 	assert.Equal(t, expectedID, status.WorkflowID)
 	assert.Equal(t, expectedStatus, status.Status)
 	assert.NotNil(t, status.CurrentState)
@@ -82,7 +79,7 @@ func AssertWorkflowState(t *testing.T, status *ports.WorkflowStatus, expectedID 
 }
 
 func SetupEmptyQueueMock(mockQueue *mocks.MockQueuePort) {
-	mockQueue.EXPECT().DequeueReady(mock.Anything).Return(nil, domain.NewNotFoundError("queue_item", "ready queue is empty")).Maybe()
+	mockQueue.EXPECT().DequeueReady(mock.Anything, mock.Anything).Return(nil, domain.NewNotFoundError("queue_item", "ready queue is empty")).Maybe()
 	mockQueue.EXPECT().GetPendingItems(mock.Anything).Return([]ports.QueueItem{}, nil).Maybe()
 	mockQueue.EXPECT().IsEmpty(mock.Anything).Return(true, nil).Maybe()
 }
@@ -112,7 +109,7 @@ func SetupNodeExecutionQueueMock(mockQueue *mocks.MockQueuePort, workflowID, nod
 		if item.WorkflowID != workflowID || item.NodeName != nodeName {
 			return false
 		}
-		
+
 		return reflect.DeepEqual(item.Config, expectedConfig)
 	})).Return(nil)
 }
@@ -129,7 +126,7 @@ func CreateTestWorkflowStates() map[string]interface{} {
 
 func SetupMetricsQueueMock(mockQueue *mocks.MockQueuePort, pendingCount int) {
 	mockQueue.EXPECT().IsEmpty(mock.Anything).Return(false, nil)
-	
+
 	pendingItems := make([]ports.QueueItem, pendingCount)
 	for i := 0; i < pendingCount; i++ {
 		pendingItems[i] = ports.QueueItem{ID: fmt.Sprintf("item%d", i+1)}

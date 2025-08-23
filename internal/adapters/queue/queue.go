@@ -114,12 +114,11 @@ func (q *Queue) DequeueReady(ctx context.Context, opts ...ports.DequeueOption) (
 		opt(options)
 	}
 
-	// Set defaults to make claiming mandatory
 	if options.NodeID == "" {
 		options.NodeID = q.claimManager.nodeID
 	}
 	if options.ClaimDuration <= 0 {
-		options.ClaimDuration = 5 * time.Minute // Default claim duration
+		options.ClaimDuration = 5 * time.Minute
 	}
 
 	if !q.claimingEnabled {
@@ -140,7 +139,6 @@ func (q *Queue) DequeueReady(ctx context.Context, opts ...ports.DequeueOption) (
 		return nil, nil
 	}
 
-	// Always claim work items
 	if err := q.claimManager.ClaimWork(ctx, item.ID, options.ClaimDuration); err != nil {
 		if putBackErr := q.enqueue(ctx, *item, QueueTypeReady); putBackErr != nil {
 			q.logger.Error("failed to put item back after claim failure",

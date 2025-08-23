@@ -44,7 +44,6 @@ func (wc *WorkflowCoordinator) processNextReadyNode(ctx context.Context) error {
 		return domain.NewNotFoundError("queue_item", "queue not available")
 	}
 
-	// Use claim duration based on node execution timeout or default to 5 minutes
 	claimDuration := wc.engine.config.NodeExecutionTimeout
 	if claimDuration <= 0 {
 		claimDuration = 5 * time.Minute
@@ -243,7 +242,6 @@ func (wc *WorkflowCoordinator) hasNodesForWorkflow(ctx context.Context, workflow
 		}
 	}
 
-	// Check for active claims for this workflow
 	if wc.hasActiveClaimsForWorkflow(ctx, workflowID) {
 		return true
 	}
@@ -252,8 +250,6 @@ func (wc *WorkflowCoordinator) hasNodesForWorkflow(ctx context.Context, workflow
 }
 
 func (wc *WorkflowCoordinator) hasActiveClaimsForWorkflow(ctx context.Context, workflowID string) bool {
-	// Check if there are any active claims by looking for claim keys in storage
-	// Since claims use the pattern "claims:{itemID}", we need to check each one
 	claimPrefix := "claims:"
 	items, err := wc.engine.storage.List(ctx, claimPrefix)
 	if err != nil {
@@ -261,25 +257,18 @@ func (wc *WorkflowCoordinator) hasActiveClaimsForWorkflow(ctx context.Context, w
 			"workflow_id", workflowID,
 			"error", err.Error(),
 		)
-		// If we can't check claims, assume there might be active ones to be safe
 		return true
 	}
 
-	// Check each claim to see if the associated item belongs to this workflow
 	for _, item := range items {
-		// Extract item ID from claim key (format: "claims:{itemID}")
 		itemID := strings.TrimPrefix(item.Key, "claims:")
 
-		// Get the item data using the queue's item data key format
 		itemDataKey := "item:" + itemID
 		itemData, err := wc.engine.storage.Get(ctx, itemDataKey)
 		if err != nil {
-			// If we can't get item data, this claim might be stale - skip it
 			continue
 		}
 
-		// Check if this item data contains our workflow ID (simple string search)
-		// This is a simple check since we don't have access to deserializeItem
 		if strings.Contains(string(itemData), `"workflow_id":"`+workflowID+`"`) {
 			wc.engine.logger.Debug("found active claim for workflow",
 				"workflow_id", workflowID,

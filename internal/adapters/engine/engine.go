@@ -18,6 +18,7 @@ type Engine struct {
 	queue           ports.QueuePort
 	transport       ports.TransportPort
 	discovery       ports.DiscoveryPort
+	semaphore       ports.SemaphorePort
 
 	activeWorkflows   map[string]*WorkflowInstance
 	coordinator       *WorkflowCoordinator
@@ -109,6 +110,10 @@ func (e *Engine) SetTransport(transport ports.TransportPort) {
 
 func (e *Engine) SetDiscovery(discovery ports.DiscoveryPort) {
 	e.discovery = discovery
+}
+
+func (e *Engine) SetSemaphore(semaphore ports.SemaphorePort) {
+	e.semaphore = semaphore
 }
 
 func (e *Engine) RegisterLifecycleHandlers(completion []ports.CompletionHandler, error []ports.ErrorHandler) {

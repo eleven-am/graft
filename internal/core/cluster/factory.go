@@ -13,6 +13,7 @@ import (
 	memoryRegistry "github.com/eleven-am/graft/internal/adapters/memory"
 	queue2 "github.com/eleven-am/graft/internal/adapters/queue"
 	raftimpl2 "github.com/eleven-am/graft/internal/adapters/raftimpl"
+	"github.com/eleven-am/graft/internal/adapters/semaphore"
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/ports"
 )
@@ -201,6 +202,13 @@ func (f *ComponentFactory) CreateWorkflowEngine() (ports.WorkflowEnginePort, err
 	f.logger.Debug("workflow engine created, dependencies will be injected during cluster initialization")
 
 	return engine, nil
+}
+
+func (f *ComponentFactory) CreateSemaphore(storage ports.StoragePort) (ports.SemaphorePort, error) {
+	f.logger.Debug("creating semaphore component")
+
+	manager := semaphore.NewSemaphoreManager(storage)
+	return manager, nil
 }
 
 type MockComponentFactory struct {

@@ -18,12 +18,12 @@ func (m *mockNode) GetName() string {
 	return m.name
 }
 
-func (m *mockNode) CanStart(ctx context.Context, globalState interface{}, config interface{}) bool {
+func (m *mockNode) CanStart(ctx context.Context, args ...interface{}) bool {
 	return true
 }
 
-func (m *mockNode) Execute(ctx context.Context, globalState interface{}, config interface{}) (interface{}, []ports.NextNode, error) {
-	return "result", nil, nil
+func (m *mockNode) Execute(ctx context.Context, args ...interface{}) (*ports.NodeResult, error) {
+	return &ports.NodeResult{GlobalState: "result"}, nil
 }
 
 func TestNewMemoryNodeRegistry(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/ports"
+	"github.com/eleven-am/graft/internal/ports/mocks"
 	"github.com/eleven-am/graft/internal/testutil/workflow"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
@@ -23,9 +24,15 @@ func TestNewNodeExecutor(t *testing.T) {
 
 func TestNodeExecutor_ExecuteNode_WorkflowNotFound(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
+	mockComponents := workflow.SetupMockComponents(t)
+	engine.SetQueue(mockComponents.Queue)
+
 	executor := NewNodeExecutor(engine)
 
 	item := workflow.CreateTestExecutionItem("nonexistent", "test-node")
+
+	// Mock the ReleaseWorkClaim call that happens in defer
+	mockComponents.Queue.EXPECT().ReleaseWorkClaim(mock.Anything, item.ID, engine.nodeID).Return(nil).Maybe()
 
 	err := executor.ExecuteNode(context.Background(), item)
 
@@ -37,6 +44,7 @@ func TestNodeExecutor_ExecuteNode_NodeNotFound(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
 	engine.SetNodeRegistry(mockComponents.NodeRegistry)
+	engine.SetQueue(mockComponents.Queue)
 
 	executor := NewNodeExecutor(engine)
 
@@ -49,6 +57,9 @@ func TestNodeExecutor_ExecuteNode_NodeNotFound(t *testing.T) {
 
 	item := workflow.CreateTestExecutionItem("test-workflow", "nonexistent-node")
 	mockComponents.NodeRegistry.EXPECT().GetNode("nonexistent-node").Return(nil, domain.NewNotFoundError("node", "nonexistent-node"))
+
+	// Mock the ReleaseWorkClaim call that happens in defer
+	mockComponents.Queue.EXPECT().ReleaseWorkClaim(mock.Anything, item.ID, engine.nodeID).Return(nil).Maybe()
 
 	err := executor.ExecuteNode(context.Background(), item)
 
@@ -79,6 +90,9 @@ func TestNodeExecutor_ExecuteNode_InsufficientResources(t *testing.T) {
 	mockComponents.ResourceManager.EXPECT().CanExecuteNode("test-node").Return(false)
 	mockComponents.Queue.EXPECT().EnqueueReady(mock.Anything, *item).Return(nil)
 
+	// Mock the ReleaseWorkClaim call that happens in defer
+	mockComponents.Queue.EXPECT().ReleaseWorkClaim(mock.Anything, item.ID, engine.nodeID).Return(nil).Maybe()
+
 	err := executor.ExecuteNode(context.Background(), item)
 
 	assert.NoError(t, err)
@@ -104,7 +118,7 @@ func TestNodeExecutor_ExecuteNode_CannotStart(t *testing.T) {
 	testNode := workflow.CreateTestNode("test-node", func(ctx context.Context, globalState interface{}, config interface{}) (interface{}, []ports.NextNode, error) {
 		return nil, nil, nil
 	})
-	testNode.CanStartFunc = func(ctx context.Context, globalState interface{}, config interface{}) bool {
+	testNode.CanStartFunc = func(ctx context.Context, args ...interface{}) bool {
 		return false
 	}
 
@@ -113,6 +127,9 @@ func TestNodeExecutor_ExecuteNode_CannotStart(t *testing.T) {
 	mockComponents.ResourceManager.EXPECT().AcquireNode("test-node").Return(nil)
 	mockComponents.ResourceManager.EXPECT().ReleaseNode("test-node").Return(nil)
 	mockComponents.Queue.EXPECT().EnqueuePending(mock.Anything, *item).Return(nil)
+
+	// Mock the ReleaseWorkClaim call that happens in defer
+	mockComponents.Queue.EXPECT().ReleaseWorkClaim(mock.Anything, item.ID, engine.nodeID).Return(nil).Maybe()
 
 	err := executor.ExecuteNode(context.Background(), item)
 
@@ -126,6 +143,7 @@ func TestNodeExecutor_ExecuteNode_ExecutionFailure(t *testing.T) {
 	engine.SetNodeRegistry(mockComponents.NodeRegistry)
 	engine.SetResourceManager(mockComponents.ResourceManager)
 	engine.SetStorage(mockComponents.Storage)
+	engine.SetQueue(mockComponents.Queue)
 
 	executor := NewNodeExecutor(engine)
 
@@ -148,6 +166,9 @@ func TestNodeExecutor_ExecuteNode_ExecutionFailure(t *testing.T) {
 	mockComponents.ResourceManager.EXPECT().ReleaseNode("test-node").Return(nil)
 	mockComponents.Storage.EXPECT().Put(mock.Anything, "workflow:state:test-workflow", mock.AnythingOfType("[]uint8")).Return(nil)
 
+	// Mock the ReleaseWorkClaim call that happens in defer
+	mockComponents.Queue.EXPECT().ReleaseWorkClaim(mock.Anything, item.ID, engine.nodeID).Return(nil).Maybe()
+
 	err := executor.ExecuteNode(context.Background(), item)
 
 	assert.NoError(t, err)
@@ -159,11 +180,13 @@ func TestNodeExecutor_ExecuteNode_ExecutionFailure(t *testing.T) {
 func TestNodeExecutor_ExecuteNode_Success(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
+	mockSemaphore := mocks.NewMockSemaphorePort(t)
 
 	engine.SetNodeRegistry(mockComponents.NodeRegistry)
 	engine.SetResourceManager(mockComponents.ResourceManager)
 	engine.SetStorage(mockComponents.Storage)
 	engine.SetQueue(mockComponents.Queue)
+	engine.SetSemaphore(mockSemaphore)
 
 	executor := NewNodeExecutor(engine)
 
@@ -190,9 +213,18 @@ func TestNodeExecutor_ExecuteNode_Success(t *testing.T) {
 	mockComponents.ResourceManager.EXPECT().AcquireNode("test-node").Return(nil)
 	mockComponents.ResourceManager.EXPECT().ReleaseNode("test-node").Return(nil)
 	mockComponents.Storage.EXPECT().Put(mock.Anything, "workflow:state:test-workflow", mock.AnythingOfType("[]uint8")).Return(nil)
+	// Add a catch-all for any other storage operations (execution data, etc.)
+	mockComponents.Storage.EXPECT().Put(mock.Anything, mock.Anything, mock.AnythingOfType("[]uint8")).Return(nil).Maybe()
 	mockComponents.Queue.EXPECT().EnqueueReady(mock.Anything, mock.MatchedBy(func(item ports.QueueItem) bool {
 		return item.WorkflowID == "test-workflow" && item.NodeName == "next-node"
 	})).Return(nil)
+
+	// Mock the ReleaseWorkClaim call that happens in defer
+	mockComponents.Queue.EXPECT().ReleaseWorkClaim(mock.Anything, item.ID, engine.nodeID).Return(nil).Maybe()
+
+	// Mock semaphore operations for workflow state locking
+	mockSemaphore.EXPECT().Acquire(mock.Anything, "test-workflow", mock.Anything, mock.Anything).Return(nil)
+	mockSemaphore.EXPECT().Release(mock.Anything, "test-workflow", mock.Anything).Return(nil)
 
 	err := executor.ExecuteNode(context.Background(), item)
 
@@ -214,6 +246,7 @@ func TestNodeExecutor_ExecuteNode_AcquireResourcesFails(t *testing.T) {
 
 	engine.SetNodeRegistry(mockComponents.NodeRegistry)
 	engine.SetResourceManager(mockComponents.ResourceManager)
+	engine.SetQueue(mockComponents.Queue)
 
 	executor := NewNodeExecutor(engine)
 
@@ -229,6 +262,9 @@ func TestNodeExecutor_ExecuteNode_AcquireResourcesFails(t *testing.T) {
 	mockComponents.NodeRegistry.EXPECT().GetNode("test-node").Return(testNode, nil)
 	mockComponents.ResourceManager.EXPECT().CanExecuteNode("test-node").Return(true)
 	mockComponents.ResourceManager.EXPECT().AcquireNode("test-node").Return(assert.AnError)
+
+	// Mock the ReleaseWorkClaim call that happens in defer
+	mockComponents.Queue.EXPECT().ReleaseWorkClaim(mock.Anything, item.ID, engine.nodeID).Return(nil).Maybe()
 
 	err := executor.ExecuteNode(context.Background(), item)
 
@@ -309,7 +345,7 @@ func TestNodeExecutor_QueueNextNode_CannotStart(t *testing.T) {
 	testNode := workflow.CreateTestNode("next-node", func(ctx context.Context, globalState interface{}, config interface{}) (interface{}, []ports.NextNode, error) {
 		return nil, nil, nil
 	})
-	testNode.CanStartFunc = func(ctx context.Context, globalState interface{}, config interface{}) bool {
+	testNode.CanStartFunc = func(ctx context.Context, args ...interface{}) bool {
 		return false
 	}
 	mockComponents.NodeRegistry.EXPECT().GetNode("next-node").Return(testNode, nil)
@@ -354,7 +390,9 @@ func TestNodeExecutor_HandleExecutionFailure(t *testing.T) {
 func TestNodeExecutor_UpdateWorkflowState(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
+	mockSemaphore := mocks.NewMockSemaphorePort(t)
 	engine.SetStorage(mockComponents.Storage)
+	engine.SetSemaphore(mockSemaphore)
 
 	executor := NewNodeExecutor(engine)
 
@@ -377,6 +415,12 @@ func TestNodeExecutor_UpdateWorkflowState(t *testing.T) {
 	}
 
 	mockComponents.Storage.EXPECT().Put(mock.Anything, "workflow:state:test-workflow", mock.AnythingOfType("[]uint8")).Return(nil)
+	// Add a catch-all for any other storage operations (execution data, etc.)
+	mockComponents.Storage.EXPECT().Put(mock.Anything, mock.Anything, mock.AnythingOfType("[]uint8")).Return(nil).Maybe()
+
+	// Mock semaphore operations for workflow state locking
+	mockSemaphore.EXPECT().Acquire(mock.Anything, "test-workflow", mock.Anything, mock.Anything).Return(nil)
+	mockSemaphore.EXPECT().Release(mock.Anything, "test-workflow", mock.Anything).Return(nil)
 
 	err := executor.updateWorkflowState(context.Background(), workflowObj, results, &executedNode)
 
@@ -393,7 +437,9 @@ func TestNodeExecutor_UpdateWorkflowState(t *testing.T) {
 func TestNodeExecutor_UpdateWorkflowState_NonMapResults(t *testing.T) {
 	engine := NewEngine(Config{}, slog.Default())
 	mockComponents := workflow.SetupMockComponents(t)
+	mockSemaphore := mocks.NewMockSemaphorePort(t)
 	engine.SetStorage(mockComponents.Storage)
+	engine.SetSemaphore(mockSemaphore)
 
 	executor := NewNodeExecutor(engine)
 
@@ -410,17 +456,16 @@ func TestNodeExecutor_UpdateWorkflowState_NonMapResults(t *testing.T) {
 		Status:   ports.NodeExecutionStatusCompleted,
 	}
 
-	mockComponents.Storage.EXPECT().Put(mock.Anything, "workflow:state:test-workflow", mock.AnythingOfType("[]uint8")).Return(nil)
+	// No storage expectations since merge will fail and error before persist
+	// Mock semaphore operations for workflow state locking
+	mockSemaphore.EXPECT().Acquire(mock.Anything, "test-workflow", mock.Anything, mock.Anything).Return(nil)
+	mockSemaphore.EXPECT().Release(mock.Anything, "test-workflow", mock.Anything).Return(nil)
 
 	err := executor.updateWorkflowState(context.Background(), workflowObj, results, &executedNode)
 
-	assert.NoError(t, err)
-
-	if stateMap, ok := workflowObj.CurrentState.(map[string]interface{}); ok {
-		assert.Equal(t, "value", stateMap["existing"])
-	} else {
-		t.Error("Expected CurrentState to be a map[string]interface{}")
-	}
+	// With strict mergo-only policy, incompatible types should error
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to merge workflow state using mergo")
 }
 
 func TestSerializeWorkflowData(t *testing.T) {
