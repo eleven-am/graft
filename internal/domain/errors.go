@@ -3,304 +3,311 @@ package domain
 import (
 	"errors"
 	"fmt"
-	"strings"
 )
 
-type ErrorType string
+var (
+	ErrAlreadyStarted  = errors.New("adapter already started")
+	ErrAlreadyShutdown = errors.New("already shutdown")
+	ErrNotStarted      = errors.New("adapter not started")
+	ErrNotFound        = errors.New("resource not found")
+	ErrInvalidConfig   = errors.New("invalid configuration")
+	ErrTimeout         = errors.New("operation timeout")
+	ErrConnection      = errors.New("connection error")
+	ErrInvalidInput    = errors.New("invalid input")
+	ErrInternalError   = errors.New("internal error")
+	ErrAlreadyExists   = errors.New("resource already exists")
+)
+
+type TransportError struct {
+	Op      string
+	Adapter string
+	Err     error
+}
+
+func (e *TransportError) Error() string {
+	return fmt.Sprintf("transport[%s] %s: %v", e.Adapter, e.Op, e.Err)
+}
+
+func (e *TransportError) Unwrap() error {
+	return e.Err
+}
+
+func NewTransportError(adapter, op string, err error) *TransportError {
+	return &TransportError{
+		Op:      op,
+		Adapter: adapter,
+		Err:     err,
+	}
+}
+
+type DiscoveryError struct {
+	Op      string
+	Adapter string
+	Err     error
+}
+
+func (e *DiscoveryError) Error() string {
+	return fmt.Sprintf("discovery[%s] %s: %v", e.Adapter, e.Op, e.Err)
+}
+
+func (e *DiscoveryError) Unwrap() error {
+	return e.Err
+}
+
+func NewDiscoveryError(adapter, op string, err error) *DiscoveryError {
+	return &DiscoveryError{
+		Op:      op,
+		Adapter: adapter,
+		Err:     err,
+	}
+}
+
+type ConnectionError struct {
+	Target string
+	Err    error
+}
+
+func (e *ConnectionError) Error() string {
+	return fmt.Sprintf("connection to %s failed: %v", e.Target, e.Err)
+}
+
+func (e *ConnectionError) Unwrap() error {
+	return e.Err
+}
+
+func NewConnectionError(target string, err error) *ConnectionError {
+	return &ConnectionError{
+		Target: target,
+		Err:    err,
+	}
+}
+
+type LeaderError struct {
+	Op  string
+	Err error
+}
+
+func (e *LeaderError) Error() string {
+	return fmt.Sprintf("leader %s: %v", e.Op, e.Err)
+}
+
+func (e *LeaderError) Unwrap() error {
+	return e.Err
+}
+
+func NewLeaderError(op string, err error) *LeaderError {
+	return &LeaderError{
+		Op:  op,
+		Err: err,
+	}
+}
+
+type ConfigError struct {
+	Field string
+	Err   error
+}
+
+func (e *ConfigError) Error() string {
+	return fmt.Sprintf("config field %s: %v", e.Field, e.Err)
+}
+
+func (e *ConfigError) Unwrap() error {
+	return e.Err
+}
+
+func NewConfigError(field string, err error) *ConfigError {
+	return &ConfigError{
+		Field: field,
+		Err:   err,
+	}
+}
+
+type SemaphoreError struct {
+	SemaphoreID string
+	Op          string
+	Err         error
+}
+
+func (e *SemaphoreError) Error() string {
+	return fmt.Sprintf("semaphore[%s] %s: %v", e.SemaphoreID, e.Op, e.Err)
+}
+
+func (e *SemaphoreError) Unwrap() error {
+	return e.Err
+}
+
+func NewSemaphoreError(semaphoreID, op string, err error) *SemaphoreError {
+	return &SemaphoreError{
+		SemaphoreID: semaphoreID,
+		Op:          op,
+		Err:         err,
+	}
+}
+
+type ResourceError struct {
+	Resource string
+	Op       string
+	Err      error
+}
+
+func (e *ResourceError) Error() string {
+	return fmt.Sprintf("resource[%s] %s: %v", e.Resource, e.Op, e.Err)
+}
+
+func (e *ResourceError) Unwrap() error {
+	return e.Err
+}
+
+func NewResourceError(resource, op string, err error) *ResourceError {
+	return &ResourceError{
+		Resource: resource,
+		Op:       op,
+		Err:      err,
+	}
+}
+
+type WorkflowError struct {
+	WorkflowID string
+	Op         string
+	Err        error
+}
+
+func (e *WorkflowError) Error() string {
+	return fmt.Sprintf("workflow[%s] %s: %v", e.WorkflowID, e.Op, e.Err)
+}
+
+func (e *WorkflowError) Unwrap() error {
+	return e.Err
+}
+
+func NewWorkflowError(workflowID, op string, err error) *WorkflowError {
+	return &WorkflowError{
+		WorkflowID: workflowID,
+		Op:         op,
+		Err:        err,
+	}
+}
+
+type NodeError struct {
+	NodeName string
+	Op       string
+	Err      error
+}
+
+func (e *NodeError) Error() string {
+	return fmt.Sprintf("node[%s] %s: %v", e.NodeName, e.Op, e.Err)
+}
+
+func (e *NodeError) Unwrap() error {
+	return e.Err
+}
+
+func NewNodeError(nodeName, op string, err error) *NodeError {
+	return &NodeError{
+		NodeName: nodeName,
+		Op:       op,
+		Err:      err,
+	}
+}
+
+type StorageError struct {
+	Operation string
+	Key       string
+	Err       error
+}
+
+func (e *StorageError) Error() string {
+	if e.Key != "" {
+		return fmt.Sprintf("storage[%s] key[%s]: %v", e.Operation, e.Key, e.Err)
+	}
+	return fmt.Sprintf("storage[%s]: %v", e.Operation, e.Err)
+}
+
+func (e *StorageError) Unwrap() error {
+	return e.Err
+}
+
+func NewStorageError(operation, key string, err error) *StorageError {
+	return &StorageError{
+		Operation: operation,
+		Key:       key,
+		Err:       err,
+	}
+}
+
+var (
+	ErrConflict      = errors.New("resource conflict")
+	ErrUnauthorized  = errors.New("unauthorized operation")
+	ErrExpired       = errors.New("resource expired")
+	ErrCapacityLimit = errors.New("capacity limit reached")
+	ErrInvalidState  = errors.New("invalid state")
+)
+
+func IsAlreadyStarted(err error) bool {
+	return errors.Is(err, ErrAlreadyStarted)
+}
+
+func IsNotStarted(err error) bool {
+	return errors.Is(err, ErrNotStarted)
+}
+
+func IsConnectionError(err error) bool {
+	var connErr *ConnectionError
+	return errors.As(err, &connErr) || errors.Is(err, ErrConnection)
+}
+
+func IsConfigError(err error) bool {
+	var configErr *ConfigError
+	return errors.As(err, &configErr) || errors.Is(err, ErrInvalidConfig)
+}
+
+func IsTransportError(err error) bool {
+	var transportErr *TransportError
+	return errors.As(err, &transportErr)
+}
+
+func IsDiscoveryError(err error) bool {
+	var discoveryErr *DiscoveryError
+	return errors.As(err, &discoveryErr)
+}
+
+func IsNotFoundError(err error) bool {
+	return errors.Is(err, ErrNotFound)
+}
+
+func NewNotFoundError(resourceType, identifier string) error {
+	return fmt.Errorf("%s %s: %w", resourceType, identifier, ErrNotFound)
+}
+
+func IsKeyNotFound(err error) bool {
+	return errors.Is(err, ErrNotFound)
+}
 
 const (
-	ErrorTypeNotFound     ErrorType = "not_found"
-	ErrorTypeValidation   ErrorType = "validation"
-	ErrorTypeConflict     ErrorType = "conflict"
-	ErrorTypeInternal     ErrorType = "internal"
-	ErrorTypeUnavailable  ErrorType = "unavailable"
-	ErrorTypeUnauthorized ErrorType = "unauthorized"
-	ErrorTypeTimeout      ErrorType = "timeout"
-	ErrorTypeRateLimit    ErrorType = "rate_limit"
+	ErrorTypeValidation  = "validation"
+	ErrorTypeInternal    = "internal"
+	ErrorTypeConflict    = "conflict"
+	ErrorTypeNotFound    = "not_found"
+	ErrorTypeUnavailable = "unavailable"
+	ErrorTypeRateLimit   = "rate_limit"
 )
 
 type Error struct {
-	Type    ErrorType
-	Message string
-	Details map[string]interface{}
+	Type    string                 `json:"type"`
+	Message string                 `json:"message"`
+	Details map[string]interface{} `json:"details,omitempty"`
 }
 
 func (e Error) Error() string {
+	if e.Details != nil {
+		return fmt.Sprintf("%s: %s (details: %v)", e.Type, e.Message, e.Details)
+	}
 	return fmt.Sprintf("%s: %s", e.Type, e.Message)
 }
 
-var ErrKeyNotFound = errors.New("key not found")
-
-func IsKeyNotFound(err error) bool {
-	if err == nil {
-		return false
-	}
-	
-	if errors.Is(err, ErrKeyNotFound) {
-		return true
-	}
-	
-	errStr := err.Error()
-	return strings.Contains(errStr, "not found") ||
-		   strings.Contains(errStr, "no such key")
-}
-
-func NewNotFoundError(resource string, id string) error {
-	return Error{
-		Type:    ErrorTypeNotFound,
-		Message: fmt.Sprintf("%s not found", resource),
-		Details: map[string]interface{}{
-			"resource": resource,
-			"id":       id,
-		},
-	}
-}
-
-func NewValidationError(field string, reason string) error {
+func NewValidationError(field, message string) error {
 	return Error{
 		Type:    ErrorTypeValidation,
-		Message: fmt.Sprintf("validation failed for field %s: %s", field, reason),
-		Details: map[string]interface{}{
-			"field":  field,
-			"reason": reason,
-		},
+		Message: fmt.Sprintf("%s: %s", field, message),
 	}
-}
-
-func NewConflictError(resource string, reason string) error {
-	return Error{
-		Type:    ErrorTypeConflict,
-		Message: fmt.Sprintf("conflict on %s: %s", resource, reason),
-		Details: map[string]interface{}{
-			"resource": resource,
-			"reason":   reason,
-		},
-	}
-}
-
-func NewClaimConflictError(workItemID, existingNodeID, requestingNodeID string) error {
-	return Error{
-		Type:    ErrorTypeConflict,
-		Message: fmt.Sprintf("work item %s is already claimed by node %s", workItemID, existingNodeID),
-		Details: map[string]interface{}{
-			"work_item_id":       workItemID,
-			"existing_node_id":   existingNodeID,
-			"requesting_node_id": requestingNodeID,
-			"error_type":         "claim_conflict",
-		},
-	}
-}
-
-func NewClaimExpiredError(workItemID, nodeID string) error {
-	return Error{
-		Type:    ErrorTypeConflict,
-		Message: fmt.Sprintf("claim for work item %s by node %s has expired", workItemID, nodeID),
-		Details: map[string]interface{}{
-			"work_item_id": workItemID,
-			"node_id":      nodeID,
-			"error_type":   "claim_expired",
-		},
-	}
-}
-
-func NewClaimNotFoundError(workItemID, nodeID string) error {
-	return Error{
-		Type:    ErrorTypeNotFound,
-		Message: fmt.Sprintf("no active claim found for work item %s by node %s", workItemID, nodeID),
-		Details: map[string]interface{}{
-			"work_item_id": workItemID,
-			"node_id":      nodeID,
-			"error_type":   "claim_not_found",
-		},
-	}
-}
-
-type PanicError struct {
-	PanicValue interface{}
-	StackTrace string
-}
-
-func (pe *PanicError) Error() string {
-	return fmt.Sprintf("panic occurred during execution: %v", pe.PanicValue)
-}
-
-type ActionableError struct {
-	BaseError     Error
-	Action        string
-	Documentation string
-	Examples      []string
-}
-
-func (ae ActionableError) Error() string {
-	message := ae.BaseError.Error()
-	if ae.Action != "" {
-		message += fmt.Sprintf(" | Action: %s", ae.Action)
-	}
-	if ae.Documentation != "" {
-		message += fmt.Sprintf(" | See: %s", ae.Documentation)
-	}
-	return message
-}
-
-func NewActionableError(baseError Error, action, documentation string, examples []string) error {
-	return ActionableError{
-		BaseError:     baseError,
-		Action:        action,
-		Documentation: documentation,
-		Examples:      examples,
-	}
-}
-
-func NewConfigurationError(field, issue, suggestion string) error {
-	baseError := Error{
-		Type:    ErrorTypeValidation,
-		Message: fmt.Sprintf("configuration issue in field '%s': %s", field, issue),
-		Details: map[string]interface{}{
-			"field":      field,
-			"issue":      issue,
-			"error_type": "configuration",
-		},
-	}
-	
-	return NewActionableError(
-		baseError,
-		suggestion,
-		"Check configuration documentation",
-		[]string{fmt.Sprintf("Set %s to a valid value", field)},
-	)
-}
-
-func NewConnectionError(target, issue string) error {
-	baseError := Error{
-		Type:    ErrorTypeUnavailable,
-		Message: fmt.Sprintf("connection failed to %s: %s", target, issue),
-		Details: map[string]interface{}{
-			"target":     target,
-			"issue":      issue,
-			"error_type": "connection",
-		},
-	}
-	
-	actions := []string{
-		"Verify network connectivity",
-		"Check if target service is running",
-		"Validate firewall/security group rules",
-		"Confirm endpoint configuration",
-	}
-	
-	return NewActionableError(
-		baseError,
-		"Check network connectivity and service availability",
-		"Network troubleshooting guide",
-		actions,
-	)
-}
-
-func NewResourceExhaustionError(resource, limit string) error {
-	baseError := Error{
-		Type:    ErrorTypeRateLimit,
-		Message: fmt.Sprintf("resource exhaustion: %s limit reached (%s)", resource, limit),
-		Details: map[string]interface{}{
-			"resource":   resource,
-			"limit":      limit,
-			"error_type": "resource_exhaustion",
-		},
-	}
-	
-	actions := []string{
-		fmt.Sprintf("Increase %s limit in configuration", resource),
-		"Scale up resources if possible",
-		"Implement backpressure or queue management",
-		"Review resource usage patterns",
-	}
-	
-	return NewActionableError(
-		baseError,
-		fmt.Sprintf("Scale up %s resources or implement throttling", resource),
-		"Resource scaling guide",
-		actions,
-	)
-}
-
-func NewWorkflowStateError(workflowID, expectedState, actualState string) error {
-	baseError := Error{
-		Type:    ErrorTypeConflict,
-		Message: fmt.Sprintf("workflow %s state mismatch: expected %s, got %s", 
-			workflowID, expectedState, actualState),
-		Details: map[string]interface{}{
-			"workflow_id":    workflowID,
-			"expected_state": expectedState,
-			"actual_state":   actualState,
-			"error_type":     "workflow_state",
-		},
-	}
-	
-	actions := []string{
-		"Check workflow definition for state transitions",
-		"Verify node execution completed successfully",
-		"Review workflow execution logs",
-		"Consider workflow recovery or restart",
-	}
-	
-	return NewActionableError(
-		baseError,
-		"Review workflow execution and state management",
-		"Workflow troubleshooting documentation",
-		actions,
-	)
-}
-
-func NewDependencyError(component, dependency, issue string) error {
-	baseError := Error{
-		Type:    ErrorTypeUnavailable,
-		Message: fmt.Sprintf("%s dependency unavailable: %s - %s", component, dependency, issue),
-		Details: map[string]interface{}{
-			"component":  component,
-			"dependency": dependency,
-			"issue":      issue,
-			"error_type": "dependency",
-		},
-	}
-	
-	actions := []string{
-		fmt.Sprintf("Verify %s service is running", dependency),
-		"Check service discovery and registration",
-		"Validate network connectivity",
-		"Review dependency health checks",
-		"Consider implementing circuit breaker pattern",
-	}
-	
-	return NewActionableError(
-		baseError,
-		fmt.Sprintf("Ensure %s service is healthy and accessible", dependency),
-		"Dependency management guide",
-		actions,
-	)
-}
-
-func NewDataConsistencyError(operation, details string) error {
-	baseError := Error{
-		Type:    ErrorTypeInternal,
-		Message: fmt.Sprintf("data consistency issue during %s: %s", operation, details),
-		Details: map[string]interface{}{
-			"operation":  operation,
-			"details":    details,
-			"error_type": "data_consistency",
-		},
-	}
-	
-	actions := []string{
-		"Review distributed system consistency settings",
-		"Check for concurrent modification conflicts",
-		"Verify transaction isolation levels",
-		"Consider implementing optimistic locking",
-		"Review data replication and synchronization",
-	}
-	
-	return NewActionableError(
-		baseError,
-		"Review consistency model and conflict resolution strategy",
-		"Distributed systems consistency guide",
-		actions,
-	)
 }

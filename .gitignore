@@ -43,3 +43,5 @@ Thumbs.db
 .env
 .env.local
 CLAUDE.md
+/CODING_GUIDELINES.md
+/TESTING_GUIDELINES.md

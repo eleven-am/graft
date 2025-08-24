@@ -8,16 +8,17 @@ import (
 )
 
 type MetricsTracker struct {
-	panicMetrics   PanicMetricsData
-	handlerMetrics HandlerMetricsData
-	mu             sync.RWMutex
+	panicMetrics         PanicMetricsData
+	handlerMetrics       HandlerMetricsData
+	nodeExecutionMetrics NodeExecutionMetricsData
+	mu                   sync.RWMutex
 }
 
 type PanicMetricsData struct {
-	TotalPanics      int64
-	PanicsLastHour   []time.Time
-	RecoveryTimes    []time.Duration
-	LastPanicAt      *time.Time
+	TotalPanics    int64
+	PanicsLastHour []time.Time
+	RecoveryTimes  []time.Duration
+	LastPanicAt    *time.Time
 }
 
 type HandlerMetricsData struct {
@@ -28,6 +29,13 @@ type HandlerMetricsData struct {
 	HandlerTimeouts            int64
 }
 
+type NodeExecutionMetricsData struct {
+	NodesExecuted      int64
+	SuccessfulNodes    int64
+	FailedNodes        int64
+	NodeExecutionTimes []time.Duration
+}
+
 func NewMetricsTracker() *MetricsTracker {
 	return &MetricsTracker{
 		panicMetrics: PanicMetricsData{
@@ -36,6 +44,9 @@ func NewMetricsTracker() *MetricsTracker {
 		},
 		handlerMetrics: HandlerMetricsData{
 			HandlerTimes: make([]time.Duration, 0, 1000),
+		},
+		nodeExecutionMetrics: NodeExecutionMetricsData{
+			NodeExecutionTimes: make([]time.Duration, 0, 1000),
 		},
 	}
 }
@@ -48,12 +59,12 @@ func (mt *MetricsTracker) RecordPanic(recoveryTime time.Duration) {
 	mt.panicMetrics.TotalPanics++
 	mt.panicMetrics.LastPanicAt = &now
 	mt.panicMetrics.PanicsLastHour = append(mt.panicMetrics.PanicsLastHour, now)
-	
+
 	mt.panicMetrics.RecoveryTimes = append(mt.panicMetrics.RecoveryTimes, recoveryTime)
 	if len(mt.panicMetrics.RecoveryTimes) > 100 {
 		mt.panicMetrics.RecoveryTimes = mt.panicMetrics.RecoveryTimes[1:]
 	}
-	
+
 	mt.cleanupOldPanics()
 }
 
@@ -65,7 +76,7 @@ func (mt *MetricsTracker) RecordCompletionHandler(duration time.Duration, succes
 	if !success {
 		mt.handlerMetrics.HandlerFailures++
 	}
-	
+
 	mt.handlerMetrics.HandlerTimes = append(mt.handlerMetrics.HandlerTimes, duration)
 	if len(mt.handlerMetrics.HandlerTimes) > 1000 {
 		mt.handlerMetrics.HandlerTimes = mt.handlerMetrics.HandlerTimes[1:]
@@ -80,7 +91,7 @@ func (mt *MetricsTracker) RecordErrorHandler(duration time.Duration, success boo
 	if !success {
 		mt.handlerMetrics.HandlerFailures++
 	}
-	
+
 	mt.handlerMetrics.HandlerTimes = append(mt.handlerMetrics.HandlerTimes, duration)
 	if len(mt.handlerMetrics.HandlerTimes) > 1000 {
 		mt.handlerMetrics.HandlerTimes = mt.handlerMetrics.HandlerTimes[1:]
@@ -90,8 +101,25 @@ func (mt *MetricsTracker) RecordErrorHandler(duration time.Duration, success boo
 func (mt *MetricsTracker) RecordHandlerTimeout() {
 	mt.mu.Lock()
 	defer mt.mu.Unlock()
-	
+
 	mt.handlerMetrics.HandlerTimeouts++
+}
+
+func (mt *MetricsTracker) RecordNodeExecution(duration time.Duration, success bool) {
+	mt.mu.Lock()
+	defer mt.mu.Unlock()
+
+	mt.nodeExecutionMetrics.NodesExecuted++
+	if success {
+		mt.nodeExecutionMetrics.SuccessfulNodes++
+	} else {
+		mt.nodeExecutionMetrics.FailedNodes++
+	}
+
+	mt.nodeExecutionMetrics.NodeExecutionTimes = append(mt.nodeExecutionMetrics.NodeExecutionTimes, duration)
+	if len(mt.nodeExecutionMetrics.NodeExecutionTimes) > 1000 {
+		mt.nodeExecutionMetrics.NodeExecutionTimes = mt.nodeExecutionMetrics.NodeExecutionTimes[1:]
+	}
 }
 
 func (mt *MetricsTracker) GetPanicMetrics() ports.PanicMetrics {
@@ -99,7 +127,7 @@ func (mt *MetricsTracker) GetPanicMetrics() ports.PanicMetrics {
 	defer mt.mu.RUnlock()
 
 	mt.cleanupOldPanics()
-	
+
 	var avgRecoveryTime time.Duration
 	if len(mt.panicMetrics.RecoveryTimes) > 0 {
 		var total time.Duration
@@ -139,15 +167,21 @@ func (mt *MetricsTracker) GetHandlerMetrics() ports.HandlerMetrics {
 	}
 }
 
+func (mt *MetricsTracker) GetNodesExecuted() int64 {
+	mt.mu.RLock()
+	defer mt.mu.RUnlock()
+	return mt.nodeExecutionMetrics.NodesExecuted
+}
+
 func (mt *MetricsTracker) cleanupOldPanics() {
 	cutoff := time.Now().Add(-1 * time.Hour)
 	filtered := make([]time.Time, 0, len(mt.panicMetrics.PanicsLastHour))
-	
+
 	for _, panicTime := range mt.panicMetrics.PanicsLastHour {
 		if panicTime.After(cutoff) {
 			filtered = append(filtered, panicTime)
 		}
 	}
-	
+
 	mt.panicMetrics.PanicsLastHour = filtered
 }

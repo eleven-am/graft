@@ -1,9 +1,6 @@
 package ports
 
-import (
-	"context"
-	"time"
-)
+import "context"
 
 type StoragePort interface {
 	Put(ctx context.Context, key string, value []byte) error
@@ -11,20 +8,7 @@ type StoragePort interface {
 	Delete(ctx context.Context, key string) error
 	List(ctx context.Context, prefix string) ([]KeyValue, error)
 	Batch(ctx context.Context, ops []Operation) error
-}
-
-type ExtendedStoragePort interface {
-	StoragePort
-	
-	GetWithConsistency(ctx context.Context, key string, level ConsistencyLevel) ([]byte, error)
-	SetConsistencyLevel(level ConsistencyLevel)
-	
-	UpdateConfig(config StorageConfig) error
-	GetConfig() StorageConfig
-	
-	SetQuorumConfig(config QuorumReadConfig)
-	SetForwardingEnabled(enabled bool)
-	SetCacheSize(size int64)
+	Close() error
 }
 
 type KeyValue struct {
@@ -45,32 +29,10 @@ const (
 	OpDelete
 )
 
-type ConsistencyLevel int
+var ErrKeyNotFound = &KeyNotFoundError{}
 
-const (
-	ConsistencyLeader ConsistencyLevel = iota
-	ConsistencyEventual
-	ConsistencyQuorum
-)
+type KeyNotFoundError struct{}
 
-type QuorumReadConfig struct {
-	MinReplicas      int
-	ReadTimeout      time.Duration
-	ConsistencyLevel ConsistencyLevel
-	RetryAttempts    int
-}
-
-type StorageConfig struct {
-	DefaultConsistencyLevel ConsistencyLevel
-	QuorumConfig           QuorumReadConfig
-	ForwardingEnabled      bool
-	ForwardingTimeout      time.Duration
-	CacheSize              int64
-	CacheTTL               time.Duration
-	MaxRetries             int
-	RetryBackoff           time.Duration
-	BatchSize              int
-	CompactionInterval     time.Duration
-	MetricsEnabled         bool
-	HealthCheckInterval    time.Duration
+func (e *KeyNotFoundError) Error() string {
+	return "key not found"
 }

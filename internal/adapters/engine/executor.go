@@ -30,7 +30,7 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 	)
 
 	defer func() {
-		if err := ne.engine.queue.ReleaseWorkClaim(ctx, item.ID, ne.engine.nodeID); err != nil {
+		if err := ne.engine.readyQueue.ReleaseWorkClaim(ctx, item.ID, ne.engine.nodeID); err != nil {
 			ne.engine.logger.Error("failed to release work claim",
 				"workflow_id", item.WorkflowID,
 				"node_name", item.NodeName,
@@ -51,7 +51,7 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 		"item_id", item.ID,
 	)
 
-	workflow, err := ne.getWorkflow(item.WorkflowID)
+	workflow, err := ne.getWorkflow(ctx, item.WorkflowID)
 	if err != nil {
 		ne.engine.logger.Error("failed to get workflow",
 			"workflow_id", item.WorkflowID,
@@ -129,9 +129,25 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 		return nil
 	}
 
+	ne.engine.logger.Debug("executing node",
+		"workflow_id", item.WorkflowID,
+		"node_name", item.NodeName,
+		"current_state_type", fmt.Sprintf("%T", currentState),
+	)
+
 	startTime := time.Now()
 	results, nextNodes, err := ne.recoverableExecutor.ExecuteWithRecovery(ctx, node, currentState, item.Config, item)
 	duration := time.Since(startTime)
+
+	ne.engine.logger.Debug("node execution completed",
+		"workflow_id", item.WorkflowID,
+		"node_name", item.NodeName,
+		"duration", duration,
+		"error", err,
+		"result_type", fmt.Sprintf("%T", results),
+		"next_nodes_count", len(nextNodes),
+		"next_nodes_count", len(nextNodes),
+	)
 
 	executedNode := ports.ExecutedNode{
 		NodeName:   item.NodeName,
@@ -171,7 +187,7 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 		return nil
 	}
 
-	ne.engine.logger.Info("node execution completed successfully",
+	ne.engine.logger.Debug("node execution completed successfully",
 		"workflow_id", item.WorkflowID,
 		"node_name", item.NodeName,
 		"duration", duration,
@@ -179,8 +195,18 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 	)
 
 	if err := ne.updateWorkflowState(ctx, workflow, results, &executedNode); err != nil {
+		ne.engine.logger.Error("updateWorkflowState failed - aborting node processing",
+			"workflow_id", item.WorkflowID,
+			"node_name", item.NodeName,
+			"error", err.Error(),
+		)
 		return err
 	}
+
+	ne.engine.logger.Debug("workflow state updated successfully",
+		"workflow_id", item.WorkflowID,
+		"node_name", item.NodeName,
+	)
 
 	if err := ne.triggerEvaluationAfterExecution(ctx, item.WorkflowID, item.NodeName, workflow.CurrentState); err != nil {
 		ne.engine.logger.Error("failed to trigger evaluation after execution",
@@ -190,13 +216,32 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 		)
 	}
 
-	for _, nextNode := range nextNodes {
+	ne.engine.logger.Debug("queueing next nodes",
+		"workflow_id", item.WorkflowID,
+		"current_node", item.NodeName,
+		"next_nodes_count", len(nextNodes),
+	)
+
+	for i, nextNode := range nextNodes {
+		ne.engine.logger.Debug("queueing next node",
+			"workflow_id", item.WorkflowID,
+			"current_node", item.NodeName,
+			"next_node_index", i,
+			"node_name", nextNode.NodeName,
+		)
+
 		if err := ne.queueNextNode(ctx, item.WorkflowID, nextNode); err != nil {
 			ne.engine.logger.Error("failed to queue next node",
 				"workflow_id", item.WorkflowID,
 				"current_node", item.NodeName,
 				"next_node", nextNode.NodeName,
 				"error", err.Error(),
+			)
+		} else {
+			ne.engine.logger.Debug("next node queued successfully",
+				"workflow_id", item.WorkflowID,
+				"current_node", item.NodeName,
+				"next_node", nextNode.NodeName,
 			)
 		}
 	}
@@ -217,12 +262,13 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 	return nil
 }
 
-func (ne *NodeExecutor) getWorkflow(workflowID string) (*WorkflowInstance, error) {
-	ne.engine.mu.RLock()
-	workflow, exists := ne.engine.activeWorkflows[workflowID]
-	ne.engine.mu.RUnlock()
+func (ne *NodeExecutor) getWorkflow(ctx context.Context, workflowID string) (*WorkflowInstance, error) {
+	workflow, err := ne.engine.stateManager.LoadWorkflowState(ctx, workflowID)
+	if err != nil {
+		return nil, err
+	}
 
-	if !exists {
+	if workflow == nil {
 		return nil, domain.NewNotFoundError("workflow", workflowID)
 	}
 
@@ -237,7 +283,7 @@ func (ne *NodeExecutor) requeueNode(ctx context.Context, item *ports.QueueItem, 
 	)
 
 	time.Sleep(ne.engine.config.RetryBackoff)
-	return ne.engine.queue.EnqueueReady(ctx, *item)
+	return ne.engine.readyQueue.Enqueue(ctx, *item)
 }
 
 func (ne *NodeExecutor) requeueToPending(ctx context.Context, item *ports.QueueItem, reason string) error {
@@ -247,14 +293,13 @@ func (ne *NodeExecutor) requeueToPending(ctx context.Context, item *ports.QueueI
 		"reason", reason,
 	)
 
-	return ne.engine.queue.EnqueuePending(ctx, *item)
+	return ne.engine.pendingQueue.Enqueue(ctx, *item)
 }
 
 func (ne *NodeExecutor) handleExecutionFailure(ctx context.Context, workflow *WorkflowInstance, item *ports.QueueItem, execErr error) error {
 	workflow.mu.Lock()
 	errorStr := execErr.Error()
 	workflow.LastError = &errorStr
-	currentState := workflow.CurrentState
 	workflow.mu.Unlock()
 
 	ne.engine.logger.Error("marking workflow as failed",
@@ -273,24 +318,31 @@ func (ne *NodeExecutor) handleExecutionFailure(ctx context.Context, workflow *Wo
 		return err
 	}
 
-	if ne.engine.lifecycleManager != nil {
-		if err := ne.engine.lifecycleManager.TriggerError(workflow.ID, currentState, execErr); err != nil {
-			ne.engine.logger.Error("failed to trigger error handlers",
+	if ne.engine.lifecycleManager != nil && ne.engine.dataCollector != nil {
+		stackTrace := ""
+		if panicErr, isPanic := execErr.(*domain.WorkflowPanicError); isPanic {
+			stackTrace = panicErr.StackTrace
+		}
+
+		errorData, collectErr := ne.engine.dataCollector.CollectWorkflowErrorData(ctx, workflow, execErr, item.NodeName, stackTrace)
+		if collectErr != nil {
+			ne.engine.logger.Error("failed to collect error data",
 				"workflow_id", workflow.ID,
-				"error", err.Error(),
+				"error", collectErr.Error(),
 			)
+		} else {
+			if err := ne.engine.lifecycleManager.TriggerError(ctx, *errorData); err != nil {
+				ne.engine.logger.Error("failed to trigger error handlers",
+					"workflow_id", workflow.ID,
+					"error", err.Error(),
+				)
+			}
 		}
 	}
 
-	if ne.engine.cleanupScheduler != nil {
-		cleanupOptions := CleanupOptions{
-			PreserveState:   true,
-			PreserveAudit:   true,
-			RetentionPeriod: time.Hour * 24 * 7,
-			Force:           false,
-		}
-		if err := ne.engine.cleanupScheduler.ScheduleWorkflowCleanup(workflow.ID, ports.WorkflowStateFailed, cleanupOptions); err != nil {
-			ne.engine.logger.Error("failed to schedule failed workflow cleanup",
+	if ne.engine.cleaner != nil {
+		if err := ne.engine.cleaner.NukeWorkflow(ctx, workflow.ID); err != nil {
+			ne.engine.logger.Error("failed to cleanup failed workflow",
 				"workflow_id", workflow.ID,
 				"error", err.Error(),
 			)
@@ -301,48 +353,51 @@ func (ne *NodeExecutor) handleExecutionFailure(ctx context.Context, workflow *Wo
 }
 
 func (ne *NodeExecutor) updateWorkflowState(ctx context.Context, workflow *WorkflowInstance, results interface{}, executedNode *ports.ExecutedNode) error {
+	ne.engine.logger.Debug("updating workflow state",
+		"workflow_id", workflow.ID,
+		"node_name", executedNode.NodeName,
+		"semaphore_nil", ne.engine.semaphore == nil,
+	)
+
 	if ne.engine.semaphore == nil {
-		return domain.Error{
-			Type:    domain.ErrorTypeInternal,
-			Message: "semaphore is required for atomic workflow state updates",
-			Details: map[string]interface{}{
-				"workflow_id": workflow.ID,
-				"node_name":   executedNode.NodeName,
-			},
-		}
-	}
-
-	semaphoreTimeout := 30 * time.Second
-	if ne.engine.config.NodeExecutionTimeout > 0 {
-		semaphoreTimeout = ne.engine.config.NodeExecutionTimeout
-	}
-
-	if err := ne.engine.semaphore.Acquire(ctx, workflow.ID, ne.engine.nodeID, semaphoreTimeout); err != nil {
-		ne.engine.logger.Error("failed to acquire workflow state lock",
+		ne.engine.logger.Warn("semaphore is nil - proceeding without atomic locking",
 			"workflow_id", workflow.ID,
 			"node_name", executedNode.NodeName,
-			"error", err.Error(),
 		)
-		return domain.Error{
-			Type:    domain.ErrorTypeConflict,
-			Message: "failed to acquire workflow state lock",
-			Details: map[string]interface{}{
-				"workflow_id": workflow.ID,
-				"node_name":   executedNode.NodeName,
-				"error":       err.Error(),
-			},
+	} else {
+		// Normal path with semaphore locking
+		semaphoreTimeout := 30 * time.Second
+		if ne.engine.config.NodeExecutionTimeout > 0 {
+			semaphoreTimeout = ne.engine.config.NodeExecutionTimeout
 		}
-	}
 
-	defer func() {
-		if err := ne.engine.semaphore.Release(ctx, workflow.ID, ne.engine.nodeID); err != nil {
-			ne.engine.logger.Error("failed to release workflow state lock",
+		if err := ne.engine.semaphore.Acquire(ctx, workflow.ID, ne.engine.nodeID, semaphoreTimeout); err != nil {
+			ne.engine.logger.Error("failed to acquire workflow state lock",
 				"workflow_id", workflow.ID,
 				"node_name", executedNode.NodeName,
 				"error", err.Error(),
 			)
+			return domain.Error{
+				Type:    domain.ErrorTypeConflict,
+				Message: "failed to acquire workflow state lock",
+				Details: map[string]interface{}{
+					"workflow_id": workflow.ID,
+					"node_name":   executedNode.NodeName,
+					"error":       err.Error(),
+				},
+			}
 		}
-	}()
+
+		defer func() {
+			if err := ne.engine.semaphore.Release(ctx, workflow.ID, ne.engine.nodeID); err != nil {
+				ne.engine.logger.Error("failed to release workflow state lock",
+					"workflow_id", workflow.ID,
+					"node_name", executedNode.NodeName,
+					"error", err.Error(),
+				)
+			}
+		}()
+	}
 
 	workflow.mu.Lock()
 	defer workflow.mu.Unlock()
@@ -351,7 +406,7 @@ func (ne *NodeExecutor) updateWorkflowState(ctx context.Context, workflow *Workf
 		if workflow.CurrentState == nil {
 			workflow.CurrentState = results
 		} else {
-			ne.engine.logger.Info("merging states",
+			ne.engine.logger.Debug("merging states",
 				"current_state_type", fmt.Sprintf("%T", workflow.CurrentState),
 				"results_type", fmt.Sprintf("%T", results),
 				"workflow_id", workflow.ID,
@@ -442,6 +497,11 @@ func (ne *NodeExecutor) persistWorkflowState(ctx context.Context, workflow *Work
 }
 
 func (ne *NodeExecutor) queueNextNode(ctx context.Context, workflowID string, nextNode ports.NextNode) error {
+	ne.engine.logger.Debug("queueing next node",
+		"workflow_id", workflowID,
+		"node_name", nextNode.NodeName,
+	)
+
 	item := &ports.QueueItem{
 		ID:         generateItemID(),
 		WorkflowID: workflowID,
@@ -449,6 +509,11 @@ func (ne *NodeExecutor) queueNextNode(ctx context.Context, workflowID string, ne
 		Config:     nextNode.Config,
 		EnqueuedAt: time.Now(),
 	}
+
+	ne.engine.logger.Debug("queue item created",
+		"workflow_id", workflowID,
+		"node_name", item.NodeName,
+	)
 
 	node, err := ne.engine.nodeRegistry.GetNode(nextNode.NodeName)
 	if err != nil {
@@ -460,10 +525,24 @@ func (ne *NodeExecutor) queueNextNode(ctx context.Context, workflowID string, ne
 		return err
 	}
 
-	workflow, err := ne.getWorkflow(workflowID)
+	ne.engine.logger.Debug("node found in registry",
+		"workflow_id", workflowID,
+		"node_name", nextNode.NodeName,
+	)
+
+	workflow, err := ne.getWorkflow(ctx, workflowID)
 	if err != nil {
+		ne.engine.logger.Error("failed to get workflow",
+			"workflow_id", workflowID,
+			"error", err.Error(),
+		)
 		return err
 	}
+
+	ne.engine.logger.Debug("workflow state retrieved",
+		"workflow_id", workflowID,
+		"workflow_status", workflow.Status,
+	)
 
 	if nextNode.IdempotencyKey != nil && *nextNode.IdempotencyKey != "" {
 		if err := ne.checkAndClaimIdempotencyKey(ctx, workflowID, *nextNode.IdempotencyKey); err != nil {
@@ -489,18 +568,57 @@ func (ne *NodeExecutor) queueNextNode(ctx context.Context, workflowID string, ne
 	currentState := workflow.CurrentState
 	workflow.mu.RUnlock()
 
-	if node.CanStart(ctx, currentState, nextNode.Config) {
-		ne.engine.logger.Debug("queueing next node to ready queue",
+	ne.engine.logger.Debug("checking node start conditions",
+		"workflow_id", workflowID,
+		"node_name", nextNode.NodeName,
+		"current_state_type", fmt.Sprintf("%T", currentState),
+	)
+
+	canStart := node.CanStart(ctx, currentState, nextNode.Config)
+	ne.engine.logger.Debug("node start check result",
+		"workflow_id", workflowID,
+		"node_name", nextNode.NodeName,
+		"can_start", canStart,
+	)
+
+	if canStart {
+		ne.engine.logger.Debug("queueing to ready queue",
 			"workflow_id", workflowID,
 			"node_name", nextNode.NodeName,
 		)
-		return ne.engine.queue.EnqueueReady(ctx, *item)
+		err := ne.engine.readyQueue.Enqueue(ctx, *item)
+		if err != nil {
+			ne.engine.logger.Error("failed to enqueue to ready queue",
+				"workflow_id", workflowID,
+				"node_name", nextNode.NodeName,
+				"error", err.Error(),
+			)
+		} else {
+			ne.engine.logger.Debug("node enqueued to ready queue",
+				"workflow_id", workflowID,
+				"node_name", nextNode.NodeName,
+			)
+		}
+		return err
 	} else {
-		ne.engine.logger.Debug("queueing next node to pending queue",
+		ne.engine.logger.Debug("queueing to pending queue",
 			"workflow_id", workflowID,
 			"node_name", nextNode.NodeName,
 		)
-		return ne.engine.queue.EnqueuePending(ctx, *item)
+		err := ne.engine.pendingQueue.Enqueue(ctx, *item)
+		if err != nil {
+			ne.engine.logger.Error("failed to enqueue to pending queue",
+				"workflow_id", workflowID,
+				"node_name", nextNode.NodeName,
+				"error", err.Error(),
+			)
+		} else {
+			ne.engine.logger.Debug("node enqueued to pending queue",
+				"workflow_id", workflowID,
+				"node_name", nextNode.NodeName,
+			)
+		}
+		return err
 	}
 }
 

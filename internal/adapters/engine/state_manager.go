@@ -10,6 +10,13 @@ import (
 	"github.com/eleven-am/graft/internal/ports"
 )
 
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
 type StateManager struct {
 	engine *Engine
 }
@@ -78,9 +85,13 @@ func (sm *StateManager) SaveWorkflowState(ctx context.Context, workflow *Workflo
 
 func (sm *StateManager) LoadWorkflowState(ctx context.Context, workflowID string) (*WorkflowInstance, error) {
 	stateKey := sm.generateStateKey(workflowID)
-	
+
 	data, err := sm.engine.storage.Get(ctx, stateKey)
 	if err != nil {
+		sm.engine.logger.Error("storage get failed for workflow state",
+			"workflow_id", workflowID,
+			"state_key", stateKey,
+			"error", err.Error())
 		return nil, domain.Error{
 			Type:    domain.ErrorTypeInternal,
 			Message: "failed to load workflow state",
@@ -91,14 +102,35 @@ func (sm *StateManager) LoadWorkflowState(ctx context.Context, workflowID string
 		}
 	}
 
+	// Check for empty or nil data before attempting to unmarshal
+	if data == nil {
+		sm.engine.logger.Warn("workflow state data is nil, key not found",
+			"workflow_id", workflowID,
+			"state_key", stateKey)
+		return nil, nil
+	}
+
+	if len(data) == 0 {
+		sm.engine.logger.Warn("workflow state data is empty (zero length)",
+			"workflow_id", workflowID,
+			"state_key", stateKey)
+		return nil, nil
+	}
+
 	var stateData WorkflowStateData
 	if err := json.Unmarshal(data, &stateData); err != nil {
+		sm.engine.logger.Error("failed to unmarshal workflow state data",
+			"workflow_id", workflowID,
+			"data_length", len(data),
+			"data_preview", string(data[:min(50, len(data))]),
+			"error", err.Error())
 		return nil, domain.Error{
 			Type:    domain.ErrorTypeInternal,
 			Message: "failed to deserialize workflow state",
 			Details: map[string]interface{}{
 				"workflow_id": workflowID,
 				"error":       err.Error(),
+				"data_length": len(data),
 			},
 		}
 	}
@@ -121,7 +153,7 @@ func (sm *StateManager) LoadWorkflowState(ctx context.Context, workflowID string
 
 func (sm *StateManager) DeleteWorkflowState(ctx context.Context, workflowID string) error {
 	stateKey := sm.generateStateKey(workflowID)
-	
+
 	if err := sm.engine.storage.Delete(ctx, stateKey); err != nil {
 		return domain.Error{
 			Type:    domain.ErrorTypeInternal,
@@ -145,9 +177,9 @@ func (sm *StateManager) ListWorkflowStates(ctx context.Context) ([]*WorkflowInst
 		sm.engine.logger.Debug("storage not available, returning empty workflow states list")
 		return []*WorkflowInstance{}, nil
 	}
-	
+
 	prefix := "workflow:state:"
-	
+
 	items, err := sm.engine.storage.List(ctx, prefix)
 	if err != nil {
 		return nil, domain.Error{
@@ -160,7 +192,7 @@ func (sm *StateManager) ListWorkflowStates(ctx context.Context) ([]*WorkflowInst
 	}
 
 	workflows := make([]*WorkflowInstance, 0, len(items))
-	
+
 	for _, item := range items {
 		var stateData WorkflowStateData
 		if err := json.Unmarshal(item.Value, &stateData); err != nil {
@@ -183,47 +215,15 @@ func (sm *StateManager) ListWorkflowStates(ctx context.Context) ([]*WorkflowInst
 	return workflows, nil
 }
 
-func (sm *StateManager) RecoverActiveWorkflows(ctx context.Context) error {
-	workflows, err := sm.ListWorkflowStates(ctx)
+func (sm *StateManager) UpdateWorkflowState(ctx context.Context, workflowID string, updates map[string]interface{}) error {
+	workflow, err := sm.LoadWorkflowState(ctx, workflowID)
 	if err != nil {
 		return err
 	}
 
-	sm.engine.mu.Lock()
-	defer sm.engine.mu.Unlock()
-
-	recovered := 0
-	for _, workflow := range workflows {
-		if workflow.Status == ports.WorkflowStateRunning || workflow.Status == ports.WorkflowStatePaused {
-			sm.engine.activeWorkflows[workflow.ID] = workflow
-			recovered++
-			
-			sm.engine.logger.Info("recovered workflow",
-				"workflow_id", workflow.ID,
-				"status", workflow.Status,
-			)
-		}
-	}
-
-	sm.engine.logger.Info("workflow recovery completed",
-		"total_found", len(workflows),
-		"recovered_active", recovered,
-	)
-
-	return nil
-}
-
-func (sm *StateManager) UpdateWorkflowState(ctx context.Context, workflowID string, updates map[string]interface{}) error {
-	sm.engine.mu.RLock()
-	workflow, exists := sm.engine.activeWorkflows[workflowID]
-	sm.engine.mu.RUnlock()
-
-	if !exists {
+	if workflow == nil {
 		return domain.NewNotFoundError("workflow", workflowID)
 	}
-
-	workflow.mu.Lock()
-	defer workflow.mu.Unlock()
 
 	var stateMap map[string]interface{}
 	if workflow.CurrentState == nil {
@@ -245,7 +245,7 @@ func (sm *StateManager) UpdateWorkflowState(ctx context.Context, workflowID stri
 		totalStateKeys = len(stateMap)
 	}
 
-	sm.engine.logger.Debug("workflow state updated in memory",
+	sm.engine.logger.Debug("workflow state updated",
 		"workflow_id", workflowID,
 		"updates", len(updates),
 		"total_state_keys", totalStateKeys,
@@ -255,26 +255,9 @@ func (sm *StateManager) UpdateWorkflowState(ctx context.Context, workflowID stri
 }
 
 func (sm *StateManager) GetWorkflowState(ctx context.Context, workflowID string) (map[string]interface{}, error) {
-	sm.engine.mu.RLock()
-	workflow, exists := sm.engine.activeWorkflows[workflowID]
-	sm.engine.mu.RUnlock()
-
-	if !exists {
-		workflow, err := sm.LoadWorkflowState(ctx, workflowID)
-		if err != nil {
-			return nil, err
-		}
-		
-		workflow.mu.RLock()
-		state := make(map[string]interface{})
-		if stateMap, ok := workflow.CurrentState.(map[string]interface{}); ok {
-			for k, v := range stateMap {
-				state[k] = v
-			}
-		}
-		workflow.mu.RUnlock()
-		
-		return state, nil
+	workflow, err := sm.LoadWorkflowState(ctx, workflowID)
+	if err != nil {
+		return nil, err
 	}
 
 	workflow.mu.RLock()
@@ -314,7 +297,7 @@ func (sm *StateManager) CleanupCompletedWorkflows(ctx context.Context, olderThan
 		}
 	}
 
-	sm.engine.logger.Info("completed workflow cleanup",
+	sm.engine.logger.Debug("completed workflow cleanup",
 		"total_workflows", len(workflows),
 		"cleaned_count", cleaned,
 		"cutoff_time", cutoff,
@@ -328,16 +311,17 @@ func (sm *StateManager) generateStateKey(workflowID string) string {
 }
 
 func (sm *StateManager) CreateCheckpoint(ctx context.Context, workflowID string) error {
-	sm.engine.mu.RLock()
-	workflow, exists := sm.engine.activeWorkflows[workflowID]
-	sm.engine.mu.RUnlock()
+	workflow, err := sm.LoadWorkflowState(ctx, workflowID)
+	if err != nil {
+		return err
+	}
 
-	if !exists {
+	if workflow == nil {
 		return domain.NewNotFoundError("workflow", workflowID)
 	}
 
 	checkpointKey := fmt.Sprintf("workflow:checkpoint:%s:%d", workflowID, time.Now().Unix())
-	
+
 	workflow.mu.RLock()
 	checkpointData := sm.createStateData(workflow)
 	workflow.mu.RUnlock()

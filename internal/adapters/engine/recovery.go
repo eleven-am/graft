@@ -37,6 +37,7 @@ func (re *RecoverableExecutor) ExecuteWithRecovery(
 
 			if re.metricsTracker != nil {
 				re.metricsTracker.RecordPanic(duration)
+				re.metricsTracker.RecordNodeExecution(duration, false)
 			}
 
 			re.logger.Error("node execution panicked",
@@ -66,11 +67,20 @@ func (re *RecoverableExecutor) ExecuteWithRecovery(
 
 	if err == nil {
 		duration := time.Since(startTime)
+		if re.metricsTracker != nil {
+			re.metricsTracker.RecordNodeExecution(duration, true)
+		}
 		re.logger.Debug("node execution completed successfully",
 			"workflow_id", item.WorkflowID,
 			"node_name", item.NodeName,
 			"duration", duration,
 		)
+	}
+
+	// Record failed execution metrics if error occurred
+	if err != nil && re.metricsTracker != nil {
+		duration := time.Since(startTime)
+		re.metricsTracker.RecordNodeExecution(duration, false)
 	}
 
 	return result, nextNodes, err

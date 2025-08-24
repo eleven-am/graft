@@ -1,5 +1,5 @@
 # Mockery configuration for Graft project
-# This generates mocks for all interfaces in the ports package and adapter packages
+# This generates mocks for all interfaces in the ports package
 
 with-expecter: true
 keeptree: false
@@ -16,6 +16,7 @@ packages:
   github.com/eleven-am/graft/internal/ports:
     interfaces:
       DiscoveryPort:
+      DiscoveryManager:
       StoragePort:
       QueuePort:
       TransportPort:
@@ -23,38 +24,12 @@ packages:
       ResourceManagerPort:
       NodeRegistryPort:
       WorkflowEnginePort:
-      ClusterPort:
       SemaphorePort:
+      RaftPort:
 
-  # Team 1 - Transport interfaces
-  github.com/eleven-am/graft/internal/adapters/transport/grpc:
-    interfaces:
-      ClusterHandler:
-      RaftHandler:
-      WorkflowHandler:
-      TransportClient:
-      TransportServer:
-
-  # Team 3 - Storage/FSM interfaces
-  github.com/eleven-am/graft/internal/adapters/storage/raftimpl:
-    interfaces:
-      RaftInterface:
-
-  # Team 2 - Discovery interfaces
-  github.com/eleven-am/graft/internal/adapters/discovery/mdns:
-    interfaces:
-      Resolver:
-
-  github.com/eleven-am/graft/internal/adapters/discovery/static:
-    interfaces:
-      HealthCheckerInterface:
-
-  # Domain interfaces
-  github.com/eleven-am/graft/internal/domain:
-    interfaces:
-      EventHandler:
-
-  # Engine interfaces
+  # Engine package interfaces
   github.com/eleven-am/graft/internal/adapters/engine:
     interfaces:
       QueueCleaner:
+      PendingEvaluator:
+      EvaluationTrigger:

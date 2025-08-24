@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -39,9 +40,9 @@ func (wc *WorkflowCoordinator) ProcessReadyNodes(ctx context.Context) error {
 }
 
 func (wc *WorkflowCoordinator) processNextReadyNode(ctx context.Context) error {
-	if wc.engine.queue == nil {
-		wc.engine.logger.Debug("queue not available, skipping ready node processing")
-		return domain.NewNotFoundError("queue_item", "queue not available")
+	if wc.engine.readyQueue == nil {
+		wc.engine.logger.Debug("ready queue not available, skipping ready node processing")
+		return domain.NewNotFoundError("queue_item", "ready queue not available")
 	}
 
 	claimDuration := wc.engine.config.NodeExecutionTimeout
@@ -49,7 +50,7 @@ func (wc *WorkflowCoordinator) processNextReadyNode(ctx context.Context) error {
 		claimDuration = 5 * time.Minute
 	}
 
-	item, err := wc.engine.queue.DequeueReady(ctx, ports.WithClaim(wc.engine.nodeID, claimDuration))
+	item, err := wc.engine.readyQueue.Dequeue(ctx, ports.WithClaim(wc.engine.nodeID, claimDuration))
 
 	if err != nil {
 		if domain.IsKeyNotFound(err) || isNotFoundError(err) {
@@ -87,7 +88,7 @@ func (wc *WorkflowCoordinator) processNextReadyNode(ctx context.Context) error {
 				"error", err.Error(),
 			)
 		} else {
-			wc.engine.logger.Info("node execution completed successfully",
+			wc.engine.logger.Debug("node execution completed successfully",
 				"workflow_id", item.WorkflowID,
 				"node_name", item.NodeName,
 				"item_id", item.ID,
@@ -115,19 +116,29 @@ func (wc *WorkflowCoordinator) CheckWorkflowCompletions(ctx context.Context) err
 }
 
 func (wc *WorkflowCoordinator) checkCompletedWorkflows(ctx context.Context) error {
-	wc.engine.mu.RLock()
-	workflowsToCheck := make([]*WorkflowInstance, 0, len(wc.engine.activeWorkflows))
-	for _, workflow := range wc.engine.activeWorkflows {
-		workflowsToCheck = append(workflowsToCheck, workflow)
+	if wc.engine.storage == nil {
+		return nil
 	}
-	wc.engine.mu.RUnlock()
 
-	for _, workflow := range workflowsToCheck {
-		if err := wc.CheckWorkflowCompletion(ctx, workflow); err != nil {
-			wc.engine.logger.Error("failed to check workflow completion",
-				"workflow_id", workflow.ID,
-				"error", err.Error(),
-			)
+	workflowKeys, err := wc.engine.storage.List(ctx, "workflow:state:")
+	if err != nil {
+		return err
+	}
+
+	for _, kv := range workflowKeys {
+		var workflow WorkflowInstance
+		if err := json.Unmarshal(kv.Value, &workflow); err != nil {
+			wc.engine.logger.Warn("failed to unmarshal workflow", "key", kv.Key, "error", err.Error())
+			continue
+		}
+
+		if workflow.Status == ports.WorkflowStateRunning {
+			if err := wc.CheckWorkflowCompletion(ctx, &workflow); err != nil {
+				wc.engine.logger.Error("failed to check workflow completion",
+					"workflow_id", workflow.ID,
+					"error", err.Error(),
+				)
+			}
 		}
 	}
 
@@ -143,12 +154,12 @@ func (wc *WorkflowCoordinator) CheckWorkflowCompletion(ctx context.Context, work
 	workflowID := workflow.ID
 	workflow.mu.RUnlock()
 
-	isEmpty, err := wc.engine.queue.IsEmpty(ctx)
+	isEmpty, err := wc.engine.readyQueue.IsEmpty(ctx)
 	if err != nil {
 		return err
 	}
 
-	pendingItems, err := wc.engine.queue.GetPendingItems(ctx)
+	pendingItems, err := wc.engine.pendingQueue.GetItems(ctx)
 	if err != nil && !strings.Contains(err.Error(), "not found") {
 		return err
 	}
@@ -193,32 +204,16 @@ func (wc *WorkflowCoordinator) CheckWorkflowCompletion(ctx context.Context, work
 		}
 
 		if handlerError == nil {
-			if wc.engine.cleanupScheduler != nil {
-				orchestrator := wc.engine.cleanupScheduler.GetOrchestrator()
-				if orchestrator != nil {
-					cleanupOptions := CleanupOptions{
-						PreserveState:   false,
-						PreserveAudit:   false,
-						RetentionPeriod: 0,
-					}
-					if err := orchestrator.CleanupWorkflow(ctx, workflowID, cleanupOptions); err != nil {
-						wc.engine.logger.Error("failed to execute immediate workflow cleanup",
-							"workflow_id", workflowID,
-							"error", err.Error(),
-						)
-					} else {
-						wc.engine.logger.Info("immediate workflow cleanup completed",
-							"workflow_id", workflowID,
-						)
-					}
+			if wc.engine.cleaner != nil {
+				if err := wc.engine.cleaner.NukeWorkflow(ctx, workflowID); err != nil {
+					wc.engine.logger.Error("failed to cleanup completed workflow",
+						"workflow_id", workflowID,
+						"error", err.Error(),
+					)
 				}
 			}
 
-			wc.engine.mu.Lock()
-			delete(wc.engine.activeWorkflows, workflowID)
-			wc.engine.mu.Unlock()
-
-			wc.engine.logger.Info("workflow completed and cleaned up",
+			wc.engine.logger.Debug("workflow completed and cleaned up",
 				"workflow_id", workflowID,
 			)
 		} else {
@@ -260,33 +255,49 @@ func (wc *WorkflowCoordinator) hasActiveClaimsForWorkflow(ctx context.Context, w
 		return true
 	}
 
+	activeClaimsCount := 0
 	for _, item := range items {
 		itemID := strings.TrimPrefix(item.Key, "claims:")
 
 		itemDataKey := "item:" + itemID
 		itemData, err := wc.engine.storage.Get(ctx, itemDataKey)
 		if err != nil {
+			wc.engine.logger.Debug("failed to get item data for claim check",
+				"workflow_id", workflowID,
+				"item_id", itemID,
+				"error", err.Error(),
+			)
 			continue
 		}
 
 		if strings.Contains(string(itemData), `"workflow_id":"`+workflowID+`"`) {
+			activeClaimsCount++
 			wc.engine.logger.Debug("found active claim for workflow",
 				"workflow_id", workflowID,
 				"item_id", itemID,
 			)
-			return true
 		}
 	}
 
+	if activeClaimsCount > 0 {
+		wc.engine.logger.Debug("workflow has active claims, cannot complete yet",
+			"workflow_id", workflowID,
+			"active_claims", activeClaimsCount,
+		)
+		return true
+	}
+
+	wc.engine.logger.Debug("no active claims found for workflow",
+		"workflow_id", workflowID,
+	)
 	return false
 }
 
 func (wc *WorkflowCoordinator) PauseWorkflow(ctx context.Context, workflowID string) error {
-	workflow, err := wc.getAndLockWorkflow(workflowID)
+	workflow, err := wc.getWorkflow(ctx, workflowID)
 	if err != nil {
 		return err
 	}
-	defer workflow.mu.Unlock()
 
 	if workflow.Status != ports.WorkflowStateRunning {
 		return domain.Error{
@@ -305,15 +316,14 @@ func (wc *WorkflowCoordinator) PauseWorkflow(ctx context.Context, workflowID str
 		"workflow_id", workflowID,
 	)
 
-	return wc.executor.persistWorkflowState(ctx, workflow)
+	return wc.engine.stateManager.SaveWorkflowState(ctx, workflow)
 }
 
 func (wc *WorkflowCoordinator) ResumeWorkflow(ctx context.Context, workflowID string) error {
-	workflow, err := wc.getAndLockWorkflow(workflowID)
+	workflow, err := wc.getWorkflow(ctx, workflowID)
 	if err != nil {
 		return err
 	}
-	defer workflow.mu.Unlock()
 
 	if workflow.Status != ports.WorkflowStatePaused {
 		return domain.Error{
@@ -332,34 +342,43 @@ func (wc *WorkflowCoordinator) ResumeWorkflow(ctx context.Context, workflowID st
 		"workflow_id", workflowID,
 	)
 
-	return wc.executor.persistWorkflowState(ctx, workflow)
+	return wc.engine.stateManager.SaveWorkflowState(ctx, workflow)
 }
 
 func (wc *WorkflowCoordinator) StopWorkflow(ctx context.Context, workflowID string) error {
-	wc.engine.mu.Lock()
-	workflow, exists := wc.engine.activeWorkflows[workflowID]
-	if exists {
-		delete(wc.engine.activeWorkflows, workflowID)
+	workflow, err := wc.engine.stateManager.LoadWorkflowState(ctx, workflowID)
+	if err != nil {
+		return err
 	}
-	wc.engine.mu.Unlock()
 
-	if !exists {
+	if workflow == nil {
 		return domain.NewNotFoundError("workflow", workflowID)
 	}
 
-	workflow.mu.Lock()
 	workflow.Status = ports.WorkflowStateFailed
 	now := time.Now()
 	workflow.CompletedAt = &now
 	errorStr := "workflow stopped by request"
 	workflow.LastError = &errorStr
-	workflow.mu.Unlock()
 
-	wc.engine.logger.Info("workflow stopped",
+	if err := wc.engine.stateManager.SaveWorkflowState(ctx, workflow); err != nil {
+		return err
+	}
+
+	if wc.engine.cleaner != nil {
+		if err := wc.engine.cleaner.NukeWorkflow(ctx, workflowID); err != nil {
+			wc.engine.logger.Error("failed to cleanup stopped workflow",
+				"workflow_id", workflowID,
+				"error", err.Error(),
+			)
+		}
+	}
+
+	wc.engine.logger.Debug("workflow stopped and cleaned up",
 		"workflow_id", workflowID,
 	)
 
-	return wc.executor.persistWorkflowState(ctx, workflow)
+	return nil
 }
 
 func isNotFoundError(err error) bool {
@@ -373,15 +392,15 @@ func isNotFoundError(err error) bool {
 	return strings.Contains(errMsg, "not found") || strings.Contains(errMsg, "empty")
 }
 
-func (wc *WorkflowCoordinator) getAndLockWorkflow(workflowID string) (*WorkflowInstance, error) {
-	wc.engine.mu.RLock()
-	workflow, exists := wc.engine.activeWorkflows[workflowID]
-	wc.engine.mu.RUnlock()
+func (wc *WorkflowCoordinator) getWorkflow(ctx context.Context, workflowID string) (*WorkflowInstance, error) {
+	workflow, err := wc.engine.stateManager.LoadWorkflowState(ctx, workflowID)
+	if err != nil {
+		return nil, err
+	}
 
-	if !exists {
+	if workflow == nil {
 		return nil, domain.NewNotFoundError("workflow", workflowID)
 	}
 
-	workflow.mu.Lock()
 	return workflow, nil
 }

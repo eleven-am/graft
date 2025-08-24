@@ -15,12 +15,15 @@ type LifecycleManager struct {
 	completionHandlers []ports.CompletionHandler
 	errorHandlers      []ports.ErrorHandler
 	progressHandlers   []ProgressHandler
+	cleanupCallback    CleanupCallback
 	logger             *slog.Logger
 	handlerTimeout     time.Duration
 	maxRetries         int
 	metricsTracker     *MetricsTracker
 	mu                 sync.RWMutex
 }
+
+type CleanupCallback func(workflowID string) error
 
 type ProgressHandler func(workflowID string, nodeCompleted string, currentState interface{})
 
@@ -48,6 +51,12 @@ func NewLifecycleManager(logger *slog.Logger, config HandlerConfig, metricsTrack
 	}
 }
 
+func (lm *LifecycleManager) SetCleanupCallback(callback CleanupCallback) {
+	lm.mu.Lock()
+	defer lm.mu.Unlock()
+	lm.cleanupCallback = callback
+}
+
 func (lm *LifecycleManager) RegisterHandlers(completion []ports.CompletionHandler, error []ports.ErrorHandler) {
 	lm.mu.Lock()
 	defer lm.mu.Unlock()
@@ -55,7 +64,7 @@ func (lm *LifecycleManager) RegisterHandlers(completion []ports.CompletionHandle
 	lm.completionHandlers = append(lm.completionHandlers, completion...)
 	lm.errorHandlers = append(lm.errorHandlers, error...)
 
-	lm.logger.Info("lifecycle handlers registered",
+	lm.logger.Debug("lifecycle handlers registered",
 		"completion_handlers", len(completion),
 		"error_handlers", len(error),
 		"total_completion", len(lm.completionHandlers),
@@ -67,6 +76,7 @@ func (lm *LifecycleManager) TriggerCompletion(ctx context.Context, data domain.W
 	lm.mu.RLock()
 	handlers := make([]ports.CompletionHandler, len(lm.completionHandlers))
 	copy(handlers, lm.completionHandlers)
+	cleanupCallback := lm.cleanupCallback
 	lm.mu.RUnlock()
 
 	lm.logger.Info("triggering workflow completion handlers",
@@ -84,45 +94,88 @@ func (lm *LifecycleManager) TriggerCompletion(ctx context.Context, data domain.W
 	}
 
 	var firstError error
+	successCount := 0
 	for i := 0; i < len(handlers); i++ {
-		if err := <-handlerErrors; err != nil && firstError == nil {
-			firstError = err
+		if err := <-handlerErrors; err != nil {
+			if firstError == nil {
+				firstError = err
+			}
+		} else {
+			successCount++
+		}
+	}
+
+	if successCount > 0 && cleanupCallback != nil {
+		lm.logger.Debug("triggering nuclear cleanup after successful completion handlers",
+			"workflow_id", data.WorkflowID,
+			"successful_handlers", successCount,
+			"total_handlers", len(handlers),
+		)
+
+		if cleanupErr := cleanupCallback(data.WorkflowID); cleanupErr != nil {
+			lm.logger.Error("nuclear cleanup failed after completion",
+				"workflow_id", data.WorkflowID,
+				"error", cleanupErr)
+		} else {
+			lm.logger.Debug("nuclear cleanup completed successfully", "workflow_id", data.WorkflowID)
 		}
 	}
 
 	return firstError
 }
 
-func (lm *LifecycleManager) TriggerError(workflowID string, currentState interface{}, err error) error {
+func (lm *LifecycleManager) TriggerError(ctx context.Context, data domain.WorkflowErrorData) error {
 	lm.mu.RLock()
 	handlers := make([]ports.ErrorHandler, len(lm.errorHandlers))
 	copy(handlers, lm.errorHandlers)
+	cleanupCallback := lm.cleanupCallback
 	lm.mu.RUnlock()
 
-	event := domain.WorkflowErrorEvent{
-		WorkflowID:   workflowID,
-		CurrentState: currentState,
-		Error:        err,
-		FailedAt:     time.Now(),
-		ErrorType:    "execution_error",
-	}
-
-	if panicErr, isPanic := err.(*domain.WorkflowPanicError); isPanic {
-		event.FailedNode = panicErr.NodeID
-		event.ErrorType = "panic_error"
-	}
-
 	lm.logger.Info("triggering workflow error handlers",
-		"workflow_id", workflowID,
+		"workflow_id", data.WorkflowID,
 		"handler_count", len(handlers),
-		"error_type", event.ErrorType,
+		"error_type", data.ErrorType,
+		"failed_node", data.FailedNode,
 	)
 
+	handlerErrors := make(chan error, len(handlers))
+
 	for i, handler := range handlers {
-		go lm.executeErrorHandler(i, handler, event)
+		go func(i int, h ports.ErrorHandler) {
+			err := lm.executeErrorHandler(ctx, i, h, data)
+			handlerErrors <- err
+		}(i, handler)
 	}
 
-	return nil
+	var firstError error
+	successCount := 0
+	for i := 0; i < len(handlers); i++ {
+		if err := <-handlerErrors; err != nil {
+			if firstError == nil {
+				firstError = err
+			}
+		} else {
+			successCount++
+		}
+	}
+
+	if successCount > 0 && cleanupCallback != nil {
+		lm.logger.Debug("triggering nuclear cleanup after successful error handlers",
+			"workflow_id", data.WorkflowID,
+			"successful_handlers", successCount,
+			"total_handlers", len(handlers),
+		)
+
+		if cleanupErr := cleanupCallback(data.WorkflowID); cleanupErr != nil {
+			lm.logger.Error("nuclear cleanup failed after error handling",
+				"workflow_id", data.WorkflowID,
+				"error", cleanupErr)
+		} else {
+			lm.logger.Debug("nuclear cleanup completed successfully after error", "workflow_id", data.WorkflowID)
+		}
+	}
+
+	return firstError
 }
 
 func (lm *LifecycleManager) TriggerProgress(workflowID, nodeCompleted string, currentState interface{}) error {
@@ -176,14 +229,13 @@ func (lm *LifecycleManager) executeCompletionHandler(ctx context.Context, handle
 	}
 }
 
-func (lm *LifecycleManager) executeErrorHandler(handlerIndex int, handler ports.ErrorHandler, event domain.WorkflowErrorEvent) {
+func (lm *LifecycleManager) executeErrorHandler(ctx context.Context, handlerIndex int, handler ports.ErrorHandler, data domain.WorkflowErrorData) error {
 	result := lm.executeWithRecovery(
 		"error",
 		handlerIndex,
-		event.WorkflowID,
+		data.WorkflowID,
 		func() error {
-			handler(event.WorkflowID, event.CurrentState, event.Error)
-			return nil
+			return handler(ctx, data)
 		},
 	)
 
@@ -193,17 +245,19 @@ func (lm *LifecycleManager) executeErrorHandler(handlerIndex int, handler ports.
 
 	if result.Success {
 		lm.logger.Debug("error handler executed successfully",
-			"workflow_id", event.WorkflowID,
+			"workflow_id", data.WorkflowID,
 			"handler_index", handlerIndex,
 			"duration", result.Duration,
 		)
+		return nil
 	} else {
 		lm.logger.Error("error handler failed",
-			"workflow_id", event.WorkflowID,
+			"workflow_id", data.WorkflowID,
 			"handler_index", handlerIndex,
 			"error", result.Error,
 			"retries", result.Retries,
 		)
+		return fmt.Errorf("error handler %d failed: %s", handlerIndex, result.Error)
 	}
 }
 

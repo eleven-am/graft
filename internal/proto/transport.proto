@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package transport;
+
+option go_package = "github.com/eleven-am/graft/internal/proto";
+
+service GraftTransport {
+  rpc SendMessage(MessageRequest) returns (MessageResponse);
+  rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
+  rpc GetLeaderAddress(LeaderAddressRequest) returns (LeaderAddressResponse);
+}
+
+message MessageRequest {
+  MessageType type = 1;
+  string from = 2;
+  bytes payload = 3;
+}
+
+message MessageResponse {
+  bool success = 1;
+  bytes data = 2;
+  string error = 3;
+}
+
+message HealthCheckRequest {
+  string node_id = 1;
+}
+
+message HealthCheckResponse {
+  bool healthy = 1;
+  string node_id = 2;
+}
+
+message LeaderAddressRequest {
+  string requesting_node_id = 1;
+}
+
+message LeaderAddressResponse {
+  string raft_address = 1;
+  string leader_id = 2;
+  bool is_leader = 3;
+}
+
+enum MessageType {
+  STORAGE_READ = 0;
+  STORAGE_WRITE = 1;
+  STORAGE_DELETE = 2;
+  HEALTH_CHECK = 3;
+}

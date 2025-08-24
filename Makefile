@@ -114,12 +114,3 @@ bump-major:
 	git tag $$new; \
 	git push origin $$new; \
 	echo "Tagged and pushed $$new"
-
-# Debug basic example - cleanup and run with logging
-debug-basic:
-	@echo "Cleaning up any existing processes..."
-	@lsof -ti:7000 | xargs kill -9 2>/dev/null || true
-	@pkill -f "go run main.go" 2>/dev/null || true
-	@sleep 1
-	@echo "Starting basic example with debug logging..."
-	@cd examples/basic && rm -rf data/ && go run main.go

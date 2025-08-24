@@ -46,11 +46,11 @@ func (pe *pendingEvaluator) EvaluatePendingNodes(ctx context.Context, workflowID
 	startTime := time.Now()
 	pe.logger.Debug("starting pending node evaluation", "workflow_id", workflowID)
 
-	if pe.engine.queue == nil {
-		return domain.NewValidationError("queue", "queue not available")
+	if pe.engine.pendingQueue == nil {
+		return domain.NewValidationError("pending_queue", "pending queue not available")
 	}
 
-	pendingItems, err := pe.engine.queue.GetPendingItems(ctx)
+	pendingItems, err := pe.engine.pendingQueue.GetItems(ctx)
 	if err != nil {
 		pe.logger.Error("failed to get pending items",
 			"workflow_id", workflowID,
@@ -92,7 +92,7 @@ func (pe *pendingEvaluator) EvaluatePendingNodes(ctx context.Context, workflowID
 			return err
 		}
 
-		pe.logger.Info("evaluation completed",
+		pe.logger.Debug("evaluation completed",
 			"workflow_id", workflowID,
 			"nodes_made_ready", len(readyItems),
 			"evaluation_duration", time.Since(startTime),
@@ -123,12 +123,12 @@ func (pe *pendingEvaluator) CheckNodeReadiness(node *ports.PendingNode, state in
 	}
 
 	canStart := registeredNode.CanStart(context.Background(), state, config)
-	
+
 	pe.logger.Debug("node readiness check",
 		"node_name", node.NodeName,
 		"can_start", canStart,
 	)
-	
+
 	return canStart
 }
 
@@ -137,9 +137,23 @@ func (pe *pendingEvaluator) MovePendingToReady(ctx context.Context, items []port
 		return nil
 	}
 
+	if pe.engine.readyQueue == nil {
+		return domain.NewValidationError("ready_queue", "ready queue not available")
+	}
+
 	for _, item := range items {
-		if err := pe.engine.queue.MovePendingToReady(ctx, item.ID); err != nil {
-			pe.logger.Error("failed to move item from pending to ready",
+		if err := pe.engine.pendingQueue.RemoveItem(ctx, item.ID); err != nil {
+			pe.logger.Error("failed to remove item from pending queue",
+				"item_id", item.ID,
+				"workflow_id", item.WorkflowID,
+				"node_name", item.NodeName,
+				"error", err.Error(),
+			)
+			return err
+		}
+
+		if err := pe.engine.readyQueue.Enqueue(ctx, item); err != nil {
+			pe.logger.Error("failed to enqueue item to ready queue",
 				"item_id", item.ID,
 				"workflow_id", item.WorkflowID,
 				"node_name", item.NodeName,
@@ -155,7 +169,7 @@ func (pe *pendingEvaluator) MovePendingToReady(ctx context.Context, items []port
 		)
 	}
 
-	pe.logger.Info("batch move to ready completed",
+	pe.logger.Debug("batch move to ready completed",
 		"items_moved", len(items),
 	)
 
