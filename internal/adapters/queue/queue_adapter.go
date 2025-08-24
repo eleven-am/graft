@@ -73,7 +73,7 @@ func (q *Adapter) Dequeue(ctx context.Context, opts ...ports.DequeueOption) (*po
 	case ports.QueueTypeReady:
 		return q.dequeueReady(ctx, opts...)
 	case ports.QueueTypePending:
-		return nil, fmt.Errorf("cannot dequeue from pending queue - use MoveItem instead")
+		return nil, fmt.Errorf("cannot dequeue from pending queue - use RemoveItem instead")
 	case ports.QueueTypeDeadLetter:
 		return nil, fmt.Errorf("cannot dequeue from dead letter queue")
 	default:
@@ -177,7 +177,7 @@ func (q *Adapter) DequeueBatch(ctx context.Context, maxItems int, opts ...ports.
 	case ports.QueueTypeReady:
 		return q.dequeueBatchReady(ctx, maxItems, opts...)
 	case ports.QueueTypePending:
-		return nil, fmt.Errorf("cannot dequeue batch from pending queue")
+		return nil, fmt.Errorf("cannot dequeue batch from pending queue - use RemoveItem for individual items")
 	case ports.QueueTypeDeadLetter:
 		return nil, fmt.Errorf("cannot dequeue batch from dead letter queue")
 	default:
