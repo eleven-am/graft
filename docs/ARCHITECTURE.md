@@ -2,7 +2,7 @@
 
 ## Overview
 
-Graft is a distributed workflow orchestration framework built on modern distributed systems principles. It provides fault-tolerant, scalable workflow execution across multiple nodes using a microkernel architecture with pluggable components.
+Graft is a distributed workflow orchestration framework built on modern distributed systems principles. It provides fault-tolerant, scalable workflow execution across multiple nodes using a ports and adapters architecture with pluggable components.
 
 ## High-Level Architecture
 
@@ -26,29 +26,29 @@ Graft is a distributed workflow orchestration framework built on modern distribu
 
 ## Core Components
 
-### 1. Cluster Management
+### 1. Core Layer (`internal/core/`)
 
-**Purpose**: Orchestrates distributed coordination and member management.
+**Purpose**: Central orchestration and component coordination.
 
-**Key Classes**:
-- `cluster.Cluster`: Main cluster coordinator
-- `cluster.Config`: Cluster configuration management
-- `cluster.Factory`: Component factory and dependency injection
+**Key Components**:
+- `core.Manager`: Main cluster coordinator and public API surface
+- `core.Orchestrator`: Workflow lifecycle management and execution coordination
+- `core.PortFactory`: Component factory and dependency injection
+- `core.NodeWrapper`: Node execution wrapper with type safety
 
 **Responsibilities**:
-- Node discovery and membership management
-- Leader election and consensus coordination
-- Workflow lifecycle management
 - Component integration and startup/shutdown
+- Public API implementation
+- Configuration management and validation
+- Workflow context injection and metadata management
 
-### 2. Transport Layer
+### 2. Transport Layer (`internal/adapters/transport/`)
 
 **Purpose**: Handles all network communication between cluster nodes.
 
-**Key Classes**:
-- `grpc.GRPCTransport`: gRPC-based transport implementation
-- `grpc.TransportServer`: Server-side RPC handlers
-- `grpc.TransportClient`: Client-side RPC operations
+**Key Components**:
+- `transport.GRPCTransport`: gRPC-based transport implementation with server and client functionality
+- Protocol buffer definitions in `internal/proto/transport.proto`
 
 **Features**:
 - TLS encryption support
@@ -62,14 +62,15 @@ Graft is a distributed workflow orchestration framework built on modern distribu
 - Raft consensus (leader election, log replication)
 - Workflow operations (trigger, status, state)
 
-### 3. Storage Layer
+### 3. Storage Layer (`internal/adapters/storage/` and `internal/adapters/raft/`)
 
 **Purpose**: Provides distributed, consistent data storage using Raft consensus.
 
-**Key Classes**:
-- `raftimpl.Adapter`: Raft consensus implementation
-- `raftimpl.FSM`: Finite State Machine for data operations
-- `raftimpl.Store`: Persistent storage backend
+**Key Components**:
+- `raft.RaftAdapter`: Raft consensus implementation and cluster coordination
+- `raft.FSM`: Finite State Machine for data operations and state transitions
+- `raft.Store`: Persistent storage backend with BadgerDB integration
+- `storage.StorageAdapter`: High-level storage abstraction with serialization
 
 **Features**:
 - Linearizable consistency
@@ -77,6 +78,7 @@ Graft is a distributed workflow orchestration framework built on modern distribu
 - Log replication and snapshotting
 - BadgerDB for persistent storage
 - Configurable retention policies
+- Type-safe serialization and deserialization
 
 **Data Types**:
 - Workflow state and metadata
@@ -84,12 +86,12 @@ Graft is a distributed workflow orchestration framework built on modern distribu
 - Cluster membership data
 - Queue state persistence
 
-### 4. Queue System
+### 4. Queue System (`internal/adapters/queue/`)
 
 **Purpose**: Manages workflow task queuing and execution scheduling.
 
-**Key Classes**:
-- `badger.Queue`: BadgerDB-based queue implementation
+**Key Components**:
+- `queue.QueueAdapter`: BadgerDB-based queue implementation
 - Queue operations: enqueue, dequeue, priority handling
 - State management: ready, pending, executing
 
@@ -100,15 +102,17 @@ Graft is a distributed workflow orchestration framework built on modern distribu
 - Configurable batch processing
 - Dead letter handling
 
-### 5. Workflow Engine
+### 5. Workflow Engine (`internal/adapters/engine/`)
 
 **Purpose**: Orchestrates workflow execution and state management.
 
-**Key Classes**:
-- `engine.Engine`: Main workflow coordinator
-- `engine.NodeExecutor`: Individual node execution handler
-- `engine.StateManager`: Workflow state persistence
-- `engine.Coordinator`: Cross-node workflow coordination
+**Key Components**:
+- `engine.Engine`: Main workflow coordinator and execution orchestrator
+- `engine.Executor`: Individual node execution handler with type safety
+- `engine.StateManager`: Workflow state persistence and state transitions
+- `engine.Coordinator`: Cross-node workflow coordination and DAG management
+- `engine.DataCollector`: Workflow data aggregation and persistence
+- `engine.Evaluator`: Node readiness evaluation and execution conditions
 
 **Features**:
 - Concurrent workflow execution
@@ -116,46 +120,80 @@ Graft is a distributed workflow orchestration framework built on modern distribu
 - Retry logic and error handling
 - State transitions and persistence
 - Event-driven architecture
+- DAG reconstruction and validation
+- Workflow context injection
 
-### 6. Discovery System
+### 6. Discovery System (`internal/adapters/discovery/`)
 
 **Purpose**: Enables automatic peer discovery and cluster formation.
 
-**Key Classes**:
-- `discovery.Manager`: Main discovery coordinator
-- `static.Adapter`: Static peer list discovery
-- `mdns.Adapter`: Multicast DNS discovery
-- `kubernetes.Adapter`: Kubernetes service discovery
+**Key Components**:
+- `discovery.MDNSDiscovery`: Multicast DNS discovery implementation
+- `discovery.KubernetesDiscovery`: Kubernetes service discovery implementation
+- Array-based configuration supporting multiple simultaneous discovery methods
 
 **Strategies**:
-- **Static**: Predefined peer list
-- **mDNS**: Local network multicast discovery
-- **Kubernetes**: Service/endpoint discovery
-- **Auto**: Intelligent strategy selection
+- **mDNS**: Local network multicast discovery for development and local clusters
+- **Kubernetes**: Service/endpoint discovery for containerized deployments
+- **Multi-Discovery**: Simultaneous use of multiple discovery methods through array configuration
+- **Hybrid**: Intelligent fallback between discovery methods
 
-### 7. Resource Management
+### 7. Resource Management (`internal/adapters/resource_manager/`)
 
 **Purpose**: Controls resource allocation and execution limits.
 
-**Key Classes**:
-- `manager.ResourceManager`: Resource allocation controller
-- Resource tracking and limits enforcement
-- Per-node-type concurrency control
+**Key Components**:
+- `resource_manager.ResourceManager`: Resource allocation controller
+- `resource_manager.Pool`: Resource pool management and tracking
+- `resource_manager.Priority`: Priority-based resource allocation
+- `resource_manager.Health`: Resource health monitoring
 
 **Features**:
 - Global and per-type resource limits
 - Dynamic resource allocation
 - Usage monitoring and reporting
 - Backpressure mechanisms
+- Priority-based resource scheduling
+- Health-aware resource management
 
-### 8. Node Registry
+### 8. Node Registry (`internal/adapters/node_registry/`)
 
 **Purpose**: Manages available workflow node types and their metadata.
 
-**Key Classes**:
-- `memory.Registry`: In-memory node type registry
+**Key Components**:
+- `node_registry.NodeRegistry`: In-memory node type registry
 - Node validation and schema management
 - Runtime node lookup and instantiation
+- Type-safe node execution via reflection
+
+### 9. Semaphore Management (`internal/adapters/semaphore/`)
+
+**Purpose**: Provides distributed semaphore functionality for resource coordination.
+
+**Key Components**:
+- `semaphore.SemaphoreAdapter`: Distributed semaphore implementation
+- Atomic semaphore operations across cluster nodes
+- Resource contention management
+
+### 10. Domain Layer (`internal/domain/`)
+
+**Purpose**: Core business logic and domain models.
+
+**Key Components**:
+- `domain.Config`: Configuration structures with builder pattern support
+- `domain.WorkflowContext`: Workflow execution context and metadata
+- `domain.Commands`: Raft command definitions for state changes
+- `domain.Errors`: Domain-specific error types
+- `domain.LifecycleEvents`: Event definitions for workflow lifecycle
+
+### 11. Ports (`internal/ports/`)
+
+**Purpose**: Interface definitions for dependency inversion and testing.
+
+**Key Interfaces**:
+- Port definitions for all adapters (Discovery, Transport, Storage, etc.)
+- Mock implementations for testing
+- Clear separation between core logic and adapter implementations
 
 ## Data Flow Architecture
 
@@ -350,32 +388,43 @@ Graft uses the Raft consensus algorithm to ensure data consistency across the cl
 
 ### Configuration Structure
 
+Graft supports both simple and advanced configuration approaches:
+
+**Simple Configuration**:
+```go
+manager := graft.New("node-1", "localhost:7000", "./data", logger)
+```
+
+**Advanced Configuration**:
 ```yaml
 # Node identity
 node_id: "node-1"
-service_name: "graft-cluster"
+bind_addr: "0.0.0.0:9090"
+data_dir: "/var/lib/graft"
 
-# Discovery configuration
+# Discovery configuration (array-based)
 discovery:
-  strategy: "auto"
-  service_name: "graft"
-  peers: ["node-1:9090", "node-2:9090"]
+  - type: "mdns"
+    service_name: "_graft._tcp"
+    domain: "local."
+  - type: "kubernetes"
+    service_name: "graft-service"
+    namespace: "production"
 
 # Transport configuration
 transport:
-  listen_address: "0.0.0.0"
-  listen_port: 9090
   enable_tls: true
-  tls_cert_file: "/etc/graft/tls/cert.pem"
-  tls_key_file: "/etc/graft/tls/key.pem"
+  cert_file: "/etc/graft/tls/cert.pem"
+  key_file: "/etc/graft/tls/key.pem"
+  ca_file: "/etc/graft/tls/ca.pem"
 
 # Resource limits
 resources:
   max_concurrent_total: 100
-  max_concurrent_per_type:
+  default_per_type_limit: 10
+  per_type_limits:
     heavy-processor: 5
     light-processor: 20
-  default_per_type_limit: 10
 
 # Engine configuration
 engine:
@@ -383,6 +432,28 @@ engine:
   node_execution_timeout: "5m"
   retry_attempts: 3
   retry_backoff: "5s"
+
+# Orchestrator configuration
+orchestrator:
+  buffer_size: 1000
+  shutdown_timeout: "30s"
+```
+
+### Configuration Builder Pattern
+
+```go
+config := graft.NewConfigBuilder("node-1", "0.0.0.0:7000", "/data").
+    WithMDNS("_graft._tcp", "local.", "").
+    WithKubernetes("graft-service", "production").
+    WithTLS("/certs/tls.crt", "/certs/tls.key", "/certs/ca.crt").
+    WithResourceLimits(200, 20, map[string]int{
+        "ml-training": 2,
+        "data-export": 10,
+    }).
+    WithEngineSettings(100, 10*time.Minute, 5).
+    Build()
+
+manager := graft.NewWithConfig(config)
 ```
 
 ### Environment Integration
@@ -409,34 +480,26 @@ engine:
 
 ### Single-Node Development
 
-```yaml
-# Minimal configuration for development
-node_id: "dev-node"
-discovery:
-  strategy: "static"
-  peers: ["localhost:9090"]
-storage:
-  data_dir: "./data/dev"
-resources:
-  max_concurrent_total: 10
+```go
+// Minimal configuration for development
+manager := graft.New("dev-node", "localhost:7000", "./data/dev", logger)
+manager.Discovery().MDNS()
 ```
 
 ### Multi-Node Production
 
-```yaml
-# Production cluster configuration
-discovery:
-  strategy: "kubernetes"
-  service_name: "graft-cluster"
-transport:
-  enable_tls: true
-  tls_cert_file: "/etc/certs/tls.crt"
-  tls_key_file: "/etc/certs/tls.key"
-storage:
-  data_dir: "/var/lib/graft"
-  snapshot_retention: 5
-resources:
-  max_concurrent_total: 200
+```go
+// Production cluster configuration
+config := graft.NewConfigBuilder("prod-node", "0.0.0.0:7000", "/var/lib/graft").
+    WithKubernetes("graft-cluster", "production").
+    WithTLS("/etc/certs/tls.crt", "/etc/certs/tls.key", "/etc/certs/ca.crt").
+    WithResourceLimits(200, 20, map[string]int{
+        "data-processor": 50,
+        "ml-trainer": 5,
+    }).
+    Build()
+
+manager := graft.NewWithConfig(config)
 ```
 
 ### Cloud-Native Deployment
@@ -467,7 +530,6 @@ type NodeInterface interface {
 }
 
 // Required Execute method (discovered via reflection)
-// Example with typed parameters:
 type MyNode struct{}
 
 func (n *MyNode) GetName() string {
@@ -475,9 +537,13 @@ func (n *MyNode) GetName() string {
 }
 
 func (n *MyNode) Execute(ctx context.Context, state MyStateType, config MyConfigType) (graft.NodeResult, error) {
+    // Access workflow context metadata
+    workflowCtx, _ := graft.GetWorkflowContext(ctx)
+    
     // Process with full type safety
     result := MyResultType{
         ProcessedData: processData(state, config),
+        WorkflowID: workflowCtx.WorkflowID,
     }
     
     return graft.NodeResult{
@@ -498,8 +564,9 @@ Graft automatically discovers the Execute method signature via reflection, extra
 - State type from the second parameter
 - Config type from the third parameter (if present)
 - Result type from NodeResult.Data field
+- Workflow context is injected automatically via context.Context
 
-This approach eliminates boilerplate while maintaining type safety.
+This approach eliminates boilerplate while maintaining type safety and providing runtime metadata access.
 
 ### Custom Discovery Strategies
 
@@ -523,7 +590,8 @@ type TransportPort interface {
     Start(ctx context.Context, config TransportConfig) error
     Stop() error
     SendClusterMessage(ctx context.Context, target string, message ClusterMessage) error
-    // ... other transport methods
+    SendRaftMessage(ctx context.Context, target string, message []byte) error
+    SendWorkflowMessage(ctx context.Context, target string, message WorkflowMessage) error
 }
 ```
 
