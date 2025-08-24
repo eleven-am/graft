@@ -27,6 +27,7 @@ func (re *RecoverableExecutor) ExecuteWithRecovery(
 	currentState interface{},
 	config interface{},
 	item *ports.QueueItem,
+	workflowCtx *domain.WorkflowContext,
 ) (result interface{}, nextNodes []ports.NextNode, err error) {
 	startTime := time.Now()
 
@@ -59,7 +60,12 @@ func (re *RecoverableExecutor) ExecuteWithRecovery(
 		"node_name", item.NodeName,
 	)
 
-	nodeResult, err := node.Execute(ctx, currentState, config)
+	enrichedCtx := ctx
+	if workflowCtx != nil {
+		enrichedCtx = domain.WithWorkflowContext(ctx, workflowCtx)
+	}
+
+	nodeResult, err := node.Execute(enrichedCtx, currentState, config)
 	if err == nil {
 		result = nodeResult.GlobalState
 		nextNodes = nodeResult.NextNodes

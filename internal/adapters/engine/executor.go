@@ -109,7 +109,24 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 	currentState := workflow.CurrentState
 	workflow.mu.RUnlock()
 
-	canStart := node.CanStart(ctx, currentState, item.Config)
+	workflowCtx := &domain.WorkflowContext{
+		WorkflowID:  item.WorkflowID,
+		NodeName:    item.NodeName,
+		ExecutionID: item.ID,
+		StartedAt:   workflow.StartedAt,
+		Metadata:    workflow.Metadata,
+		ClusterInfo: domain.ClusterBasicInfo{
+			NodeID:   ne.engine.nodeID,
+			IsLeader: ne.engine.raft != nil && ne.engine.raft.IsLeader(),
+			Status:   "running",
+		},
+		RetryCount: item.RetryCount,
+		Priority:   item.Priority,
+	}
+
+	enrichedCtx := domain.WithWorkflowContext(ctx, workflowCtx)
+
+	canStart := node.CanStart(enrichedCtx, currentState, item.Config)
 	ne.engine.logger.Debug("checking if node can start",
 		"workflow_id", item.WorkflowID,
 		"node_name", item.NodeName,
@@ -136,7 +153,8 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 	)
 
 	startTime := time.Now()
-	results, nextNodes, err := ne.recoverableExecutor.ExecuteWithRecovery(ctx, node, currentState, item.Config, item)
+
+	results, nextNodes, err := ne.recoverableExecutor.ExecuteWithRecovery(enrichedCtx, node, currentState, item.Config, item, workflowCtx)
 	duration := time.Since(startTime)
 
 	ne.engine.logger.Debug("node execution completed",

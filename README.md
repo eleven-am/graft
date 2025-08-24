@@ -75,6 +75,10 @@ func (n *ProcessorNode) Execute(ctx context.Context, state ProcessorState, confi
         Timestamp: time.Now(),
     }
     
+    if workflowCtx, ok := graft.GetWorkflowContext(ctx); ok {
+        fmt.Printf("Processing in workflow %s on node %s\n", workflowCtx.WorkflowID, workflowCtx.ClusterInfo.NodeID)
+    }
+    
     return graft.NodeResult{
         Data: result,
     }, nil

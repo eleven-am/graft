@@ -30,30 +30,35 @@ import (
     "context"
     "fmt"
     "log"
+    "log/slog"
+    "os"
     "time"
     
     "github.com/eleven-am/graft"
 )
 
 func main() {
-    // Create cluster with default configuration
-    config := graft.DefaultConfig()
-    config.NodeID = "example-node"
+    // Create logger
+    logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
     
-    cluster, err := graft.New(config)
-    if err != nil {
-        log.Fatal(err)
+    // Create manager with direct parameters
+    manager := graft.New("example-node", "localhost:7000", "./data", logger)
+    if manager == nil {
+        log.Fatal("failed to create manager")
     }
     
-    // Start the cluster
-    if err := cluster.Start(context.Background()); err != nil {
+    // Configure discovery before starting
+    manager.Discovery().MDNS()  // or Static(), Kubernetes()
+    
+    // Start the manager with gRPC port
+    if err := manager.Start(context.Background(), 8080); err != nil {
         log.Fatal(err)
     }
-    defer cluster.Stop()
+    defer manager.Stop(context.Background())
     
     // Register a simple node
     node := &SimpleProcessor{}
-    if err := cluster.RegisterNode(node); err != nil {
+    if err := manager.RegisterNode(node); err != nil {
         log.Fatal(err)
     }
     
@@ -71,7 +76,7 @@ func main() {
         },
     }
     
-    if err := cluster.StartWorkflow("example-workflow", trigger); err != nil {
+    if err := manager.StartWorkflow(trigger); err != nil {
         log.Fatal(err)
     }
 }
@@ -97,10 +102,14 @@ func (p *SimpleProcessor) GetName() string {
 }
 
 func (p *SimpleProcessor) Execute(ctx context.Context, state ProcessorState, config ProcessorConfig) (graft.NodeResult, error) {
-    // Process with type safety
     result := ProcessorResult{
         Output:    fmt.Sprintf("processed: %s", state.Input),
         Timestamp: time.Now(),
+    }
+    
+    if workflowCtx, ok := graft.GetWorkflowContext(ctx); ok {
+        fmt.Printf("Processing in workflow %s, node %s (execution: %s)\n", 
+            workflowCtx.WorkflowID, workflowCtx.NodeName, workflowCtx.ExecutionID)
     }
     
     return graft.NodeResult{
@@ -111,44 +120,61 @@ func (p *SimpleProcessor) Execute(ctx context.Context, state ProcessorState, con
 
 ## Core API
 
-### Cluster Interface
+### Manager Interface
 
 ```go
-type Cluster interface {
-    Start(ctx context.Context) error
-    Stop() error
-    RegisterNode(node Node) error
-    StartWorkflow(workflowID string, trigger WorkflowTrigger) error
-    GetWorkflowState(workflowID string) (WorkflowState, error)
+type Manager interface {
+    Discovery() DiscoveryManager
+    Start(ctx context.Context, grpcPort int) error
+    Stop(ctx context.Context) error
+    RegisterNode(node interface{}) error
+    UnregisterNode(nodeName string) error
+    StartWorkflow(trigger WorkflowTrigger) error
+    GetWorkflowState(workflowID string) (*WorkflowStatus, error)
     GetClusterInfo() ClusterInfo
     OnComplete(handler CompletionHandler)
     OnError(handler ErrorHandler)
+    PauseWorkflow(ctx context.Context, workflowID string) error
+    ResumeWorkflow(ctx context.Context, workflowID string) error
+    StopWorkflow(ctx context.Context, workflowID string) error
 }
 ```
 
 #### Methods
 
-**Start(ctx context.Context) error**
-- Starts the cluster and begins listening for connections
+**Discovery() DiscoveryManager**
+- Returns the discovery manager for configuring service discovery
+- Must be called before Start() to configure discovery
+- Supports MDNS, Static, and Kubernetes discovery strategies
+
+**Start(ctx context.Context, grpcPort int) error**
+- Starts the manager and begins listening for gRPC connections
+- grpcPort specifies the port for gRPC communication
 - Must be called before any workflow operations
 - Context can be used for graceful shutdown
 
-**Stop() error**
-- Gracefully shuts down the cluster
+**Stop(ctx context.Context) error**
+- Gracefully shuts down the manager
 - Completes running workflows before stopping
 - Should be called in defer or signal handlers
+- Context controls shutdown timeout
 
-**RegisterNode(node Node) error**
-- Registers a node implementation with the cluster
-- Node must implement the `Node` interface
+**RegisterNode(node interface{}) error**
+- Registers a node implementation with the manager
+- Node must implement GetName() method and Execute method via reflection
 - Node names must be unique within the cluster
 
-**StartWorkflow(workflowID string, trigger WorkflowTrigger) error**
+**UnregisterNode(nodeName string) error**
+- Removes a previously registered node
+- Returns error if node doesn't exist
+- Active workflows using the node will continue
+
+**StartWorkflow(trigger WorkflowTrigger) error**
 - Initiates a new workflow execution
-- WorkflowID must be unique across the cluster
+- WorkflowID in trigger must be unique across the cluster
 - Returns error if workflow already exists
 
-**GetWorkflowState(workflowID string) (WorkflowState, error)**
+**GetWorkflowState(workflowID string) (*WorkflowStatus, error)**
 - Retrieves current state of a running or completed workflow
 - Includes execution history and current status
 - Returns error if workflow not found
@@ -167,6 +193,21 @@ type Cluster interface {
 - Registers a callback for workflow failures
 - Handler receives error details and partial state
 - Multiple handlers can be registered
+
+**PauseWorkflow(ctx context.Context, workflowID string) error**
+- Pauses execution of a running workflow
+- Workflow can be resumed later with ResumeWorkflow
+- Returns error if workflow not found or not running
+
+**ResumeWorkflow(ctx context.Context, workflowID string) error**
+- Resumes execution of a paused workflow
+- Workflow continues from where it was paused
+- Returns error if workflow not found or not paused
+
+**StopWorkflow(ctx context.Context, workflowID string) error**
+- Terminates a running or paused workflow
+- Workflow is marked as cancelled and cannot be resumed
+- Returns error if workflow not found
 
 ### Node Interface
 
@@ -274,78 +315,82 @@ func (n *MyNode) CanStart(ctx context.Context) bool
 
 ## Configuration
 
-### Config Structure
+### Manager Creation
 
 ```go
-type Config struct {
-    NodeID      string `json:"node_id" yaml:"node_id"`
-    ServiceName string `json:"service_name" yaml:"service_name"`
-    ServicePort int    `json:"service_port" yaml:"service_port"`
+// Create a manager with required parameters
+manager := graft.New(nodeID, bindAddr, dataDir, logger)
 
-    Discovery DiscoveryConfig `json:"discovery" yaml:"discovery"`
-    Transport TransportConfig `json:"transport" yaml:"transport"`
-    Storage   StorageConfig   `json:"storage" yaml:"storage"`
-    Queue     QueueConfig     `json:"queue" yaml:"queue"`
-    Resources ResourceConfig  `json:"resources" yaml:"resources"`
-    Engine    EngineConfig    `json:"engine" yaml:"engine"`
-
-    LogLevel string `json:"log_level" yaml:"log_level"`
-}
+// Parameters:
+// - nodeID: Unique identifier for this node in the cluster
+// - bindAddr: Address and port for Raft consensus (e.g., "localhost:7000")
+// - dataDir: Directory path for persistent storage
+// - logger: *slog.Logger instance for structured logging
 ```
 
 ### Discovery Configuration
 
-```go
-type DiscoveryConfig struct {
-    Strategy    string            `json:"strategy" yaml:"strategy"`
-    ServiceName string            `json:"service_name" yaml:"service_name"`
-    ServicePort int               `json:"service_port" yaml:"service_port"`
-    Peers       []string          `json:"peers" yaml:"peers"`
-    Metadata    map[string]string `json:"metadata" yaml:"metadata"`
-}
-```
-
-**Strategies:**
-- `"auto"`: Automatically detect best strategy
-- `"static"`: Use predefined peer list
-- `"mdns"`: Use multicast DNS for local discovery
-- `"kubernetes"`: Use Kubernetes service discovery
-
-### Transport Configuration
+Configure service discovery before starting the manager:
 
 ```go
-type TransportConfig struct {
-    ListenAddress     string `json:"listen_address" yaml:"listen_address"`
-    ListenPort        int    `json:"listen_port" yaml:"listen_port"`
-    EnableTLS         bool   `json:"enable_tls" yaml:"enable_tls"`
-    TLSCertFile       string `json:"tls_cert_file" yaml:"tls_cert_file"`
-    TLSKeyFile        string `json:"tls_key_file" yaml:"tls_key_file"`
-    TLSCAFile         string `json:"tls_ca_file" yaml:"tls_ca_file"`
-    MaxMessageSizeMB  int    `json:"max_message_size_mb" yaml:"max_message_size_mb"`
-    ConnectionTimeout string `json:"connection_timeout" yaml:"connection_timeout"`
-}
+// MDNS Discovery (automatic local discovery)
+manager.Discovery().MDNS()
+
+// Static Discovery (predefined peer list)
+manager.Discovery().Static("peer1:7001", "peer2:7002", "peer3:7003")
+
+// Kubernetes Discovery (service-based discovery)
+manager.Discovery().Kubernetes("my-service", "default")  // service name, namespace
 ```
+
+**Discovery Strategies:**
+- **MDNS**: Automatically discovers peers on the local network using multicast DNS
+- **Static**: Uses a predefined list of peer addresses
+- **Kubernetes**: Discovers peers through Kubernetes service endpoints
 
 ### Resource Configuration
 
+Resource limits are configured internally with sensible defaults:
+
 ```go
-type ResourceConfig struct {
-    MaxConcurrentTotal   int            `json:"max_concurrent_total" yaml:"max_concurrent_total"`
-    MaxConcurrentPerType map[string]int `json:"max_concurrent_per_type" yaml:"max_concurrent_per_type"`
-    DefaultPerTypeLimit  int            `json:"default_per_type_limit" yaml:"default_per_type_limit"`
+// Default resource configuration (internal):
+resourceConfig := &ports.ResourceConfig{
+    MaxConcurrentTotal:   100,               // Total concurrent workflows
+    DefaultPerTypeLimit:  10,                // Default per-node-type limit
+    MaxConcurrentPerType: map[string]int{},  // Custom per-type limits
+    HealthThresholds:     ports.HealthConfig{}, // Health check thresholds
 }
 ```
 
-### Engine Configuration
+To customize resource limits, you would need to modify the internal configuration in future releases.
+
+### Startup Configuration
 
 ```go
-type EngineConfig struct {
-    MaxConcurrentWorkflows int    `json:"max_concurrent_workflows" yaml:"max_concurrent_workflows"`
-    NodeExecutionTimeout   string `json:"node_execution_timeout" yaml:"node_execution_timeout"`
-    StateUpdateInterval    string `json:"state_update_interval" yaml:"state_update_interval"`
-    RetryAttempts          int    `json:"retry_attempts" yaml:"retry_attempts"`
-    RetryBackoff           string `json:"retry_backoff" yaml:"retry_backoff"`
+// Start the manager with gRPC port
+ctx := context.Background()
+grpcPort := 8080
+if err := manager.Start(ctx, grpcPort); err != nil {
+    log.Fatal(err)
 }
+
+// Graceful shutdown
+defer manager.Stop(ctx)
+```
+
+### Logging Configuration
+
+```go
+// Create structured logger with desired level and format
+logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+    Level: slog.LevelInfo,  // or LevelDebug, LevelWarn, LevelError
+    AddSource: true,        // Include source file info
+}))
+
+// JSON format for production
+jsonLogger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+    Level: slog.LevelInfo,
+}))
 ```
 
 ## Data Types
@@ -354,26 +399,26 @@ type EngineConfig struct {
 
 ```go
 type WorkflowTrigger struct {
-    WorkflowID   string                   `json:"workflow_id"`
-    InitialState map[string]interface{}   `json:"initial_state"`
-    InitialNodes []NodeConfig             `json:"initial_nodes"`
-    Metadata     map[string]string        `json:"metadata"`
+    WorkflowID   string        `json:"workflow_id"`
+    InitialState interface{}   `json:"initial_state"`  // Typed state struct
+    InitialNodes []NodeConfig  `json:"initial_nodes"`
+    Metadata     map[string]string `json:"metadata,omitempty"`
 }
 ```
 
-### WorkflowState
+### WorkflowStatus
 
 ```go
-type WorkflowState struct {
-    WorkflowID    string                 `json:"workflow_id"`
-    Status        string                 `json:"status"`
-    CurrentState  map[string]interface{} `json:"current_state"`
-    StartedAt     string                 `json:"started_at"`
-    CompletedAt   *string                `json:"completed_at,omitempty"`
-    ExecutedNodes []ExecutedNode         `json:"executed_nodes"`
-    PendingNodes  []PendingNode          `json:"pending_nodes"`
-    ReadyNodes    []ReadyNode            `json:"ready_nodes"`
-    LastError     *string                `json:"last_error,omitempty"`
+type WorkflowStatus struct {
+    WorkflowID    string      `json:"workflow_id"`
+    Status        string      `json:"status"`
+    CurrentState  interface{} `json:"current_state"`  // Typed state struct
+    StartedAt     time.Time   `json:"started_at"`
+    CompletedAt   *time.Time  `json:"completed_at,omitempty"`
+    ExecutedNodes []ExecutedNodeData `json:"executed_nodes"`
+    PendingNodes  []NodeConfig       `json:"pending_nodes"`
+    ReadyNodes    []NodeConfig       `json:"ready_nodes"`
+    LastError     *string     `json:"last_error,omitempty"`
 }
 ```
 
@@ -383,19 +428,113 @@ type WorkflowState struct {
 - `"completed"`: Successfully finished
 - `"failed"`: Terminated due to error
 - `"cancelled"`: Manually stopped
+- `"paused"`: Execution temporarily suspended
+
+### NodeConfig
+
+```go
+type NodeConfig struct {
+    Name   string      `json:"name"`
+    Config interface{} `json:"config"`  // Typed config struct
+}
+```
 
 ### ClusterInfo
 
 ```go
 type ClusterInfo struct {
-    NodeID            string            `json:"node_id"`
-    RegisteredNodes   []string          `json:"registered_nodes"`
-    ActiveWorkflows   int64             `json:"active_workflows"`
-    ResourceLimits    ResourceConfig    `json:"resource_limits"`
-    ExecutionStats    ExecutionStats    `json:"execution_stats"`
-    EngineMetrics     EngineMetrics     `json:"engine_metrics"`
-    ClusterMembers    []ClusterMember   `json:"cluster_members"`
-    IsLeader          bool              `json:"is_leader"`
+    NodeID   string        `json:"node_id"`
+    Status   string        `json:"status"`         // "running" or "stopped"
+    IsLeader bool          `json:"is_leader"`
+    Peers    []string      `json:"peers"`
+    Metrics  EngineMetrics `json:"metrics"`
+}
+```
+
+### EngineMetrics
+
+```go
+type EngineMetrics struct {
+    TotalWorkflows     int64 `json:"total_workflows"`
+    ActiveWorkflows    int64 `json:"active_workflows"`
+    CompletedWorkflows int64 `json:"completed_workflows"`
+    FailedWorkflows    int64 `json:"failed_workflows"`
+    NodesExecuted      int64 `json:"nodes_executed"`
+}
+```
+
+## Workflow Context
+
+### Accessing Workflow Metadata
+
+Nodes can access workflow-level metadata during execution using the `GetWorkflowContext` function:
+
+```go
+func (n *MyNode) Execute(ctx context.Context, state MyState, config MyConfig) (graft.NodeResult, error) {
+    if workflowCtx, ok := graft.GetWorkflowContext(ctx); ok {
+        log.Printf("Executing node %s in workflow %s", workflowCtx.NodeName, workflowCtx.WorkflowID)
+        log.Printf("Execution ID: %s", workflowCtx.ExecutionID)
+        log.Printf("Started at: %s", workflowCtx.StartedAt)
+        log.Printf("Is leader: %t", workflowCtx.ClusterInfo.IsLeader)
+        log.Printf("Retry count: %d", workflowCtx.RetryCount)
+        
+        if workflowCtx.Metadata != nil {
+            for key, value := range workflowCtx.Metadata {
+                log.Printf("Metadata %s: %s", key, value)
+            }
+        }
+    }
+    
+    // Your node logic here
+    return graft.NodeResult{Data: result}, nil
+}
+```
+
+### WorkflowContext Structure
+
+```go
+type WorkflowContext struct {
+    WorkflowID     string            `json:"workflow_id"`      // Unique workflow identifier
+    NodeName       string            `json:"node_name"`        // Current node name
+    ExecutionID    string            `json:"execution_id"`     // Unique execution identifier
+    StartedAt      time.Time         `json:"started_at"`       // Workflow start time
+    Metadata       map[string]string `json:"metadata"`         // Workflow metadata
+    ClusterInfo    ClusterBasicInfo  `json:"cluster_info"`     // Cluster state information
+    PreviousNode   *string           `json:"previous_node,omitempty"` // Previous node (if any)
+    RetryCount     int               `json:"retry_count"`      // Current retry attempt
+    Priority       int               `json:"priority"`         // Execution priority
+}
+
+type ClusterBasicInfo struct {
+    NodeID   string `json:"node_id"`   // Current cluster node ID
+    IsLeader bool   `json:"is_leader"` // Whether this node is Raft leader
+    Status   string `json:"status"`    // Cluster status
+}
+```
+
+### Conditional Logic Based on Context
+
+```go
+func (n *ConditionalNode) Execute(ctx context.Context, state MyState, config MyConfig) (graft.NodeResult, error) {
+    result := MyResult{ProcessedAt: time.Now()}
+    
+    if workflowCtx, ok := graft.GetWorkflowContext(ctx); ok {
+        if workflowCtx.ClusterInfo.IsLeader {
+            result.Message = "Processing on leader node"
+        } else {
+            result.Message = "Processing on follower node"
+        }
+        
+        if workflowCtx.RetryCount > 0 {
+            result.Message += fmt.Sprintf(" (retry %d)", workflowCtx.RetryCount)
+        }
+        
+        if env, exists := workflowCtx.Metadata["environment"]; exists {
+            result.Environment = env
+        }
+    }
+    
+    return graft.NodeResult{Data: result}, nil
 }
 ```
 
@@ -403,22 +542,26 @@ type ClusterInfo struct {
 
 ### Workflow Chaining
 
-Nodes can specify next nodes to execute by including `_next_nodes` in their output:
+Nodes can specify next nodes to execute by returning `NextNodes` in the result:
 
 ```go
-func (n *ConditionalNode) Execute(ctx context.Context, config, state map[string]interface{}) (map[string]interface{}, error) {
-    value := state["value"].(int)
+func (n *ConditionalNode) Execute(ctx context.Context, state MyState, config MyConfig) (graft.NodeResult, error) {
+    processedValue := state.Value * 2
     
-    result := map[string]interface{}{
-        "processed_value": value * 2,
+    result := graft.NodeResult{
+        Data: MyResult{
+            ProcessedValue: processedValue,
+            Timestamp:      time.Now(),
+        },
     }
     
-    if value > 10 {
-        result["_next_nodes"] = []interface{}{
-            map[string]interface{}{
-                "node_name": "high-value-processor",
-                "config": map[string]interface{}{
-                    "threshold": 100,
+    // Conditionally add next nodes
+    if state.Value > 10 {
+        result.NextNodes = []graft.NextNode{
+            {
+                NodeName: "high-value-processor",
+                Config: HighValueConfig{
+                    Threshold: 100,
                 },
             },
         }
@@ -432,40 +575,49 @@ func (n *ConditionalNode) Execute(ctx context.Context, config, state map[string]
 
 ```go
 // Register error handler
-cluster.OnError(func(workflowID string, finalState map[string]interface{}, err error) {
-    log.Printf("Workflow %s failed: %v", workflowID, err)
+manager.OnError(func(ctx context.Context, data domain.WorkflowErrorData) error {
+    log.Printf("Workflow %s failed: %v", data.WorkflowID, data.Error)
     // Implement custom error handling logic
+    return nil
 })
 
-// Register completion handler
-cluster.OnComplete(func(workflowID string, finalState map[string]interface{}) {
-    log.Printf("Workflow %s completed successfully", workflowID)
+// Register completion handler  
+manager.OnComplete(func(ctx context.Context, data domain.WorkflowCompletionData) error {
+    log.Printf("Workflow %s completed successfully", data.WorkflowID)
     // Implement post-processing logic
+    return nil
 })
 ```
 
-### Resource Management
+### Workflow Control
 
 ```go
-config := graft.DefaultConfig()
-config.Resources = graft.ResourceConfig{
-    MaxConcurrentTotal: 100,
-    MaxConcurrentPerType: map[string]int{
-        "heavy-processor": 5,
-        "light-processor": 20,
-    },
-    DefaultPerTypeLimit: 10,
+// Pause a running workflow
+if err := manager.PauseWorkflow(ctx, "workflow-123"); err != nil {
+    log.Printf("Failed to pause workflow: %v", err)
+}
+
+// Resume a paused workflow
+if err := manager.ResumeWorkflow(ctx, "workflow-123"); err != nil {
+    log.Printf("Failed to resume workflow: %v", err)
+}
+
+// Stop a workflow permanently
+if err := manager.StopWorkflow(ctx, "workflow-123"); err != nil {
+    log.Printf("Failed to stop workflow: %v", err)
 }
 ```
 
 ### Monitoring
 
 ```go
-info := cluster.GetClusterInfo()
-fmt.Printf("Active workflows: %d\n", info.ActiveWorkflows)
-fmt.Printf("Resource utilization: %d/%d\n", 
-    info.ExecutionStats.TotalExecuting, 
-    info.ExecutionStats.TotalCapacity)
+info := manager.GetClusterInfo()
+fmt.Printf("Node ID: %s\n", info.NodeID)
+fmt.Printf("Status: %s\n", info.Status)
+fmt.Printf("Is Leader: %t\n", info.IsLeader)
+fmt.Printf("Active workflows: %d\n", info.Metrics.ActiveWorkflows)
+fmt.Printf("Completed workflows: %d\n", info.Metrics.CompletedWorkflows)
+fmt.Printf("Failed workflows: %d\n", info.Metrics.FailedWorkflows)
 ```
 
 ## Best Practices
