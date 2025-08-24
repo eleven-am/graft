@@ -36,6 +36,8 @@ import (
     "context"
     "fmt"
     "log"
+    "log/slog"
+    "os"
     "time"
 
     "github.com/eleven-am/graft"
@@ -79,25 +81,26 @@ func (n *ProcessorNode) Execute(ctx context.Context, state ProcessorState, confi
 }
 
 func main() {
-    // Create cluster configuration
-    config := graft.DefaultConfig()
-    config.NodeID = "node-1"
-    config.ServiceName = "my-workflow-cluster"
+    // Create logger
+    logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
     
-    // Create and start cluster
-    cluster, err := graft.New(config)
-    if err != nil {
-        log.Fatal(err)
+    // Create and start manager
+    manager := graft.New("node-1", "localhost:7000", "./data", logger)
+    if manager == nil {
+        log.Fatal("failed to create manager")
     }
+    
+    // Configure discovery (optional)
+    manager.Discovery().MDNS()  // or Static(), Kubernetes()
     
     ctx := context.Background()
-    if err := cluster.Start(ctx); err != nil {
+    if err := manager.Start(ctx, 8080); err != nil {  // gRPC port
         log.Fatal(err)
     }
-    defer cluster.Stop()
+    defer manager.Stop(ctx)
     
     // Register type-safe workflow node
-    if err := cluster.RegisterNode(&ProcessorNode{}); err != nil {
+    if err := manager.RegisterNode(&ProcessorNode{}); err != nil {
         log.Fatal(err)
     }
     
@@ -112,12 +115,12 @@ func main() {
         },
     }
     
-    if err := cluster.StartWorkflow("my-workflow-001", trigger); err != nil {
+    if err := manager.StartWorkflow(trigger); err != nil {
         log.Fatal(err)
     }
     
     // Check workflow status
-    state, err := cluster.GetWorkflowState("my-workflow-001")
+    state, err := manager.GetWorkflowState("my-workflow-001")
     if err != nil {
         log.Fatal(err)
     }
@@ -195,11 +198,19 @@ Graft is designed for performance and resilience through proven architectural pa
 Basic configuration example:
 
 ```go
-config := graft.DefaultConfig()
-config.NodeID = "node-1"
-config.ServiceName = "my-workflow-cluster"
+// Create with default settings
+logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+manager := graft.New("node-1", "localhost:7000", "./data", logger)
 
-cluster, err := graft.New(config)
+// Configure discovery before starting
+manager.Discovery().MDNS()  // mDNS discovery
+// or manager.Discovery().Static("peer1:7001", "peer2:7002")  // Static peers
+// or manager.Discovery().Kubernetes("my-service", "default") // Kubernetes
+
+// Start with gRPC port
+if err := manager.Start(context.Background(), 8080); err != nil {
+    log.Fatal(err)
+}
 ```
 
 For complete configuration options, see [Configuration Guide](./docs/API.md#configuration).
