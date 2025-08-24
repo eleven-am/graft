@@ -2,7 +2,6 @@ package core
 
 import (
 	"context"
-	"io"
 	"log/slog"
 	"time"
 
@@ -26,6 +25,8 @@ type Manager struct {
 	raftAdapter        ports.RaftPort
 	logger             *slog.Logger
 	config             *ports.ResourceConfig
+	engineConfig       *domain.EngineConfig
+	orchestratorConfig *domain.OrchestratorConfig
 	registry           ports.NodeRegistryPort
 	nodeID             string
 	address            string
@@ -81,29 +82,104 @@ func extractPort(bindAddr string) int {
 }
 
 func New(nodeId, bindAddr, dataDir string, logger *slog.Logger) *Manager {
-	if logger == nil {
-		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	config := domain.NewConfigFromSimple(nodeId, bindAddr, dataDir, logger)
+	return NewWithConfig(config)
+}
+
+func NewWithConfig(config *domain.Config) *Manager {
+	if err := config.Validate(); err != nil {
+		config.Logger.Error("invalid configuration", "error", err)
+		return nil
 	}
 
-	logger = logger.With("component", "graft", "node_id", nodeId)
-	raftConfig := raft.DefaultRaftConfig(nodeId, bindAddr, dataDir)
+	logger := config.Logger.With("component", "graft", "node_id", config.NodeID)
+
+	raftConfig := &raft.Config{
+		NodeID:             config.NodeID,
+		BindAddr:           config.BindAddr,
+		DataDir:            config.DataDir,
+		SnapshotInterval:   config.Raft.SnapshotInterval,
+		SnapshotThreshold:  config.Raft.SnapshotThreshold,
+		MaxSnapshots:       config.Raft.MaxSnapshots,
+		MaxJoinAttempts:    config.Raft.MaxJoinAttempts,
+		HeartbeatTimeout:   config.Raft.HeartbeatTimeout,
+		ElectionTimeout:    config.Raft.ElectionTimeout,
+		CommitTimeout:      config.Raft.CommitTimeout,
+		MaxAppendEntries:   config.Raft.MaxAppendEntries,
+		ShutdownOnRemove:   config.Raft.ShutdownOnRemove,
+		TrailingLogs:       config.Raft.TrailingLogs,
+		LeaderLeaseTimeout: config.Raft.LeaderLeaseTimeout,
+	}
+
 	raftAdapter, err := raft.NewAdapter(raftConfig, logger)
 	if err != nil {
 		logger.Error("failed to create raft adapter", "error", err)
 		return nil
 	}
 
-	d := discovery.NewManager(nodeId, logger)
+	discoveryManager := createDiscoveryManager(config, logger)
 	nodeRegistryAdapter := node_registry.NewAdapter(logger)
+
 	return &Manager{
 		logger:      logger,
 		raftAdapter: raftAdapter,
-		nodeID:      nodeId,
-		address:     extractAddress(bindAddr),
-		raftPort:    extractPort(bindAddr),
-		discovery:   d,
+		nodeID:      config.NodeID,
+		address:     extractAddress(config.BindAddr),
+		raftPort:    extractPort(config.BindAddr),
+		discovery:   discoveryManager,
 		registry:    nodeRegistryAdapter,
+		config: &ports.ResourceConfig{
+			MaxConcurrentTotal:   config.Resources.MaxConcurrentTotal,
+			MaxConcurrentPerType: config.Resources.MaxConcurrentPerType,
+			DefaultPerTypeLimit:  config.Resources.DefaultPerTypeLimit,
+			NodePriorities:       config.Resources.NodePriorities,
+			HealthThresholds: ports.HealthConfig{
+				MaxResponseTime:    config.Resources.HealthThresholds.MaxResponseTime,
+				MinSuccessRate:     config.Resources.HealthThresholds.MinSuccessRate,
+				MaxUtilizationRate: config.Resources.HealthThresholds.MaxUtilizationRate,
+			},
+		},
+		engineConfig:       &config.Engine,
+		orchestratorConfig: &config.Orchestrator,
 	}
+}
+
+func createDiscoveryManager(config *domain.Config, logger *slog.Logger) ports.DiscoveryManager {
+	manager := discovery.NewManager(config.NodeID, logger)
+
+	for _, discoveryConfig := range config.Discovery {
+		switch discoveryConfig.Type {
+		case domain.DiscoveryMDNS:
+			if discoveryConfig.MDNS != nil {
+				manager.MDNS(discoveryConfig.MDNS.Service, discoveryConfig.MDNS.Domain, discoveryConfig.MDNS.Host)
+			} else {
+				manager.MDNS()
+			}
+		case domain.DiscoveryKubernetes:
+			if discoveryConfig.Kubernetes != nil {
+				serviceName := discoveryConfig.Kubernetes.Discovery.ServiceName
+				namespace := discoveryConfig.Kubernetes.Namespace
+				manager.Kubernetes(serviceName, namespace)
+			} else {
+				manager.Kubernetes()
+			}
+		case domain.DiscoveryStatic:
+			if len(discoveryConfig.Static) > 0 {
+				peers := make([]ports.Peer, len(discoveryConfig.Static))
+				for i, staticPeer := range discoveryConfig.Static {
+					peers[i] = ports.Peer{
+						ID:       staticPeer.ID,
+						Address:  staticPeer.Address,
+						Port:     staticPeer.Port,
+						Metadata: staticPeer.Metadata,
+					}
+				}
+				manager.Static(peers)
+			}
+		}
+	}
+
+	return manager
 }
 
 func (m *Manager) Discovery() ports.DiscoveryManager {
@@ -111,10 +187,19 @@ func (m *Manager) Discovery() ports.DiscoveryManager {
 }
 
 func (m *Manager) Start(ctx context.Context, grpcPort int) error {
-	orchestratorConfig := OrchestratorConfig{
-		ShutdownTimeout: 30 * time.Second,
-		StartupTimeout:  30 * time.Second,
-		GracePeriod:     2 * time.Second,
+	var orchestratorConfig OrchestratorConfig
+	if m.orchestratorConfig != nil {
+		orchestratorConfig = OrchestratorConfig{
+			ShutdownTimeout: m.orchestratorConfig.ShutdownTimeout,
+			StartupTimeout:  m.orchestratorConfig.StartupTimeout,
+			GracePeriod:     m.orchestratorConfig.GracePeriod,
+		}
+	} else {
+		orchestratorConfig = OrchestratorConfig{
+			ShutdownTimeout: 30 * time.Second,
+			StartupTimeout:  30 * time.Second,
+			GracePeriod:     2 * time.Second,
+		}
 	}
 
 	transportAdapter := transport.NewGRPCTransport(m.logger)
@@ -123,13 +208,7 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	readyQueueAdapter := queue.NewAdapter(storageAdapter, m.nodeID, ports.QueueTypeReady, m.logger)
 	pendingQueueAdapter := queue.NewAdapter(storageAdapter, m.nodeID, ports.QueueTypePending, m.logger)
 
-	resourceConfig := &ports.ResourceConfig{
-		MaxConcurrentTotal:   100,
-		DefaultPerTypeLimit:  10, // Allow up to 10 nodes per type by default
-		MaxConcurrentPerType: map[string]int{},
-		HealthThresholds:     ports.HealthConfig{},
-	}
-	resourceManagerAdapter := resource_manager.NewAdapter(*resourceConfig, m.logger)
+	resourceManagerAdapter := resource_manager.NewAdapter(*m.config, m.logger)
 	semaphoreAdapter := semaphore.NewAdapter(storageAdapter, m.logger)
 
 	workflowEngineAdapter := createWorkflowEngine(
@@ -140,6 +219,7 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 		resourceManagerAdapter,
 		semaphoreAdapter,
 		m.raftAdapter,
+		m.engineConfig,
 		m.logger,
 	)
 
@@ -159,8 +239,6 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	if len(m.completionHandlers) > 0 || len(m.errorHandlers) > 0 {
 		m.engine.RegisterLifecycleHandlers(m.completionHandlers, m.errorHandlers)
 	}
-
-	m.config = resourceConfig
 
 	return m.orchestrator.Startup(ctx, grpcPort)
 }
