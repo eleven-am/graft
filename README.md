@@ -17,7 +17,6 @@ By integrating Graft, you can add resilient, long-running process management dir
 - **Resource Management**: Control workflow concurrency with global and per-type execution limits
 - **Secure Transport**: gRPC communication with TLS support and health checking
 - **Persistent State**: BadgerDB for high-performance local storage with replication
-- **Production Ready**: Comprehensive monitoring, health checks, and structured logging
 
 ## Quick Start
 
@@ -136,7 +135,7 @@ func main() {
 
 ## Documentation
 
-- **[Examples](./examples/README.md)** - Working examples for common use cases
+- **[Examples](./examples/document-pipeline/README.md)** - Working examples for common use cases
 - **[API Reference](./docs/API.md)** - Complete API documentation
 - **[Architecture](./docs/ARCHITECTURE.md)** - System design and components
 - **[Deployment Guide](./docs/DEPLOYMENT.md)** - Production deployment patterns
