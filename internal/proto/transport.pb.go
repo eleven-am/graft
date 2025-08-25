@@ -2,7 +2,7 @@
 // versions:
 // 	protoc-gen-go v1.36.8
 // 	protoc        v5.29.3
-// source: internal/proto/transport.proto
+// source: transport.proto
 
 package proto
 
@@ -57,11 +57,11 @@ func (x MessageType) String() string {
 }
 
 func (MessageType) Descriptor() protoreflect.EnumDescriptor {
-	return file_internal_proto_transport_proto_enumTypes[0].Descriptor()
+	return file_transport_proto_enumTypes[0].Descriptor()
 }
 
 func (MessageType) Type() protoreflect.EnumType {
-	return &file_internal_proto_transport_proto_enumTypes[0]
+	return &file_transport_proto_enumTypes[0]
 }
 
 func (x MessageType) Number() protoreflect.EnumNumber {
@@ -70,7 +70,7 @@ func (x MessageType) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use MessageType.Descriptor instead.
 func (MessageType) EnumDescriptor() ([]byte, []int) {
-	return file_internal_proto_transport_proto_rawDescGZIP(), []int{0}
+	return file_transport_proto_rawDescGZIP(), []int{0}
 }
 
 type MessageRequest struct {
@@ -84,7 +84,7 @@ type MessageRequest struct {
 
 func (x *MessageRequest) Reset() {
 	*x = MessageRequest{}
-	mi := &file_internal_proto_transport_proto_msgTypes[0]
+	mi := &file_transport_proto_msgTypes[0]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -96,7 +96,7 @@ func (x *MessageRequest) String() string {
 func (*MessageRequest) ProtoMessage() {}
 
 func (x *MessageRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_transport_proto_msgTypes[0]
+	mi := &file_transport_proto_msgTypes[0]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -109,7 +109,7 @@ func (x *MessageRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MessageRequest.ProtoReflect.Descriptor instead.
 func (*MessageRequest) Descriptor() ([]byte, []int) {
-	return file_internal_proto_transport_proto_rawDescGZIP(), []int{0}
+	return file_transport_proto_rawDescGZIP(), []int{0}
 }
 
 func (x *MessageRequest) GetType() MessageType {
@@ -144,7 +144,7 @@ type MessageResponse struct {
 
 func (x *MessageResponse) Reset() {
 	*x = MessageResponse{}
-	mi := &file_internal_proto_transport_proto_msgTypes[1]
+	mi := &file_transport_proto_msgTypes[1]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -156,7 +156,7 @@ func (x *MessageResponse) String() string {
 func (*MessageResponse) ProtoMessage() {}
 
 func (x *MessageResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_transport_proto_msgTypes[1]
+	mi := &file_transport_proto_msgTypes[1]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -169,7 +169,7 @@ func (x *MessageResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MessageResponse.ProtoReflect.Descriptor instead.
 func (*MessageResponse) Descriptor() ([]byte, []int) {
-	return file_internal_proto_transport_proto_rawDescGZIP(), []int{1}
+	return file_transport_proto_rawDescGZIP(), []int{1}
 }
 
 func (x *MessageResponse) GetSuccess() bool {
@@ -202,7 +202,7 @@ type HealthCheckRequest struct {
 
 func (x *HealthCheckRequest) Reset() {
 	*x = HealthCheckRequest{}
-	mi := &file_internal_proto_transport_proto_msgTypes[2]
+	mi := &file_transport_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -214,7 +214,7 @@ func (x *HealthCheckRequest) String() string {
 func (*HealthCheckRequest) ProtoMessage() {}
 
 func (x *HealthCheckRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_transport_proto_msgTypes[2]
+	mi := &file_transport_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -227,7 +227,7 @@ func (x *HealthCheckRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthCheckRequest.ProtoReflect.Descriptor instead.
 func (*HealthCheckRequest) Descriptor() ([]byte, []int) {
-	return file_internal_proto_transport_proto_rawDescGZIP(), []int{2}
+	return file_transport_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *HealthCheckRequest) GetNodeId() string {
@@ -247,7 +247,7 @@ type HealthCheckResponse struct {
 
 func (x *HealthCheckResponse) Reset() {
 	*x = HealthCheckResponse{}
-	mi := &file_internal_proto_transport_proto_msgTypes[3]
+	mi := &file_transport_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -259,7 +259,7 @@ func (x *HealthCheckResponse) String() string {
 func (*HealthCheckResponse) ProtoMessage() {}
 
 func (x *HealthCheckResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_transport_proto_msgTypes[3]
+	mi := &file_transport_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -272,7 +272,7 @@ func (x *HealthCheckResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HealthCheckResponse.ProtoReflect.Descriptor instead.
 func (*HealthCheckResponse) Descriptor() ([]byte, []int) {
-	return file_internal_proto_transport_proto_rawDescGZIP(), []int{3}
+	return file_transport_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *HealthCheckResponse) GetHealthy() bool {
@@ -298,7 +298,7 @@ type LeaderAddressRequest struct {
 
 func (x *LeaderAddressRequest) Reset() {
 	*x = LeaderAddressRequest{}
-	mi := &file_internal_proto_transport_proto_msgTypes[4]
+	mi := &file_transport_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -310,7 +310,7 @@ func (x *LeaderAddressRequest) String() string {
 func (*LeaderAddressRequest) ProtoMessage() {}
 
 func (x *LeaderAddressRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_transport_proto_msgTypes[4]
+	mi := &file_transport_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -323,7 +323,7 @@ func (x *LeaderAddressRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaderAddressRequest.ProtoReflect.Descriptor instead.
 func (*LeaderAddressRequest) Descriptor() ([]byte, []int) {
-	return file_internal_proto_transport_proto_rawDescGZIP(), []int{4}
+	return file_transport_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *LeaderAddressRequest) GetRequestingNodeId() string {
@@ -344,7 +344,7 @@ type LeaderAddressResponse struct {
 
 func (x *LeaderAddressResponse) Reset() {
 	*x = LeaderAddressResponse{}
-	mi := &file_internal_proto_transport_proto_msgTypes[5]
+	mi := &file_transport_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -356,7 +356,7 @@ func (x *LeaderAddressResponse) String() string {
 func (*LeaderAddressResponse) ProtoMessage() {}
 
 func (x *LeaderAddressResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_transport_proto_msgTypes[5]
+	mi := &file_transport_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -369,7 +369,7 @@ func (x *LeaderAddressResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LeaderAddressResponse.ProtoReflect.Descriptor instead.
 func (*LeaderAddressResponse) Descriptor() ([]byte, []int) {
-	return file_internal_proto_transport_proto_rawDescGZIP(), []int{5}
+	return file_transport_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *LeaderAddressResponse) GetRaftAddress() string {
@@ -393,139 +393,11 @@ func (x *LeaderAddressResponse) GetIsLeader() bool {
 	return false
 }
 
-type JoinRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	RaftAddress   string                 `protobuf:"bytes,2,opt,name=raft_address,json=raftAddress,proto3" json:"raft_address,omitempty"`
-	RaftPort      int32                  `protobuf:"varint,3,opt,name=raft_port,json=raftPort,proto3" json:"raft_port,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
+var File_transport_proto protoreflect.FileDescriptor
 
-func (x *JoinRequest) Reset() {
-	*x = JoinRequest{}
-	mi := &file_internal_proto_transport_proto_msgTypes[6]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *JoinRequest) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*JoinRequest) ProtoMessage() {}
-
-func (x *JoinRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_transport_proto_msgTypes[6]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use JoinRequest.ProtoReflect.Descriptor instead.
-func (*JoinRequest) Descriptor() ([]byte, []int) {
-	return file_internal_proto_transport_proto_rawDescGZIP(), []int{6}
-}
-
-func (x *JoinRequest) GetNodeId() string {
-	if x != nil {
-		return x.NodeId
-	}
-	return ""
-}
-
-func (x *JoinRequest) GetRaftAddress() string {
-	if x != nil {
-		return x.RaftAddress
-	}
-	return ""
-}
-
-func (x *JoinRequest) GetRaftPort() int32 {
-	if x != nil {
-		return x.RaftPort
-	}
-	return 0
-}
-
-type JoinResponse struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
-	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
-	LeaderId      string                 `protobuf:"bytes,3,opt,name=leader_id,json=leaderId,proto3" json:"leader_id,omitempty"`
-	LeaderAddress string                 `protobuf:"bytes,4,opt,name=leader_address,json=leaderAddress,proto3" json:"leader_address,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *JoinResponse) Reset() {
-	*x = JoinResponse{}
-	mi := &file_internal_proto_transport_proto_msgTypes[7]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *JoinResponse) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*JoinResponse) ProtoMessage() {}
-
-func (x *JoinResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_internal_proto_transport_proto_msgTypes[7]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use JoinResponse.ProtoReflect.Descriptor instead.
-func (*JoinResponse) Descriptor() ([]byte, []int) {
-	return file_internal_proto_transport_proto_rawDescGZIP(), []int{7}
-}
-
-func (x *JoinResponse) GetSuccess() bool {
-	if x != nil {
-		return x.Success
-	}
-	return false
-}
-
-func (x *JoinResponse) GetError() string {
-	if x != nil {
-		return x.Error
-	}
-	return ""
-}
-
-func (x *JoinResponse) GetLeaderId() string {
-	if x != nil {
-		return x.LeaderId
-	}
-	return ""
-}
-
-func (x *JoinResponse) GetLeaderAddress() string {
-	if x != nil {
-		return x.LeaderAddress
-	}
-	return ""
-}
-
-var File_internal_proto_transport_proto protoreflect.FileDescriptor
-
-const file_internal_proto_transport_proto_rawDesc = "" +
+const file_transport_proto_rawDesc = "" +
 	"\n" +
-	"\x1einternal/proto/transport.proto\x12\ttransport\"j\n" +
+	"\x0ftransport.proto\x12\ttransport\"j\n" +
 	"\x0eMessageRequest\x12*\n" +
 	"\x04type\x18\x01 \x01(\x0e2\x16.transport.MessageTypeR\x04type\x12\x12\n" +
 	"\x04from\x18\x02 \x01(\tR\x04from\x12\x18\n" +
@@ -544,42 +416,32 @@ const file_internal_proto_transport_proto_rawDesc = "" +
 	"\x15LeaderAddressResponse\x12!\n" +
 	"\fraft_address\x18\x01 \x01(\tR\vraftAddress\x12\x1b\n" +
 	"\tleader_id\x18\x02 \x01(\tR\bleaderId\x12\x1b\n" +
-	"\tis_leader\x18\x03 \x01(\bR\bisLeader\"f\n" +
-	"\vJoinRequest\x12\x17\n" +
-	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12!\n" +
-	"\fraft_address\x18\x02 \x01(\tR\vraftAddress\x12\x1b\n" +
-	"\traft_port\x18\x03 \x01(\x05R\braftPort\"\x82\x01\n" +
-	"\fJoinResponse\x12\x18\n" +
-	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
-	"\x05error\x18\x02 \x01(\tR\x05error\x12\x1b\n" +
-	"\tleader_id\x18\x03 \x01(\tR\bleaderId\x12%\n" +
-	"\x0eleader_address\x18\x04 \x01(\tR\rleaderAddress*X\n" +
+	"\tis_leader\x18\x03 \x01(\bR\bisLeader*X\n" +
 	"\vMessageType\x12\x10\n" +
 	"\fSTORAGE_READ\x10\x00\x12\x11\n" +
 	"\rSTORAGE_WRITE\x10\x01\x12\x12\n" +
 	"\x0eSTORAGE_DELETE\x10\x02\x12\x10\n" +
-	"\fHEALTH_CHECK\x10\x032\xbb\x02\n" +
+	"\fHEALTH_CHECK\x10\x032\xfb\x01\n" +
 	"\x0eGraftTransport\x12D\n" +
 	"\vSendMessage\x12\x19.transport.MessageRequest\x1a\x1a.transport.MessageResponse\x12L\n" +
 	"\vHealthCheck\x12\x1d.transport.HealthCheckRequest\x1a\x1e.transport.HealthCheckResponse\x12U\n" +
-	"\x10GetLeaderAddress\x12\x1f.transport.LeaderAddressRequest\x1a .transport.LeaderAddressResponse\x12>\n" +
-	"\vRequestJoin\x12\x16.transport.JoinRequest\x1a\x17.transport.JoinResponseB+Z)github.com/eleven-am/graft/internal/protob\x06proto3"
+	"\x10GetLeaderAddress\x12\x1f.transport.LeaderAddressRequest\x1a .transport.LeaderAddressResponseB+Z)github.com/eleven-am/graft/internal/protob\x06proto3"
 
 var (
-	file_internal_proto_transport_proto_rawDescOnce sync.Once
-	file_internal_proto_transport_proto_rawDescData []byte
+	file_transport_proto_rawDescOnce sync.Once
+	file_transport_proto_rawDescData []byte
 )
 
-func file_internal_proto_transport_proto_rawDescGZIP() []byte {
-	file_internal_proto_transport_proto_rawDescOnce.Do(func() {
-		file_internal_proto_transport_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_internal_proto_transport_proto_rawDesc), len(file_internal_proto_transport_proto_rawDesc)))
+func file_transport_proto_rawDescGZIP() []byte {
+	file_transport_proto_rawDescOnce.Do(func() {
+		file_transport_proto_rawDescData = protoimpl.X.CompressGZIP(unsafe.Slice(unsafe.StringData(file_transport_proto_rawDesc), len(file_transport_proto_rawDesc)))
 	})
-	return file_internal_proto_transport_proto_rawDescData
+	return file_transport_proto_rawDescData
 }
 
-var file_internal_proto_transport_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_internal_proto_transport_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
-var file_internal_proto_transport_proto_goTypes = []any{
+var file_transport_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_transport_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_transport_proto_goTypes = []any{
 	(MessageType)(0),              // 0: transport.MessageType
 	(*MessageRequest)(nil),        // 1: transport.MessageRequest
 	(*MessageResponse)(nil),       // 2: transport.MessageResponse
@@ -587,47 +449,43 @@ var file_internal_proto_transport_proto_goTypes = []any{
 	(*HealthCheckResponse)(nil),   // 4: transport.HealthCheckResponse
 	(*LeaderAddressRequest)(nil),  // 5: transport.LeaderAddressRequest
 	(*LeaderAddressResponse)(nil), // 6: transport.LeaderAddressResponse
-	(*JoinRequest)(nil),           // 7: transport.JoinRequest
-	(*JoinResponse)(nil),          // 8: transport.JoinResponse
 }
-var file_internal_proto_transport_proto_depIdxs = []int32{
+var file_transport_proto_depIdxs = []int32{
 	0, // 0: transport.MessageRequest.type:type_name -> transport.MessageType
 	1, // 1: transport.GraftTransport.SendMessage:input_type -> transport.MessageRequest
 	3, // 2: transport.GraftTransport.HealthCheck:input_type -> transport.HealthCheckRequest
 	5, // 3: transport.GraftTransport.GetLeaderAddress:input_type -> transport.LeaderAddressRequest
-	7, // 4: transport.GraftTransport.RequestJoin:input_type -> transport.JoinRequest
-	2, // 5: transport.GraftTransport.SendMessage:output_type -> transport.MessageResponse
-	4, // 6: transport.GraftTransport.HealthCheck:output_type -> transport.HealthCheckResponse
-	6, // 7: transport.GraftTransport.GetLeaderAddress:output_type -> transport.LeaderAddressResponse
-	8, // 8: transport.GraftTransport.RequestJoin:output_type -> transport.JoinResponse
-	5, // [5:9] is the sub-list for method output_type
-	1, // [1:5] is the sub-list for method input_type
+	2, // 4: transport.GraftTransport.SendMessage:output_type -> transport.MessageResponse
+	4, // 5: transport.GraftTransport.HealthCheck:output_type -> transport.HealthCheckResponse
+	6, // 6: transport.GraftTransport.GetLeaderAddress:output_type -> transport.LeaderAddressResponse
+	4, // [4:7] is the sub-list for method output_type
+	1, // [1:4] is the sub-list for method input_type
 	1, // [1:1] is the sub-list for extension type_name
 	1, // [1:1] is the sub-list for extension extendee
 	0, // [0:1] is the sub-list for field type_name
 }
 
-func init() { file_internal_proto_transport_proto_init() }
-func file_internal_proto_transport_proto_init() {
-	if File_internal_proto_transport_proto != nil {
+func init() { file_transport_proto_init() }
+func file_transport_proto_init() {
+	if File_transport_proto != nil {
 		return
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
-			RawDescriptor: unsafe.Slice(unsafe.StringData(file_internal_proto_transport_proto_rawDesc), len(file_internal_proto_transport_proto_rawDesc)),
+			RawDescriptor: unsafe.Slice(unsafe.StringData(file_transport_proto_rawDesc), len(file_transport_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   8,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
-		GoTypes:           file_internal_proto_transport_proto_goTypes,
-		DependencyIndexes: file_internal_proto_transport_proto_depIdxs,
-		EnumInfos:         file_internal_proto_transport_proto_enumTypes,
-		MessageInfos:      file_internal_proto_transport_proto_msgTypes,
+		GoTypes:           file_transport_proto_goTypes,
+		DependencyIndexes: file_transport_proto_depIdxs,
+		EnumInfos:         file_transport_proto_enumTypes,
+		MessageInfos:      file_transport_proto_msgTypes,
 	}.Build()
-	File_internal_proto_transport_proto = out.File
-	file_internal_proto_transport_proto_goTypes = nil
-	file_internal_proto_transport_proto_depIdxs = nil
+	File_transport_proto = out.File
+	file_transport_proto_goTypes = nil
+	file_transport_proto_depIdxs = nil
 }

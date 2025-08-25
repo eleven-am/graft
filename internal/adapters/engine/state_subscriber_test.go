@@ -21,7 +21,7 @@ func TestStateSubscriptionManager_Subscribe(t *testing.T) {
 	}
 	engine.stateManager = NewStateManager(engine)
 	engine.storage = createMockStorageAdapter()
-	engine.stateSubscriber = NewStateSubscriptionManager(engine, logger)
+	engine.stateSubscriber = NewStateSubscriptionManager(engine, "test-node-id", logger)
 
 	workflowID := "test-workflow-123"
 
@@ -54,7 +54,7 @@ func TestStateSubscriptionManager_Unsubscribe(t *testing.T) {
 	}
 	engine.stateManager = NewStateManager(engine)
 	engine.storage = createMockStorageAdapter()
-	engine.stateSubscriber = NewStateSubscriptionManager(engine, logger)
+	engine.stateSubscriber = NewStateSubscriptionManager(engine, "test-node-id", logger)
 
 	workflowID := "test-workflow-unsub"
 
@@ -96,7 +96,7 @@ func TestStateSubscriptionManager_MultipleSubscribers(t *testing.T) {
 	}
 	engine.stateManager = NewStateManager(engine)
 	engine.storage = createMockStorageAdapter()
-	engine.stateSubscriber = NewStateSubscriptionManager(engine, logger)
+	engine.stateSubscriber = NewStateSubscriptionManager(engine, "test-node-id", logger)
 
 	workflowID := "test-workflow-multi"
 
@@ -164,7 +164,7 @@ func TestStateSubscriptionManager_StateChangeNotification(t *testing.T) {
 	engine.initializeDataCollector()
 
 	// Create subscription manager
-	engine.stateSubscriber = NewStateSubscriptionManager(engine, logger)
+	engine.stateSubscriber = NewStateSubscriptionManager(engine, "test-node-id", logger)
 
 	workflowID := "test-workflow-change"
 
@@ -205,7 +205,7 @@ func TestStateSubscriptionManager_TotalSubscriberCount(t *testing.T) {
 	}
 	engine.stateManager = NewStateManager(engine)
 	engine.storage = createMockStorageAdapter()
-	engine.stateSubscriber = NewStateSubscriptionManager(engine, logger)
+	engine.stateSubscriber = NewStateSubscriptionManager(engine, "test-node-id", logger)
 
 	// Create workflows and subscribers
 	workflows := []string{"workflow-1", "workflow-2", "workflow-3"}

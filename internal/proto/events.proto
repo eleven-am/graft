@@ -1,0 +1,79 @@
+syntax = "proto3";
+
+package events;
+
+option go_package = "github.com/eleven-am/graft/internal/proto";
+
+service GraftEventStream {
+  rpc StreamEvents(stream EventMessage) returns (stream EventMessage);
+  rpc SubscribeToWorkflow(WorkflowSubscription) returns (stream EventMessage);
+  rpc BroadcastEvent(EventBroadcast) returns (BroadcastResponse);
+}
+
+message EventMessage {
+  oneof message_type {
+    StateChangeEvent state_change = 1;
+    SubscriptionRequest subscription = 2;
+    UnsubscriptionRequest unsubscription = 3;
+    EventAck acknowledgement = 4;
+  }
+}
+
+message StateChangeEvent {
+  string event_id = 1;
+  string workflow_id = 2;
+  string changed_by = 3;
+  string node_name = 4;
+  EventType event_type = 5;
+  int64 timestamp = 6;
+  int64 sequence_number = 7;
+  bytes state_data = 8;
+  string source_node_id = 9;
+}
+
+message SubscriptionRequest {
+  string subscription_id = 1;
+  string workflow_id = 2;
+  string subscriber_node_id = 3;
+  int64 from_sequence = 4;
+}
+
+message UnsubscriptionRequest {
+  string subscription_id = 1;
+  string workflow_id = 2;
+  string subscriber_node_id = 3;
+}
+
+message EventAck {
+  string event_id = 1;
+  string subscription_id = 2;
+  bool success = 3;
+  string error = 4;
+}
+
+message WorkflowSubscription {
+  string workflow_id = 1;
+  string subscriber_node_id = 2;
+  int64 from_sequence = 3;
+}
+
+message EventBroadcast {
+  StateChangeEvent event = 1;
+  repeated string target_nodes = 2;
+}
+
+message BroadcastResponse {
+  bool success = 1;
+  int32 delivered_count = 2;
+  repeated string failed_nodes = 3;
+  string error = 4;
+}
+
+enum EventType {
+  NODE_STARTED = 0;
+  NODE_COMPLETED = 1;
+  NODE_FAILED = 2;
+  STATE_UPDATED = 3;
+  WORKFLOW_COMPLETED = 4;
+  WORKFLOW_FAILED = 5;
+}

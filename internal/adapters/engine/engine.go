@@ -81,7 +81,7 @@ func NewEngine(config Config, logger *slog.Logger) *Engine {
 	engine.pendingEvaluator = NewPendingEvaluator(engine, logger)
 	engine.evaluationTrigger = NewEvaluationTrigger(3, logger)
 	engine.evaluationTrigger.RegisterEvaluator(engine.pendingEvaluator)
-	engine.stateSubscriber = NewStateSubscriptionManager(engine, logger)
+	engine.stateSubscriber = NewStateSubscriptionManager(engine, engine.nodeID, logger)
 	engine.evaluationTrigger.RegisterStateSubscriber(engine.stateSubscriber)
 
 	return engine

@@ -1,21 +1,19 @@
 .PHONY: proto proto-clean proto-gen test build clean mocks mock-clean bump-patch bump-minor bump-major current-version debug-basic
 
-PROTO_DIR := proto
-PROTO_GEN_DIR := $(PROTO_DIR)/gen
+PROTO_DIR := internal/proto
 PROTO_FILES := $(wildcard $(PROTO_DIR)/*.proto)
 
 proto: proto-clean proto-gen
 
 proto-clean:
-	@rm -rf $(PROTO_GEN_DIR)
+	@rm -rf $(PROTO_DIR)/*.pb.go
 
 proto-gen:
-	@mkdir -p $(PROTO_GEN_DIR)
 	@protoc \
 		--proto_path=$(PROTO_DIR) \
-		--go_out=$(PROTO_GEN_DIR) \
+		--go_out=$(PROTO_DIR) \
 		--go_opt=paths=source_relative \
-		--go-grpc_out=$(PROTO_GEN_DIR) \
+		--go-grpc_out=$(PROTO_DIR) \
 		--go-grpc_opt=paths=source_relative \
 		$(PROTO_FILES)
 
@@ -52,7 +50,7 @@ build:
 
 clean:
 	@go clean -v ./...
-	@rm -rf $(PROTO_GEN_DIR)
+	@rm -rf $(PROTO_DIR)/*.pb.go
 	@find . -type d -name "mocks" -exec rm -rf {} + 2>/dev/null || true
 
 deps:

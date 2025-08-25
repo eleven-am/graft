@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/eleven-am/graft/internal/domain"
+	"github.com/eleven-am/graft/internal/ports"
 )
 
 type StateChangeEvent struct {
@@ -33,6 +34,10 @@ const (
 	EventTypeNodeStarted   EventType = "node_started"
 )
 
+func (et EventType) String() string {
+	return string(et)
+}
+
 type EvaluationTrigger interface {
 	TriggerEvaluation(ctx context.Context, event StateChangeEvent) error
 	RegisterEvaluator(evaluator PendingEvaluator)
@@ -44,6 +49,7 @@ type EvaluationTrigger interface {
 type eventDispatcher struct {
 	evaluator       PendingEvaluator
 	stateSubscriber *StateSubscriptionManager
+	distributedMgr  ports.DistributedEventManager
 	eventChan       chan StateChangeEvent
 	workerCount     int
 	logger          *slog.Logger
@@ -65,6 +71,12 @@ func (ed *eventDispatcher) RegisterEvaluator(evaluator PendingEvaluator) {
 
 func (ed *eventDispatcher) RegisterStateSubscriber(subscriber *StateSubscriptionManager) {
 	ed.stateSubscriber = subscriber
+}
+
+func (ed *eventDispatcher) RegisterDistributedManager(mgr ports.DistributedEventManager) {
+	ed.mu.Lock()
+	defer ed.mu.Unlock()
+	ed.distributedMgr = mgr
 }
 
 func (ed *eventDispatcher) TriggerEvaluation(ctx context.Context, event StateChangeEvent) error {
@@ -136,6 +148,27 @@ func (ed *eventDispatcher) worker(ctx context.Context, workerID int) {
 
 			if ed.stateSubscriber != nil {
 				ed.stateSubscriber.OnStateChange(event)
+			}
+
+			ed.mu.RLock()
+			distributedMgr := ed.distributedMgr
+			ed.mu.RUnlock()
+
+			if distributedMgr != nil {
+				distributedEvent := &ports.StateChangeEvent{
+					EventID:      event.WorkflowID + "-" + event.EventType.String() + "-" + event.Timestamp.Format("20060102150405.000000"),
+					WorkflowID:   event.WorkflowID,
+					ChangedBy:    event.ChangedBy,
+					NodeName:     event.NodeName,
+					EventType:    ports.StateChangeEventType(event.EventType),
+					Timestamp:    event.Timestamp,
+					StateData:    map[string]interface{}{"state": event.NewState},
+					SourceNodeID: "local",
+				}
+
+				if err := distributedMgr.BroadcastEvent(ctx, distributedEvent); err != nil {
+					ed.logger.Error("failed to broadcast event", "error", err, "workflow_id", event.WorkflowID, "event_type", event.EventType)
+				}
 			}
 		}
 	}

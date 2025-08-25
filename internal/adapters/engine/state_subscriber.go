@@ -17,25 +17,44 @@ type WorkflowStateSubscription struct {
 }
 
 type StateSubscriptionManager struct {
-	subscriptions map[string]map[string]*WorkflowStateSubscription
-	engine        *Engine
-	logger        *slog.Logger
-	mu            sync.RWMutex
-	nextID        int64
+	subscriptions  map[string]map[string]*WorkflowStateSubscription
+	engine         *Engine
+	logger         *slog.Logger
+	distributedMgr ports.DistributedEventManager
+	mu             sync.RWMutex
+	nextID         int64
+	nodeID         string
 }
 
-func NewStateSubscriptionManager(engine *Engine, logger *slog.Logger) *StateSubscriptionManager {
+func NewStateSubscriptionManager(engine *Engine, nodeID string, logger *slog.Logger) *StateSubscriptionManager {
 	return &StateSubscriptionManager{
 		subscriptions: make(map[string]map[string]*WorkflowStateSubscription),
 		engine:        engine,
+		nodeID:        nodeID,
 		logger:        logger.With("component", "state_subscription_manager"),
 	}
+}
+
+func (ssm *StateSubscriptionManager) SetDistributedManager(mgr ports.DistributedEventManager) {
+	ssm.mu.Lock()
+	defer ssm.mu.Unlock()
+	ssm.distributedMgr = mgr
 }
 
 func (ssm *StateSubscriptionManager) Subscribe(workflowID string) (<-chan *ports.WorkflowStatus, func(), error) {
 	ssm.mu.Lock()
 	defer ssm.mu.Unlock()
 
+	// If distributed manager is available, use it for true distributed subscriptions
+	if ssm.distributedMgr != nil {
+		return ssm.distributedMgr.SubscribeToWorkflow(workflowID, ssm.nodeID)
+	}
+
+	// Fallback to local-only subscription
+	return ssm.subscribeLocal(workflowID)
+}
+
+func (ssm *StateSubscriptionManager) subscribeLocal(workflowID string) (<-chan *ports.WorkflowStatus, func(), error) {
 	ssm.nextID++
 	subscriberID := generateSubscriberID(ssm.nextID)
 
@@ -58,11 +77,12 @@ func (ssm *StateSubscriptionManager) Subscribe(workflowID string) (<-chan *ports
 		ssm.unsubscribe(workflowID, subscriberID)
 	}
 
-	ssm.logger.Debug("workflow state subscription created",
+	ssm.logger.Debug("local workflow state subscription created",
 		"workflow_id", workflowID,
 		"subscriber_id", subscriberID,
 		"total_subscribers", len(ssm.subscriptions[workflowID]))
 
+	// Send initial state if available
 	currentStatus, err := ssm.engine.GetWorkflowStatus(workflowID)
 	if err == nil && currentStatus != nil {
 		select {
