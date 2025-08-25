@@ -20,6 +20,7 @@ type NextNode = ports.NextNode
 
 // Re-export domain types
 type WorkflowCompletionData = domain.WorkflowCompletionData
+type WorkflowErrorData = domain.WorkflowErrorData
 type ExecutedNodeData = domain.ExecutedNodeData
 type CheckpointData = domain.CheckpointData
 type WorkflowContext = domain.WorkflowContext

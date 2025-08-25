@@ -167,11 +167,11 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 		"next_nodes_count", len(nextNodes),
 	)
 
-	executedNode := ports.ExecutedNode{
+	executedNode := domain.ExecutedNodeData{
 		NodeName:   item.NodeName,
 		ExecutedAt: startTime,
 		Duration:   duration,
-		Status:     ports.NodeExecutionStatusCompleted,
+		Status:     string(ports.NodeExecutionStatusCompleted),
 		Config:     item.Config,
 		Results:    results,
 	}
@@ -181,7 +181,7 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 		executedNode.Error = &errorStr
 
 		if panicErr, isPanic := err.(*domain.WorkflowPanicError); isPanic {
-			executedNode.Status = ports.NodeExecutionStatusPanicFailed
+			executedNode.Status = string(ports.NodeExecutionStatusPanicFailed)
 			ne.engine.logger.Error("node execution panicked",
 				"workflow_id", item.WorkflowID,
 				"node_name", item.NodeName,
@@ -190,7 +190,7 @@ func (ne *NodeExecutor) ExecuteNode(ctx context.Context, item *ports.QueueItem) 
 				"stack_trace", panicErr.StackTrace,
 			)
 		} else {
-			executedNode.Status = ports.NodeExecutionStatusFailed
+			executedNode.Status = string(ports.NodeExecutionStatusFailed)
 			ne.engine.logger.Error("node execution failed",
 				"workflow_id", item.WorkflowID,
 				"node_name", item.NodeName,
@@ -370,7 +370,7 @@ func (ne *NodeExecutor) handleExecutionFailure(ctx context.Context, workflow *Wo
 	return nil
 }
 
-func (ne *NodeExecutor) updateWorkflowState(ctx context.Context, workflow *WorkflowInstance, results interface{}, executedNode *ports.ExecutedNode) error {
+func (ne *NodeExecutor) updateWorkflowState(ctx context.Context, workflow *WorkflowInstance, results interface{}, executedNode *domain.ExecutedNodeData) error {
 	ne.engine.logger.Debug("updating workflow state",
 		"workflow_id", workflow.ID,
 		"node_name", executedNode.NodeName,
@@ -726,7 +726,7 @@ func (ne *NodeExecutor) triggerEvaluationAfterExecution(ctx context.Context, wor
 	return ne.engine.evaluationTrigger.TriggerEvaluation(ctx, event)
 }
 
-func (ne *NodeExecutor) persistExecutedNode(ctx context.Context, workflowID string, executedNode *ports.ExecutedNode) error {
+func (ne *NodeExecutor) persistExecutedNode(ctx context.Context, workflowID string, executedNode *domain.ExecutedNodeData) error {
 	executionKey := fmt.Sprintf("workflow:execution:%s:%s_%d", workflowID, executedNode.NodeName, executedNode.ExecutedAt.UnixNano())
 
 	nodeData := map[string]interface{}{

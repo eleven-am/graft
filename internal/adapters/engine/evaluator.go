@@ -13,7 +13,7 @@ import (
 
 type PendingEvaluator interface {
 	EvaluatePendingNodes(ctx context.Context, workflowID string, currentState interface{}) error
-	CheckNodeReadiness(node *ports.PendingNode, state interface{}, config interface{}) bool
+	CheckNodeReadiness(node *domain.PendingNodeData, state interface{}, config interface{}) bool
 	MovePendingToReady(ctx context.Context, items []ports.QueueItem) error
 }
 
@@ -34,6 +34,15 @@ func NewPendingEvaluator(engine *Engine, logger *slog.Logger) PendingEvaluator {
 func (pe *pendingEvaluator) EvaluatePendingNodes(ctx context.Context, workflowID string, currentState interface{}) error {
 	if workflowID == "" {
 		return domain.NewValidationError("workflow_id", "workflow ID cannot be empty")
+	}
+
+	workflowStatus, err := pe.engine.GetWorkflowStatusInternal(workflowID)
+	if err != nil {
+		return err
+	}
+	if workflowStatus.Status == ports.WorkflowStatePaused {
+		pe.logger.Debug("workflow is paused, skipping evaluation", "workflow_id", workflowID)
+		return nil
 	}
 
 	lockKey := workflowID
@@ -65,7 +74,7 @@ func (pe *pendingEvaluator) EvaluatePendingNodes(ctx context.Context, workflowID
 			continue
 		}
 
-		pendingNode := &ports.PendingNode{
+		pendingNode := &domain.PendingNodeData{
 			NodeName: item.NodeName,
 			Config:   item.Config,
 			QueuedAt: item.EnqueuedAt,
@@ -107,7 +116,7 @@ func (pe *pendingEvaluator) EvaluatePendingNodes(ctx context.Context, workflowID
 	return nil
 }
 
-func (pe *pendingEvaluator) CheckNodeReadiness(node *ports.PendingNode, state interface{}, config interface{}) bool {
+func (pe *pendingEvaluator) CheckNodeReadiness(node *domain.PendingNodeData, state interface{}, config interface{}) bool {
 	if node == nil {
 		pe.logger.Debug("node is nil, not ready")
 		return false

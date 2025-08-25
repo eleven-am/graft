@@ -241,6 +241,48 @@ func registerWorkflowNodes(manager *graft.Manager) error {
 
 func monitorWorkflow(manager *graft.Manager, workflowID, scenarioName string, timeout time.Duration) WorkflowResult {
 	start := time.Now()
+
+	// Subscribe to real-time workflow state changes
+	statusChan, unsubscribe, err := manager.SubscribeToWorkflowState(workflowID)
+	if err != nil {
+		// Fallback to polling if subscription fails
+		return monitorWorkflowPolling(manager, workflowID, scenarioName, timeout)
+	}
+	defer unsubscribe()
+
+	timeoutCh := time.After(timeout)
+
+	for {
+		select {
+		case status := <-statusChan:
+			if status == nil {
+				// Channel closed, workflow might have been cleaned up
+				continue
+			}
+
+			if status.Status == "completed" || status.Status == "failed" {
+				return WorkflowResult{
+					ScenarioName: scenarioName,
+					WorkflowID:   workflowID,
+					Status:       status,
+					Duration:     time.Since(start),
+				}
+			}
+
+		case <-timeoutCh:
+			return WorkflowResult{
+				ScenarioName: scenarioName,
+				WorkflowID:   workflowID,
+				Error:        fmt.Errorf("workflow timeout after %v", timeout),
+				Duration:     time.Since(start),
+			}
+		}
+	}
+}
+
+// Fallback polling implementation for cases where subscription is not available
+func monitorWorkflowPolling(manager *graft.Manager, workflowID, scenarioName string, timeout time.Duration) WorkflowResult {
+	start := time.Now()
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
 
@@ -351,7 +393,7 @@ that showcases Graft's key capabilities:
    • 13 different node types with complex interactions
    • State management across distributed processing steps
    • Automatic cluster formation and peer discovery
-   • Real-time workflow monitoring and status reporting
+   • Real-time workflow monitoring via event subscriptions
    • Comprehensive error handling and retry logic
    • Scalable architecture supporting multiple processing scenarios
 

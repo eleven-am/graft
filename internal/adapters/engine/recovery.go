@@ -105,12 +105,12 @@ func (re *RecoverableExecutor) HandlePanic(workflowID, nodeID string, panicValue
 	return panicErr
 }
 
-func (re *RecoverableExecutor) MarkNodeFailed(ctx context.Context, item *ports.QueueItem, reason string) *ports.ExecutedNode {
-	return &ports.ExecutedNode{
+func (re *RecoverableExecutor) MarkNodeFailed(ctx context.Context, item *ports.QueueItem, reason string) *domain.ExecutedNodeData {
+	return &domain.ExecutedNodeData{
 		NodeName:   item.NodeName,
 		ExecutedAt: time.Now(),
 		Duration:   0,
-		Status:     ports.NodeExecutionStatusPanicFailed,
+		Status:     string(ports.NodeExecutionStatusPanicFailed),
 		Config:     item.Config,
 		Results:    nil,
 		Error:      &reason,

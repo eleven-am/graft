@@ -45,6 +45,37 @@ func (wc *WorkflowCoordinator) processNextReadyNode(ctx context.Context) error {
 		return domain.NewNotFoundError("queue_item", "ready queue not available")
 	}
 
+	items, err := wc.engine.readyQueue.GetItems(ctx)
+	if err != nil {
+		return err
+	}
+
+	if len(items) == 0 {
+		return domain.NewNotFoundError("queue_item", "ready queue is empty")
+	}
+
+	var executableItem *ports.QueueItem
+	for _, item := range items {
+		workflowStatus, err := wc.engine.GetWorkflowStatusInternal(item.WorkflowID)
+		if err != nil {
+			wc.engine.logger.Warn("failed to get workflow state", "workflow_id", item.WorkflowID, "error", err.Error())
+			continue
+		}
+
+		if workflowStatus.Status == ports.WorkflowStatePaused {
+			wc.engine.logger.Debug("skipping node from paused workflow", "workflow_id", item.WorkflowID, "node_name", item.NodeName)
+			continue
+		}
+
+		executableItem = &item
+		break
+	}
+
+	if executableItem == nil {
+		wc.engine.logger.Debug("no available nodes from running workflows")
+		return domain.NewNotFoundError("queue_item", "no running workflow items available")
+	}
+
 	claimDuration := wc.engine.config.NodeExecutionTimeout
 	if claimDuration <= 0 {
 		claimDuration = 5 * time.Minute

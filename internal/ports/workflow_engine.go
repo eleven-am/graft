@@ -12,6 +12,7 @@ type EnginePort interface {
 	Stop() error
 	ProcessTrigger(trigger WorkflowTrigger) error
 	GetWorkflowStatus(workflowID string) (*WorkflowStatus, error)
+	GetWorkflowStatusInternal(workflowID string) (*WorkflowStatusInternal, error)
 	GetExecutionMetrics() EngineMetrics
 
 	PauseWorkflow(ctx context.Context, workflowID string) error
@@ -19,7 +20,7 @@ type EnginePort interface {
 	StopWorkflow(ctx context.Context, workflowID string) error
 
 	EvaluatePendingNodes(ctx context.Context, workflowID string, currentState interface{}) error
-	CheckNodeReadiness(node *PendingNode, state interface{}, config interface{}) bool
+	CheckNodeReadiness(node *domain.PendingNodeData, state interface{}, config interface{}) bool
 	ProcessReadyNodes(ctx context.Context) error
 
 	SaveWorkflowState(ctx context.Context, workflowID string) error
@@ -28,6 +29,8 @@ type EnginePort interface {
 	UpdateWorkflowState(ctx context.Context, workflowID string, updates map[string]interface{}) error
 
 	RegisterLifecycleHandlers(completion []CompletionHandler, error []ErrorHandler)
+
+	SubscribeToWorkflowState(workflowID string) (<-chan *WorkflowStatus, func(), error)
 
 	RestoreWorkflowFromState(ctx context.Context, importData *domain.WorkflowStateImport) (*domain.ValidationResult, error)
 	ValidateWorkflowState(state *domain.CompleteWorkflowState) (*domain.ValidationResult, error)
@@ -59,15 +62,24 @@ type NodeConfig struct {
 }
 
 type WorkflowStatus struct {
-	WorkflowID    string         `json:"workflow_id"`
-	Status        WorkflowState  `json:"status"`
-	CurrentState  interface{}    `json:"current_state"`
-	StartedAt     time.Time      `json:"started_at"`
-	CompletedAt   *time.Time     `json:"completed_at,omitempty"`
-	ExecutedNodes []ExecutedNode `json:"executed_nodes"`
-	PendingNodes  []PendingNode  `json:"pending_nodes"`
-	ReadyNodes    []ReadyNode    `json:"ready_nodes"`
-	LastError     *string        `json:"last_error,omitempty"`
+	WorkflowID    string                    `json:"workflow_id"`
+	Status        WorkflowState             `json:"status"`
+	CurrentState  interface{}               `json:"current_state"`
+	StartedAt     time.Time                 `json:"started_at"`
+	CompletedAt   *time.Time                `json:"completed_at,omitempty"`
+	ExecutedNodes []domain.ExecutedNodeData `json:"executed_nodes"`
+	PendingNodes  []domain.PendingNodeData  `json:"pending_nodes"`
+	ReadyNodes    []domain.ReadyNodeData    `json:"ready_nodes"`
+	LastError     *string                   `json:"last_error,omitempty"`
+}
+
+type WorkflowStatusInternal struct {
+	WorkflowID   string        `json:"workflow_id"`
+	Status       WorkflowState `json:"status"`
+	CurrentState interface{}   `json:"current_state"`
+	StartedAt    time.Time     `json:"started_at"`
+	CompletedAt  *time.Time    `json:"completed_at,omitempty"`
+	LastError    *string       `json:"last_error,omitempty"`
 }
 
 type WorkflowState string
@@ -87,33 +99,6 @@ const (
 	NodeExecutionStatusCancelled   NodeExecutionStatus = "cancelled"
 	NodeExecutionStatusPanicFailed NodeExecutionStatus = "panic_failed"
 )
-
-type ExecutedNode struct {
-	NodeName   string              `json:"node_name"`
-	ExecutedAt time.Time           `json:"executed_at"`
-	Duration   time.Duration       `json:"duration"`
-	Status     NodeExecutionStatus `json:"status"`
-	Config     interface{}         `json:"config"`
-	Results    interface{}         `json:"results,omitempty"`
-	Error      *string             `json:"error,omitempty"`
-}
-
-type PendingNode struct {
-	NodeName string      `json:"node_name"`
-	Config   interface{} `json:"config"`
-	QueuedAt time.Time   `json:"queued_at"`
-	Priority int         `json:"priority"`
-	Reason   string      `json:"reason,omitempty"`
-}
-
-type ReadyNode struct {
-	NodeName       string      `json:"node_name"`
-	Config         interface{} `json:"config"`
-	QueuedAt       time.Time   `json:"queued_at"`
-	Priority       int         `json:"priority"`
-	WorkflowID     string      `json:"workflow_id"`
-	IdempotencyKey string      `json:"idempotency_key,omitempty"`
-}
 
 type EngineMetrics struct {
 	TotalWorkflows       int64          `json:"total_workflows"`

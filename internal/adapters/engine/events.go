@@ -36,17 +36,19 @@ const (
 type EvaluationTrigger interface {
 	TriggerEvaluation(ctx context.Context, event StateChangeEvent) error
 	RegisterEvaluator(evaluator PendingEvaluator)
+	RegisterStateSubscriber(subscriber *StateSubscriptionManager)
 	Start(ctx context.Context) error
 	Stop() error
 }
 
 type eventDispatcher struct {
-	evaluator   PendingEvaluator
-	eventChan   chan StateChangeEvent
-	workerCount int
-	logger      *slog.Logger
-	mu          sync.RWMutex
-	closed      bool
+	evaluator       PendingEvaluator
+	stateSubscriber *StateSubscriptionManager
+	eventChan       chan StateChangeEvent
+	workerCount     int
+	logger          *slog.Logger
+	mu              sync.RWMutex
+	closed          bool
 }
 
 func NewEvaluationTrigger(workerCount int, logger *slog.Logger) EvaluationTrigger {
@@ -59,6 +61,10 @@ func NewEvaluationTrigger(workerCount int, logger *slog.Logger) EvaluationTrigge
 
 func (ed *eventDispatcher) RegisterEvaluator(evaluator PendingEvaluator) {
 	ed.evaluator = evaluator
+}
+
+func (ed *eventDispatcher) RegisterStateSubscriber(subscriber *StateSubscriptionManager) {
+	ed.stateSubscriber = subscriber
 }
 
 func (ed *eventDispatcher) TriggerEvaluation(ctx context.Context, event StateChangeEvent) error {
@@ -126,6 +132,10 @@ func (ed *eventDispatcher) worker(ctx context.Context, workerID int) {
 					ed.logger.Error("evaluation failed", "error", err, "workflow_id", event.WorkflowID)
 					continue
 				}
+			}
+
+			if ed.stateSubscriber != nil {
+				ed.stateSubscriber.OnStateChange(event)
 			}
 		}
 	}

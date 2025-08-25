@@ -29,6 +29,7 @@ type Engine struct {
 	metricsTracker    *MetricsTracker
 	pendingEvaluator  PendingEvaluator
 	evaluationTrigger EvaluationTrigger
+	stateSubscriber   *StateSubscriptionManager
 	cleaner           *WorkflowCleaner
 	logger            *slog.Logger
 	config            Config
@@ -80,6 +81,8 @@ func NewEngine(config Config, logger *slog.Logger) *Engine {
 	engine.pendingEvaluator = NewPendingEvaluator(engine, logger)
 	engine.evaluationTrigger = NewEvaluationTrigger(3, logger)
 	engine.evaluationTrigger.RegisterEvaluator(engine.pendingEvaluator)
+	engine.stateSubscriber = NewStateSubscriptionManager(engine, logger)
+	engine.evaluationTrigger.RegisterStateSubscriber(engine.stateSubscriber)
 
 	return engine
 }
@@ -124,6 +127,16 @@ func (e *Engine) RegisterLifecycleHandlers(completion []ports.CompletionHandler,
 	if e.lifecycleManager != nil {
 		e.lifecycleManager.RegisterHandlers(completion, error)
 	}
+}
+
+func (e *Engine) SubscribeToWorkflowState(workflowID string) (<-chan *ports.WorkflowStatus, func(), error) {
+	if e.stateSubscriber == nil {
+		return nil, nil, domain.Error{
+			Type:    domain.ErrorTypeInternal,
+			Message: "state subscriber not initialized",
+		}
+	}
+	return e.stateSubscriber.Subscribe(workflowID)
 }
 
 func (e *Engine) initializeDataCollector() {
@@ -275,6 +288,37 @@ func (e *Engine) ProcessTrigger(trigger ports.WorkflowTrigger) error {
 	return nil
 }
 
+func (e *Engine) GetWorkflowStatusInternal(workflowID string) (*ports.WorkflowStatusInternal, error) {
+	workflow, err := e.stateManager.LoadWorkflowState(context.Background(), workflowID)
+	if err != nil {
+		e.logger.Error("failed to load workflow state for internal status",
+			"workflow_id", workflowID,
+			"error", err.Error())
+		return nil, err
+	}
+
+	if workflow == nil {
+		e.logger.Debug("workflow state not found, returning not found error",
+			"workflow_id", workflowID)
+		return nil, domain.NewNotFoundError("workflow", workflowID)
+	}
+
+	status := &ports.WorkflowStatusInternal{
+		WorkflowID:   workflow.ID,
+		Status:       workflow.Status,
+		CurrentState: workflow.CurrentState,
+		StartedAt:    workflow.StartedAt,
+		CompletedAt:  workflow.CompletedAt,
+		LastError:    workflow.LastError,
+	}
+
+	e.logger.Debug("internal workflow status retrieved successfully",
+		"workflow_id", workflowID,
+		"status", workflow.Status)
+
+	return status, nil
+}
+
 func (e *Engine) GetWorkflowStatus(workflowID string) (*ports.WorkflowStatus, error) {
 	workflow, err := e.stateManager.LoadWorkflowState(context.Background(), workflowID)
 	if err != nil {
@@ -290,22 +334,51 @@ func (e *Engine) GetWorkflowStatus(workflowID string) (*ports.WorkflowStatus, er
 		return nil, domain.NewNotFoundError("workflow", workflowID)
 	}
 
+	ctx := context.Background()
+
+	executedNodes, err := e.dataCollector.collectExecutedNodes(ctx, workflowID)
+	if err != nil {
+		e.logger.Error("failed to collect executed nodes",
+			"workflow_id", workflowID,
+			"error", err.Error())
+		executedNodes = []domain.ExecutedNodeData{}
+	}
+
+	pendingNodes, err := e.dataCollector.collectPendingNodes(ctx, workflowID)
+	if err != nil {
+		e.logger.Error("failed to collect pending nodes",
+			"workflow_id", workflowID,
+			"error", err.Error())
+		pendingNodes = []domain.PendingNodeData{}
+	}
+
+	readyNodes, err := e.dataCollector.collectReadyNodes(ctx, workflowID)
+	if err != nil {
+		e.logger.Error("failed to collect ready nodes",
+			"workflow_id", workflowID,
+			"error", err.Error())
+		readyNodes = []domain.ReadyNodeData{}
+	}
+
 	status := &ports.WorkflowStatus{
 		WorkflowID:    workflow.ID,
 		Status:        workflow.Status,
 		CurrentState:  workflow.CurrentState,
 		StartedAt:     workflow.StartedAt,
 		CompletedAt:   workflow.CompletedAt,
-		ExecutedNodes: []ports.ExecutedNode{},
-		PendingNodes:  []ports.PendingNode{},
-		ReadyNodes:    []ports.ReadyNode{},
+		ExecutedNodes: executedNodes,
+		PendingNodes:  pendingNodes,
+		ReadyNodes:    readyNodes,
 		LastError:     workflow.LastError,
 	}
 
 	e.logger.Debug("workflow status retrieved successfully",
 		"workflow_id", workflowID,
 		"status", workflow.Status,
-		"has_state", workflow.CurrentState != nil)
+		"has_state", workflow.CurrentState != nil,
+		"executed_nodes", len(executedNodes),
+		"pending_nodes", len(pendingNodes),
+		"ready_nodes", len(readyNodes))
 
 	return status, nil
 }
@@ -324,7 +397,6 @@ func (e *Engine) GetExecutionMetrics() ports.EngineMetrics {
 			totalWorkflows = int64(len(workflowKeys))
 
 			for _, kv := range workflowKeys {
-				// Skip empty data to avoid unmarshal errors
 				if len(kv.Value) == 0 {
 					e.logger.Debug("skipping empty workflow state data for metrics",
 						"key", kv.Key)
@@ -345,7 +417,6 @@ func (e *Engine) GetExecutionMetrics() ports.EngineMetrics {
 					activeCount++
 				case ports.WorkflowStateCompleted:
 					completedCount++
-					// Calculate execution time for completed workflows
 					if workflow.CompletedAt != nil {
 						duration := workflow.CompletedAt.Sub(workflow.StartedAt)
 						totalExecutionTime += duration
@@ -361,12 +432,10 @@ func (e *Engine) GetExecutionMetrics() ports.EngineMetrics {
 		e.logger.Warn("storage is nil in GetExecutionMetrics")
 	}
 
-	// Get node execution count from metrics tracker
 	if e.metricsTracker != nil {
 		nodesExecuted = e.metricsTracker.GetNodesExecuted()
 	}
 
-	// Calculate average execution time
 	var avgExecutionTime time.Duration
 	if completedCount > 0 {
 		avgExecutionTime = totalExecutionTime / time.Duration(completedCount)
@@ -507,7 +576,7 @@ func (e *Engine) EvaluatePendingNodes(ctx context.Context, workflowID string, cu
 	return e.pendingEvaluator.EvaluatePendingNodes(ctx, workflowID, currentState)
 }
 
-func (e *Engine) CheckNodeReadiness(node *ports.PendingNode, state interface{}, config interface{}) bool {
+func (e *Engine) CheckNodeReadiness(node *domain.PendingNodeData, state interface{}, config interface{}) bool {
 	if e.pendingEvaluator == nil {
 		return false
 	}

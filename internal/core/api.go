@@ -341,3 +341,10 @@ func (m *Manager) StopWorkflow(ctx context.Context, workflowID string) error {
 	}
 	return m.orchestrator.workflowEngine.StopWorkflow(ctx, workflowID)
 }
+
+func (m *Manager) SubscribeToWorkflowState(workflowID string) (<-chan *ports.WorkflowStatus, func(), error) {
+	if m.orchestrator == nil {
+		return nil, nil, domain.NewWorkflowError(workflowID, "subscribe", domain.ErrNotStarted)
+	}
+	return m.orchestrator.workflowEngine.SubscribeToWorkflowState(workflowID)
+}
