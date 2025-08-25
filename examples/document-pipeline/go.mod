@@ -4,8 +4,6 @@ go 1.23.0
 
 toolchain go1.24.4
 
-replace github.com/eleven-am/graft => ../..
-
 require (
 	github.com/eleven-am/graft v0.1.8
 	github.com/sanity-io/litter v1.5.8

@@ -31,8 +31,8 @@ go.work
 .DS_Store
 Thumbs.db
 
-# Generated mocks (as per MOCKING_INSTRUCTIONS.md)
-**/mocks/
+# Generated mocks are now included in the repository
+# **/mocks/
 
 # Build artifacts
 /graft
