@@ -7,7 +7,7 @@ toolchain go1.24.4
 replace github.com/eleven-am/graft => ../..
 
 require (
-	github.com/eleven-am/graft v0.1.6
+	github.com/eleven-am/graft v0.1.7
 	github.com/sanity-io/litter v1.5.8
 )
 
