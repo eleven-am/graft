@@ -662,8 +662,6 @@ func (wdc *WorkflowDataCollector) collectIdempotencyKeys(ctx context.Context, wo
 }
 
 func (wdc *WorkflowDataCollector) constructExecutionDAG(ctx context.Context, workflowID string, executedNodes []domain.ExecutedNodeData, pendingNodes []domain.PendingNodeData, readyNodes []domain.ReadyNodeData) (domain.WorkflowDAG, error) {
-	// Use the DAG manager to build a proper DAG
-	dagManager := NewDAGManager(wdc.logger)
 
 	// First build the basic structure
 	dag := domain.WorkflowDAG{
@@ -806,27 +804,8 @@ func (wdc *WorkflowDataCollector) constructExecutionDAG(ctx context.Context, wor
 		return dag.Nodes[i].ID < dag.Nodes[j].ID
 	})
 
-	// Now use the DAG manager to validate and identify roots/leaves
-	// Build the DAG using heimdalr/dag for proper analysis
-	_, err := dagManager.BuildDAGFromState(&domain.CompleteWorkflowState{
-		WorkflowID:   workflowID,
-		ExecutionDAG: dag,
-	})
-	if err != nil {
-		// If there's a cycle or other issue, log it but continue
-		wdc.logger.Warn("DAG validation found issues", "error", err)
-	} else {
-		// Get roots and leaves from the proper DAG
-		if roots, err := dagManager.GetRoots(workflowID); err == nil {
-			dag.Roots = roots
-		}
-		if leaves, err := dagManager.GetLeaves(workflowID); err == nil {
-			dag.Leaves = leaves
-		}
-	}
-
-	// Fallback to simple detection if DAG manager fails
-	if len(dag.Roots) == 0 || len(dag.Leaves) == 0 {
+	// Identify roots and leaves using simple edge analysis
+	{
 		hasIncomingEdge := make(map[string]bool)
 		hasOutgoingEdge := make(map[string]bool)
 
@@ -836,20 +815,16 @@ func (wdc *WorkflowDataCollector) constructExecutionDAG(ctx context.Context, wor
 		}
 
 		// Identify root nodes (nodes with no incoming edges)
-		if len(dag.Roots) == 0 {
-			for nodeID := range nodeMap {
-				if !hasIncomingEdge[nodeID] {
-					dag.Roots = append(dag.Roots, nodeID)
-				}
+		for nodeID := range nodeMap {
+			if !hasIncomingEdge[nodeID] {
+				dag.Roots = append(dag.Roots, nodeID)
 			}
 		}
 
 		// Identify leaf nodes (nodes with no outgoing edges)
-		if len(dag.Leaves) == 0 {
-			for nodeID := range nodeMap {
-				if !hasOutgoingEdge[nodeID] {
-					dag.Leaves = append(dag.Leaves, nodeID)
-				}
+		for nodeID := range nodeMap {
+			if !hasOutgoingEdge[nodeID] {
+				dag.Leaves = append(dag.Leaves, nodeID)
 			}
 		}
 

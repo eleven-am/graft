@@ -10,7 +10,6 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/mdns v1.0.6
 	github.com/hashicorp/raft v1.7.3
-	github.com/heimdalr/dag v1.5.0
 	github.com/rfyiamcool/raft-badger v0.0.0-20230227135836-e06df09e0796
 	github.com/stretchr/testify v1.10.0
 	google.golang.org/grpc v1.75.0
@@ -29,7 +28,6 @@ require (
 	github.com/dgryski/go-farm v0.0.0-20191112170834-c2139c5d712b // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.9.0 // indirect
-	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-openapi/jsonpointer v0.19.6 // indirect

@@ -276,8 +276,8 @@ func (e *Engine) ProcessTrigger(trigger ports.WorkflowTrigger) error {
 	)
 
 	for _, nodeConfig := range trigger.InitialNodes {
-		if err := e.queueNodeForExecution(trigger.WorkflowID, nodeConfig, "initial"); err != nil {
-			e.logger.Error("failed to queue initial node",
+		if err := e.routeInitialNode(trigger.WorkflowID, nodeConfig); err != nil {
+			e.logger.Error("failed to route initial node",
 				"workflow_id", trigger.WorkflowID,
 				"node_name", nodeConfig.Name,
 				"error", err.Error(),
@@ -536,6 +536,80 @@ func (e *Engine) queueNodeForExecution(workflowID string, nodeConfig ports.NodeC
 	return e.readyQueue.Enqueue(context.Background(), *item)
 }
 
+func (e *Engine) routeInitialNode(workflowID string, nodeConfig ports.NodeConfig) error {
+	ctx := context.Background()
+
+	if e.readyQueue == nil || e.pendingQueue == nil {
+		return domain.Error{
+			Type:    domain.ErrorTypeUnavailable,
+			Message: "ready and pending queues not available for node routing",
+			Details: map[string]interface{}{
+				"component":               "workflow_engine",
+				"ready_queue_available":   e.readyQueue != nil,
+				"pending_queue_available": e.pendingQueue != nil,
+			},
+		}
+	}
+
+	if e.nodeRegistry == nil {
+		return domain.Error{
+			Type:    domain.ErrorTypeUnavailable,
+			Message: "node registry not available for readiness check",
+			Details: map[string]interface{}{
+				"component": "workflow_engine",
+			},
+		}
+	}
+
+	workflow, err := e.stateManager.LoadWorkflowState(ctx, workflowID)
+	if err != nil {
+		return fmt.Errorf("failed to load workflow state for readiness check: %w", err)
+	}
+
+	if workflow == nil {
+		return domain.NewNotFoundError("workflow", workflowID)
+	}
+
+	node, err := e.nodeRegistry.GetNode(nodeConfig.Name)
+	if err != nil {
+		return fmt.Errorf("failed to get node from registry: %w", err)
+	}
+
+	item := &ports.QueueItem{
+		ID:         generateItemID(),
+		WorkflowID: workflowID,
+		NodeName:   nodeConfig.Name,
+		Config:     nodeConfig.Config,
+		EnqueuedAt: time.Now(),
+	}
+
+	workflow.mu.RLock()
+	currentState := workflow.CurrentState
+	workflow.mu.RUnlock()
+
+	canStart := node.CanStart(ctx, currentState, nodeConfig.Config)
+
+	e.logger.Debug("initial node readiness check",
+		"workflow_id", workflowID,
+		"node_name", nodeConfig.Name,
+		"can_start", canStart,
+	)
+
+	if canStart {
+		e.logger.Debug("routing initial node to ready queue",
+			"workflow_id", workflowID,
+			"node_name", nodeConfig.Name,
+		)
+		return e.readyQueue.Enqueue(ctx, *item)
+	} else {
+		e.logger.Debug("routing initial node to pending queue",
+			"workflow_id", workflowID,
+			"node_name", nodeConfig.Name,
+		)
+		return e.pendingQueue.Enqueue(ctx, *item)
+	}
+}
+
 func (e *Engine) PauseWorkflow(ctx context.Context, workflowID string) error {
 	if e.coordinator == nil {
 		return domain.Error{
@@ -711,11 +785,6 @@ func (e *Engine) RestoreWorkflowFromState(ctx context.Context, importData *domai
 			"workflow_id", importData.WorkflowState.WorkflowID,
 			"errors", len(validationResult.Errors))
 		return validationResult, nil
-	}
-
-	reconstructor := NewDAGReconstructor(e, validator, e.logger)
-	if err := reconstructor.RestoreWorkflowState(ctx, &importData.WorkflowState); err != nil {
-		return nil, fmt.Errorf("failed to restore workflow state: %w", err)
 	}
 
 	e.logger.Debug("workflow state successfully restored",

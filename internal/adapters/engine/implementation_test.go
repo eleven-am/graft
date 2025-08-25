@@ -11,81 +11,9 @@ import (
 	"github.com/eleven-am/graft/internal/ports"
 	"github.com/eleven-am/graft/internal/ports/mocks"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
-
-func TestDAGManagerImplementation(t *testing.T) {
-	logger := slog.Default()
-	dm := NewDAGManager(logger)
-
-	state := &domain.CompleteWorkflowState{
-		WorkflowID: "test-workflow",
-		ExecutionDAG: domain.WorkflowDAG{
-			Nodes: []domain.DAGNode{
-				{ID: "node1", Type: "start", Status: domain.NodeStatusCompleted, Dependencies: []string{}},
-				{ID: "node2", Type: "process", Status: domain.NodeStatusPending, Dependencies: []string{"node1"}},
-				{ID: "node3", Type: "process", Status: domain.NodeStatusPending, Dependencies: []string{"node1"}},
-				{ID: "node4", Type: "end", Status: domain.NodeStatusPending, Dependencies: []string{"node2", "node3"}},
-			},
-			Edges: []domain.DAGEdge{
-				{From: "node1", To: "node2", Type: "execution"},
-				{From: "node1", To: "node3", Type: "execution"},
-				{From: "node2", To: "node4", Type: "execution"},
-				{From: "node3", To: "node4", Type: "execution"},
-			},
-		},
-	}
-
-	// Test building DAG from state
-	dag, err := dm.BuildDAGFromState(state)
-	require.NoError(t, err)
-	assert.NotNil(t, dag)
-
-	// Test getting roots
-	roots, err := dm.GetRoots(state.WorkflowID)
-	require.NoError(t, err)
-	assert.Contains(t, roots, "node1")
-
-	// Test getting leaves
-	leaves, err := dm.GetLeaves(state.WorkflowID)
-	require.NoError(t, err)
-	assert.Contains(t, leaves, "node4")
-
-	// Test getting next executable nodes
-	completedNodes := map[string]bool{"node1": true}
-	nextNodes, err := dm.GetNextExecutableNodes(state.WorkflowID, completedNodes)
-	require.NoError(t, err)
-	assert.Len(t, nextNodes, 2)
-	assert.Contains(t, nextNodes, "node2")
-	assert.Contains(t, nextNodes, "node3")
-
-	// Test topological order
-	order, err := dm.GetTopologicalOrder(state.WorkflowID)
-	require.NoError(t, err)
-	assert.NotEmpty(t, order)
-
-	// Verify node1 comes before node2 and node3
-	node1Idx := -1
-	node2Idx := -1
-	node3Idx := -1
-	node4Idx := -1
-	for i, nodeID := range order {
-		switch nodeID {
-		case "node1":
-			node1Idx = i
-		case "node2":
-			node2Idx = i
-		case "node3":
-			node3Idx = i
-		case "node4":
-			node4Idx = i
-		}
-	}
-	assert.Less(t, node1Idx, node2Idx)
-	assert.Less(t, node1Idx, node3Idx)
-	assert.Less(t, node2Idx, node4Idx)
-	assert.Less(t, node3Idx, node4Idx)
-}
 
 func TestStateHashComputation(t *testing.T) {
 	logger := slog.Default()
@@ -211,4 +139,107 @@ func TestDependencyCollection(t *testing.T) {
 	}
 	assert.True(t, foundNode2Dep, "Should have found node1->node2 dependency")
 	assert.True(t, foundNode3Dep, "Should have found node1->node3 dependency")
+}
+
+type TestNode struct {
+	name     string
+	canStart bool
+}
+
+func (n *TestNode) Execute(ctx context.Context, args ...interface{}) (*ports.NodeResult, error) {
+	return &ports.NodeResult{}, nil
+}
+
+func (n *TestNode) CanStart(ctx context.Context, args ...interface{}) bool {
+	return n.canStart
+}
+
+func (n *TestNode) GetName() string {
+	return n.name
+}
+
+func TestRouteInitialNode(t *testing.T) {
+	ctx := context.Background()
+	logger := slog.Default()
+
+	mockStorage := mocks.NewMockStoragePort(t)
+	mockPendingQueue := mocks.NewMockQueuePort(t)
+	mockReadyQueue := mocks.NewMockQueuePort(t)
+	mockNodeRegistry := mocks.NewMockNodeRegistryPort(t)
+
+	engine := &Engine{
+		storage:      mockStorage,
+		pendingQueue: mockPendingQueue,
+		readyQueue:   mockReadyQueue,
+		nodeRegistry: mockNodeRegistry,
+		logger:       logger,
+	}
+	engine.stateManager = NewStateManager(engine)
+
+	testCases := []struct {
+		name                string
+		nodeCanStart        bool
+		expectedQueue       string
+		expectedEnqueueCall bool
+	}{
+		{
+			name:                "node_can_start_goes_to_ready",
+			nodeCanStart:        true,
+			expectedQueue:       "ready",
+			expectedEnqueueCall: true,
+		},
+		{
+			name:                "node_cannot_start_goes_to_pending",
+			nodeCanStart:        false,
+			expectedQueue:       "pending",
+			expectedEnqueueCall: true,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			workflowID := "test-workflow"
+			nodeConfig := ports.NodeConfig{
+				Name:   "test-node",
+				Config: map[string]interface{}{"test": "value"},
+			}
+
+			testNode := &TestNode{
+				name:     "test-node",
+				canStart: tc.nodeCanStart,
+			}
+
+			workflowData := map[string]interface{}{
+				"id":             workflowID,
+				"status":         "running",
+				"version":        1,
+				"started_at":     "2024-01-01T00:00:00Z",
+				"current_state":  map[string]interface{}{"initial": "state"},
+				"executed_nodes": []interface{}{},
+				"metadata":       map[string]interface{}{},
+			}
+			workflowJSON, _ := json.Marshal(workflowData)
+
+			mockStorage.On("Get", ctx, "workflow:state:"+workflowID).Return(workflowJSON, nil).Once()
+			mockNodeRegistry.On("GetNode", "test-node").Return(testNode, nil).Once()
+
+			if tc.expectedQueue == "ready" {
+				mockReadyQueue.On("Enqueue", ctx, mock.MatchedBy(func(item ports.QueueItem) bool {
+					return item.WorkflowID == workflowID && item.NodeName == "test-node"
+				})).Return(nil).Once()
+			} else {
+				mockPendingQueue.On("Enqueue", ctx, mock.MatchedBy(func(item ports.QueueItem) bool {
+					return item.WorkflowID == workflowID && item.NodeName == "test-node"
+				})).Return(nil).Once()
+			}
+
+			err := engine.routeInitialNode(workflowID, nodeConfig)
+
+			assert.NoError(t, err)
+			mockStorage.AssertExpectations(t)
+			mockNodeRegistry.AssertExpectations(t)
+			mockReadyQueue.AssertExpectations(t)
+			mockPendingQueue.AssertExpectations(t)
+		})
+	}
 }
