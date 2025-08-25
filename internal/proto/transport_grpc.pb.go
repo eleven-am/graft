@@ -22,6 +22,7 @@ const (
 	GraftTransport_SendMessage_FullMethodName      = "/transport.GraftTransport/SendMessage"
 	GraftTransport_HealthCheck_FullMethodName      = "/transport.GraftTransport/HealthCheck"
 	GraftTransport_GetLeaderAddress_FullMethodName = "/transport.GraftTransport/GetLeaderAddress"
+	GraftTransport_RequestJoin_FullMethodName      = "/transport.GraftTransport/RequestJoin"
 )
 
 // GraftTransportClient is the client API for GraftTransport service.
@@ -31,6 +32,7 @@ type GraftTransportClient interface {
 	SendMessage(ctx context.Context, in *MessageRequest, opts ...grpc.CallOption) (*MessageResponse, error)
 	HealthCheck(ctx context.Context, in *HealthCheckRequest, opts ...grpc.CallOption) (*HealthCheckResponse, error)
 	GetLeaderAddress(ctx context.Context, in *LeaderAddressRequest, opts ...grpc.CallOption) (*LeaderAddressResponse, error)
+	RequestJoin(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*JoinResponse, error)
 }
 
 type graftTransportClient struct {
@@ -71,6 +73,16 @@ func (c *graftTransportClient) GetLeaderAddress(ctx context.Context, in *LeaderA
 	return out, nil
 }
 
+func (c *graftTransportClient) RequestJoin(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*JoinResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(JoinResponse)
+	err := c.cc.Invoke(ctx, GraftTransport_RequestJoin_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // GraftTransportServer is the server API for GraftTransport service.
 // All implementations must embed UnimplementedGraftTransportServer
 // for forward compatibility.
@@ -78,6 +90,7 @@ type GraftTransportServer interface {
 	SendMessage(context.Context, *MessageRequest) (*MessageResponse, error)
 	HealthCheck(context.Context, *HealthCheckRequest) (*HealthCheckResponse, error)
 	GetLeaderAddress(context.Context, *LeaderAddressRequest) (*LeaderAddressResponse, error)
+	RequestJoin(context.Context, *JoinRequest) (*JoinResponse, error)
 	mustEmbedUnimplementedGraftTransportServer()
 }
 
@@ -96,6 +109,9 @@ func (UnimplementedGraftTransportServer) HealthCheck(context.Context, *HealthChe
 }
 func (UnimplementedGraftTransportServer) GetLeaderAddress(context.Context, *LeaderAddressRequest) (*LeaderAddressResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetLeaderAddress not implemented")
+}
+func (UnimplementedGraftTransportServer) RequestJoin(context.Context, *JoinRequest) (*JoinResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RequestJoin not implemented")
 }
 func (UnimplementedGraftTransportServer) mustEmbedUnimplementedGraftTransportServer() {}
 func (UnimplementedGraftTransportServer) testEmbeddedByValue()                        {}
@@ -172,6 +188,24 @@ func _GraftTransport_GetLeaderAddress_Handler(srv interface{}, ctx context.Conte
 	return interceptor(ctx, in, info, handler)
 }
 
+func _GraftTransport_RequestJoin_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(JoinRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(GraftTransportServer).RequestJoin(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: GraftTransport_RequestJoin_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(GraftTransportServer).RequestJoin(ctx, req.(*JoinRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // GraftTransport_ServiceDesc is the grpc.ServiceDesc for GraftTransport service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -190,6 +224,10 @@ var GraftTransport_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetLeaderAddress",
 			Handler:    _GraftTransport_GetLeaderAddress_Handler,
+		},
+		{
+			MethodName: "RequestJoin",
+			Handler:    _GraftTransport_RequestJoin_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -8,6 +8,7 @@ service GraftTransport {
   rpc SendMessage(MessageRequest) returns (MessageResponse);
   rpc HealthCheck(HealthCheckRequest) returns (HealthCheckResponse);
   rpc GetLeaderAddress(LeaderAddressRequest) returns (LeaderAddressResponse);
+  rpc RequestJoin(JoinRequest) returns (JoinResponse);
 }
 
 message MessageRequest {
@@ -39,6 +40,22 @@ message LeaderAddressResponse {
   string raft_address = 1;
   string leader_id = 2;
   bool is_leader = 3;
+}
+
+message JoinRequest {
+  string node_id = 1;
+  string address = 2;
+  string raft_address = 3;
+  int32 raft_port = 4;
+  map<string, string> metadata = 5;
+}
+
+message JoinResponse {
+  bool success = 1;
+  string error = 2;
+  repeated string peer_addresses = 3;
+  string leader_address = 4;
+  string leader_id = 5;
 }
 
 enum MessageType {

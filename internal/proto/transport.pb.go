@@ -393,6 +393,158 @@ func (x *LeaderAddressResponse) GetIsLeader() bool {
 	return false
 }
 
+type JoinRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Address       string                 `protobuf:"bytes,2,opt,name=address,proto3" json:"address,omitempty"`
+	RaftAddress   string                 `protobuf:"bytes,3,opt,name=raft_address,json=raftAddress,proto3" json:"raft_address,omitempty"`
+	RaftPort      int32                  `protobuf:"varint,4,opt,name=raft_port,json=raftPort,proto3" json:"raft_port,omitempty"`
+	Metadata      map[string]string      `protobuf:"bytes,5,rep,name=metadata,proto3" json:"metadata,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JoinRequest) Reset() {
+	*x = JoinRequest{}
+	mi := &file_transport_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JoinRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JoinRequest) ProtoMessage() {}
+
+func (x *JoinRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_transport_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JoinRequest.ProtoReflect.Descriptor instead.
+func (*JoinRequest) Descriptor() ([]byte, []int) {
+	return file_transport_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *JoinRequest) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *JoinRequest) GetAddress() string {
+	if x != nil {
+		return x.Address
+	}
+	return ""
+}
+
+func (x *JoinRequest) GetRaftAddress() string {
+	if x != nil {
+		return x.RaftAddress
+	}
+	return ""
+}
+
+func (x *JoinRequest) GetRaftPort() int32 {
+	if x != nil {
+		return x.RaftPort
+	}
+	return 0
+}
+
+func (x *JoinRequest) GetMetadata() map[string]string {
+	if x != nil {
+		return x.Metadata
+	}
+	return nil
+}
+
+type JoinResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	PeerAddresses []string               `protobuf:"bytes,3,rep,name=peer_addresses,json=peerAddresses,proto3" json:"peer_addresses,omitempty"`
+	LeaderAddress string                 `protobuf:"bytes,4,opt,name=leader_address,json=leaderAddress,proto3" json:"leader_address,omitempty"`
+	LeaderId      string                 `protobuf:"bytes,5,opt,name=leader_id,json=leaderId,proto3" json:"leader_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *JoinResponse) Reset() {
+	*x = JoinResponse{}
+	mi := &file_transport_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *JoinResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*JoinResponse) ProtoMessage() {}
+
+func (x *JoinResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_transport_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use JoinResponse.ProtoReflect.Descriptor instead.
+func (*JoinResponse) Descriptor() ([]byte, []int) {
+	return file_transport_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *JoinResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *JoinResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *JoinResponse) GetPeerAddresses() []string {
+	if x != nil {
+		return x.PeerAddresses
+	}
+	return nil
+}
+
+func (x *JoinResponse) GetLeaderAddress() string {
+	if x != nil {
+		return x.LeaderAddress
+	}
+	return ""
+}
+
+func (x *JoinResponse) GetLeaderId() string {
+	if x != nil {
+		return x.LeaderId
+	}
+	return ""
+}
+
 var File_transport_proto protoreflect.FileDescriptor
 
 const file_transport_proto_rawDesc = "" +
@@ -416,16 +568,32 @@ const file_transport_proto_rawDesc = "" +
 	"\x15LeaderAddressResponse\x12!\n" +
 	"\fraft_address\x18\x01 \x01(\tR\vraftAddress\x12\x1b\n" +
 	"\tleader_id\x18\x02 \x01(\tR\bleaderId\x12\x1b\n" +
-	"\tis_leader\x18\x03 \x01(\bR\bisLeader*X\n" +
+	"\tis_leader\x18\x03 \x01(\bR\bisLeader\"\xff\x01\n" +
+	"\vJoinRequest\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x18\n" +
+	"\aaddress\x18\x02 \x01(\tR\aaddress\x12!\n" +
+	"\fraft_address\x18\x03 \x01(\tR\vraftAddress\x12\x1b\n" +
+	"\traft_port\x18\x04 \x01(\x05R\braftPort\x12@\n" +
+	"\bmetadata\x18\x05 \x03(\v2$.transport.JoinRequest.MetadataEntryR\bmetadata\x1a;\n" +
+	"\rMetadataEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\"\xa9\x01\n" +
+	"\fJoinResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\x12%\n" +
+	"\x0epeer_addresses\x18\x03 \x03(\tR\rpeerAddresses\x12%\n" +
+	"\x0eleader_address\x18\x04 \x01(\tR\rleaderAddress\x12\x1b\n" +
+	"\tleader_id\x18\x05 \x01(\tR\bleaderId*X\n" +
 	"\vMessageType\x12\x10\n" +
 	"\fSTORAGE_READ\x10\x00\x12\x11\n" +
 	"\rSTORAGE_WRITE\x10\x01\x12\x12\n" +
 	"\x0eSTORAGE_DELETE\x10\x02\x12\x10\n" +
-	"\fHEALTH_CHECK\x10\x032\xfb\x01\n" +
+	"\fHEALTH_CHECK\x10\x032\xbb\x02\n" +
 	"\x0eGraftTransport\x12D\n" +
 	"\vSendMessage\x12\x19.transport.MessageRequest\x1a\x1a.transport.MessageResponse\x12L\n" +
 	"\vHealthCheck\x12\x1d.transport.HealthCheckRequest\x1a\x1e.transport.HealthCheckResponse\x12U\n" +
-	"\x10GetLeaderAddress\x12\x1f.transport.LeaderAddressRequest\x1a .transport.LeaderAddressResponseB+Z)github.com/eleven-am/graft/internal/protob\x06proto3"
+	"\x10GetLeaderAddress\x12\x1f.transport.LeaderAddressRequest\x1a .transport.LeaderAddressResponse\x12>\n" +
+	"\vRequestJoin\x12\x16.transport.JoinRequest\x1a\x17.transport.JoinResponseB+Z)github.com/eleven-am/graft/internal/protob\x06proto3"
 
 var (
 	file_transport_proto_rawDescOnce sync.Once
@@ -440,7 +608,7 @@ func file_transport_proto_rawDescGZIP() []byte {
 }
 
 var file_transport_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_transport_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_transport_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_transport_proto_goTypes = []any{
 	(MessageType)(0),              // 0: transport.MessageType
 	(*MessageRequest)(nil),        // 1: transport.MessageRequest
@@ -449,20 +617,26 @@ var file_transport_proto_goTypes = []any{
 	(*HealthCheckResponse)(nil),   // 4: transport.HealthCheckResponse
 	(*LeaderAddressRequest)(nil),  // 5: transport.LeaderAddressRequest
 	(*LeaderAddressResponse)(nil), // 6: transport.LeaderAddressResponse
+	(*JoinRequest)(nil),           // 7: transport.JoinRequest
+	(*JoinResponse)(nil),          // 8: transport.JoinResponse
+	nil,                           // 9: transport.JoinRequest.MetadataEntry
 }
 var file_transport_proto_depIdxs = []int32{
 	0, // 0: transport.MessageRequest.type:type_name -> transport.MessageType
-	1, // 1: transport.GraftTransport.SendMessage:input_type -> transport.MessageRequest
-	3, // 2: transport.GraftTransport.HealthCheck:input_type -> transport.HealthCheckRequest
-	5, // 3: transport.GraftTransport.GetLeaderAddress:input_type -> transport.LeaderAddressRequest
-	2, // 4: transport.GraftTransport.SendMessage:output_type -> transport.MessageResponse
-	4, // 5: transport.GraftTransport.HealthCheck:output_type -> transport.HealthCheckResponse
-	6, // 6: transport.GraftTransport.GetLeaderAddress:output_type -> transport.LeaderAddressResponse
-	4, // [4:7] is the sub-list for method output_type
-	1, // [1:4] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	9, // 1: transport.JoinRequest.metadata:type_name -> transport.JoinRequest.MetadataEntry
+	1, // 2: transport.GraftTransport.SendMessage:input_type -> transport.MessageRequest
+	3, // 3: transport.GraftTransport.HealthCheck:input_type -> transport.HealthCheckRequest
+	5, // 4: transport.GraftTransport.GetLeaderAddress:input_type -> transport.LeaderAddressRequest
+	7, // 5: transport.GraftTransport.RequestJoin:input_type -> transport.JoinRequest
+	2, // 6: transport.GraftTransport.SendMessage:output_type -> transport.MessageResponse
+	4, // 7: transport.GraftTransport.HealthCheck:output_type -> transport.HealthCheckResponse
+	6, // 8: transport.GraftTransport.GetLeaderAddress:output_type -> transport.LeaderAddressResponse
+	8, // 9: transport.GraftTransport.RequestJoin:output_type -> transport.JoinResponse
+	6, // [6:10] is the sub-list for method output_type
+	2, // [2:6] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_transport_proto_init() }
@@ -476,7 +650,7 @@ func file_transport_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_transport_proto_rawDesc), len(file_transport_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   6,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
