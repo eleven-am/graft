@@ -7,7 +7,7 @@ toolchain go1.24.4
 replace github.com/eleven-am/graft => ../..
 
 require (
-	github.com/eleven-am/graft v0.1.7
+	github.com/eleven-am/graft v0.1.8
 	github.com/sanity-io/litter v1.5.8
 )
 
@@ -21,7 +21,6 @@ require (
 	github.com/dgraph-io/ristretto v0.1.1 // indirect
 	github.com/dustin/go-humanize v1.0.0 // indirect
 	github.com/emicklei/go-restful/v3 v3.9.0 // indirect
-	github.com/emirpasic/gods v1.18.1 // indirect
 	github.com/fatih/color v1.13.0 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
 	github.com/go-openapi/jsonpointer v0.19.6 // indirect
@@ -45,7 +44,6 @@ require (
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/hashicorp/mdns v1.0.6 // indirect
 	github.com/hashicorp/raft v1.7.3 // indirect
-	github.com/heimdalr/dag v1.5.0 // indirect
 	github.com/imdario/mergo v0.3.6 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
