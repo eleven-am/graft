@@ -6,7 +6,10 @@ toolchain go1.24.4
 
 replace github.com/eleven-am/graft => ../..
 
-require github.com/eleven-am/graft v0.0.0-00010101000000-000000000000
+require (
+	github.com/eleven-am/graft v0.1.6
+	github.com/sanity-io/litter v1.5.8
+)
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
@@ -36,6 +39,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/go-hclog v1.6.2 // indirect
 	github.com/hashicorp/go-immutable-radix v1.0.0 // indirect
+	github.com/hashicorp/go-metrics v0.5.4 // indirect
 	github.com/hashicorp/go-msgpack v0.5.5 // indirect
 	github.com/hashicorp/go-msgpack/v2 v2.1.2 // indirect
 	github.com/hashicorp/golang-lru v0.5.4 // indirect
@@ -55,7 +59,6 @@ require (
 	github.com/munnerz/goautoneg v0.0.0-20191010083416-a7dc8b61c822 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rfyiamcool/raft-badger v0.0.0-20230227135836-e06df09e0796 // indirect
-	github.com/sanity-io/litter v1.5.8 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	go.opencensus.io v0.22.5 // indirect
 	golang.org/x/mod v0.26.0 // indirect
