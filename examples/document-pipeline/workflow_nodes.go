@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"os"
@@ -11,6 +12,14 @@ import (
 	"github.com/eleven-am/graft"
 	"github.com/sanity-io/litter"
 )
+
+func marshalConfig(config ProcessingConfig) (json.RawMessage, error) {
+	configBytes, err := json.Marshal(config)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal config: %w", err)
+	}
+	return configBytes, nil
+}
 
 type Document struct {
 	ID          string                 `json:"id"`
@@ -40,15 +49,30 @@ func (n *DocumentIngestNode) GetName() string {
 	return "document_ingest"
 }
 
-func (n *DocumentIngestNode) Execute(ctx context.Context, doc Document, config ProcessingConfig) (*graft.NodeResult, error) {
+func (n *DocumentIngestNode) CanStart(ctx context.Context, state interface{}, config interface{}) bool {
+	return true // This node can always start
+}
+
+func (n *DocumentIngestNode) Execute(ctx context.Context, state interface{}, config interface{}) (*graft.NodeResult, error) {
+	// Type assert the parameters
+	doc, ok := state.(Document)
+	if !ok {
+		return nil, fmt.Errorf("expected Document state, got %T", state)
+	}
+	
+	processingConfig, ok := config.(ProcessingConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected ProcessingConfig, got %T", config)
+	}
+	
 	fmt.Fprintf(os.Stderr, "🔥🔥🔥 DocumentIngestNode.Execute CALLED 🔥🔥🔥\n")
 	fmt.Fprintf(os.Stderr, "📝 INPUT DOC: %s\n", litter.Sdump(doc))
-	fmt.Fprintf(os.Stderr, "📝 INPUT CONFIG: %s\n", litter.Sdump(config))
+	fmt.Fprintf(os.Stderr, "📝 INPUT CONFIG: %s\n", litter.Sdump(processingConfig))
 
 	time.Sleep(100 * time.Millisecond)
 
 	doc.Status = "ingested"
-	doc.ProcessedBy = append(doc.ProcessedBy, config.ProcessorName+"-ingest")
+	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-ingest")
 	doc.Metadata = make(map[string]interface{})
 	doc.Metadata["ingested_at"] = time.Now()
 	doc.Metadata["source"] = "api"
@@ -57,11 +81,14 @@ func (n *DocumentIngestNode) Execute(ctx context.Context, doc Document, config P
 		doc.Type = detectDocumentType(doc.Content)
 	}
 
+	validatorKey := fmt.Sprintf("%s-document_validator", doc.ID)
+	analyzerKey := fmt.Sprintf("%s-content_analyzer", doc.ID)
+	
 	result := &graft.NodeResult{
 		GlobalState: doc,
 		NextNodes: []graft.NextNode{
-			{NodeName: "document_validator", Config: config},
-			{NodeName: "content_analyzer", Config: config},
+			{NodeName: "document_validator", Config: processingConfig, IdempotencyKey: &validatorKey},
+			{NodeName: "content_analyzer", Config: processingConfig, IdempotencyKey: &analyzerKey},
 		},
 	}
 
@@ -78,10 +105,23 @@ func (n *DocumentValidatorNode) GetName() string {
 	return "document_validator"
 }
 
-func (n *DocumentValidatorNode) Execute(ctx context.Context, doc Document, config ProcessingConfig) (*graft.NodeResult, error) {
+func (n *DocumentValidatorNode) CanStart(ctx context.Context, state interface{}, config interface{}) bool {
+	return true
+}
+
+func (n *DocumentValidatorNode) Execute(ctx context.Context, state interface{}, config interface{}) (*graft.NodeResult, error) {
+	doc, ok := state.(Document)
+	if !ok {
+		return nil, fmt.Errorf("expected Document state, got %T", state)
+	}
+	
+	processingConfig, ok := config.(ProcessingConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected ProcessingConfig, got %T", config)
+	}
 	time.Sleep(50 * time.Millisecond)
 
-	doc.ProcessedBy = append(doc.ProcessedBy, config.ProcessorName+"-validator")
+	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-validator")
 
 	if len(doc.Content) < 10 {
 		return nil, fmt.Errorf("document content too short")
@@ -94,9 +134,11 @@ func (n *DocumentValidatorNode) Execute(ctx context.Context, doc Document, confi
 	doc.Status = "validated"
 	doc.Metadata["validated_at"] = time.Now()
 
+	processorKey := fmt.Sprintf("%s-content_processor", doc.ID)
+	
 	return &graft.NodeResult{
 		GlobalState: doc,
-		NextNodes:   []graft.NextNode{{NodeName: "content_processor", Config: config}},
+		NextNodes:   []graft.NextNode{{NodeName: "content_processor", Config: processingConfig, IdempotencyKey: &processorKey}},
 	}, nil
 }
 
@@ -107,10 +149,23 @@ func (n *ContentAnalyzerNode) GetName() string {
 	return "content_analyzer"
 }
 
-func (n *ContentAnalyzerNode) Execute(ctx context.Context, doc Document, config ProcessingConfig) (*graft.NodeResult, error) {
+func (n *ContentAnalyzerNode) CanStart(ctx context.Context, state interface{}, config interface{}) bool {
+	return true
+}
+
+func (n *ContentAnalyzerNode) Execute(ctx context.Context, state interface{}, config interface{}) (*graft.NodeResult, error) {
+	doc, ok := state.(Document)
+	if !ok {
+		return nil, fmt.Errorf("expected Document state, got %T", state)
+	}
+	
+	processingConfig, ok := config.(ProcessingConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected ProcessingConfig, got %T", config)
+	}
 	time.Sleep(200 * time.Millisecond)
 
-	doc.ProcessedBy = append(doc.ProcessedBy, config.ProcessorName+"-analyzer")
+	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-analyzer")
 	doc.WordCount = len(strings.Fields(doc.Content))
 	doc.Language = detectLanguage(doc.Content)
 	doc.Priority = calculatePriority(doc)
@@ -118,11 +173,14 @@ func (n *ContentAnalyzerNode) Execute(ctx context.Context, doc Document, config 
 	doc.Metadata["analyzed_at"] = time.Now()
 	doc.Metadata["complexity_score"] = rand.Float64()
 
+	langKey := fmt.Sprintf("%s-language_processor", doc.ID)
+	repairKey := fmt.Sprintf("%s-document_repair", doc.ID)
+	
 	return &graft.NodeResult{
 		GlobalState: doc,
 		NextNodes: []graft.NextNode{
-			{NodeName: "language_processor", Config: config},
-			{NodeName: "document_repair", Config: config},
+			{NodeName: "language_processor", Config: ProcessingConfig{}, IdempotencyKey: &langKey},
+			{NodeName: "document_repair", Config: ProcessingConfig{}, IdempotencyKey: &repairKey},
 		},
 	}, nil
 }
@@ -134,14 +192,27 @@ func (n *ContentProcessorNode) GetName() string {
 	return "content_processor"
 }
 
-func (n *ContentProcessorNode) CanStart(ctx context.Context, doc Document, config ProcessingConfig) bool {
+func (n *ContentProcessorNode) CanStart(ctx context.Context, state interface{}, config interface{}) bool {
+	doc, ok := state.(Document)
+	if !ok {
+		return false
+	}
 	return doc.Status == "validated"
 }
 
-func (n *ContentProcessorNode) Execute(ctx context.Context, doc Document, config ProcessingConfig) (*graft.NodeResult, error) {
+func (n *ContentProcessorNode) Execute(ctx context.Context, state interface{}, config interface{}) (*graft.NodeResult, error) {
+	doc, ok := state.(Document)
+	if !ok {
+		return nil, fmt.Errorf("expected Document state, got %T", state)
+	}
+	
+	processingConfig, ok := config.(ProcessingConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected ProcessingConfig, got %T", config)
+	}
 	time.Sleep(300 * time.Millisecond)
 
-	doc.ProcessedBy = append(doc.ProcessedBy, config.ProcessorName+"-processor")
+	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-processor")
 
 	if rand.Float64() < 0.1 {
 		return nil, fmt.Errorf("processing failed due to network timeout")
@@ -151,9 +222,9 @@ func (n *ContentProcessorNode) Execute(ctx context.Context, doc Document, config
 	doc.Status = "processed"
 	doc.Metadata["processed_at"] = time.Now()
 
-	nextNodes := []graft.NextNode{{NodeName: "quality_checker", Config: config}}
-	if config.EnableOCR && doc.Type == "image" {
-		nextNodes = append(nextNodes, graft.NextNode{NodeName: "ocr_processor", Config: config})
+	nextNodes := []graft.NextNode{{NodeName: "quality_checker", Config: ProcessingConfig{}}}
+	if processingConfig.EnableOCR && doc.Type == "image" {
+		nextNodes = append(nextNodes, graft.NextNode{NodeName: "ocr_processor", Config: ProcessingConfig{}})
 	}
 
 	return &graft.NodeResult{
@@ -169,14 +240,27 @@ func (n *LanguageProcessorNode) GetName() string {
 	return "language_processor"
 }
 
-func (n *LanguageProcessorNode) CanStart(ctx context.Context, doc Document, config ProcessingConfig) bool {
+func (n *LanguageProcessorNode) CanStart(ctx context.Context, state interface{}, config interface{}) bool {
+	doc, ok := state.(Document)
+	if !ok {
+		return false
+	}
 	return doc.Language != "" && doc.Language != "unknown"
 }
 
-func (n *LanguageProcessorNode) Execute(ctx context.Context, doc Document, config ProcessingConfig) (*graft.NodeResult, error) {
+func (n *LanguageProcessorNode) Execute(ctx context.Context, state interface{}, config interface{}) (*graft.NodeResult, error) {
+	doc, ok := state.(Document)
+	if !ok {
+		return nil, fmt.Errorf("expected Document state, got %T", state)
+	}
+	
+	processingConfig, ok := config.(ProcessingConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected ProcessingConfig, got %T", config)
+	}
 	time.Sleep(150 * time.Millisecond)
 
-	doc.ProcessedBy = append(doc.ProcessedBy, config.ProcessorName+"-language")
+	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-language")
 
 	switch doc.Language {
 	case "spanish", "french", "german":
@@ -191,7 +275,7 @@ func (n *LanguageProcessorNode) Execute(ctx context.Context, doc Document, confi
 
 	return &graft.NodeResult{
 		GlobalState: doc,
-		NextNodes:   []graft.NextNode{{NodeName: "nlp_processor", Config: config}},
+		NextNodes:   []graft.NextNode{{NodeName: "nlp_processor", Config: ProcessingConfig{}}},
 	}, nil
 }
 
@@ -202,10 +286,23 @@ func (n *OCRProcessorNode) GetName() string {
 	return "ocr_processor"
 }
 
-func (n *OCRProcessorNode) Execute(ctx context.Context, doc Document, config ProcessingConfig) (*graft.NodeResult, error) {
+func (n *OCRProcessorNode) CanStart(ctx context.Context, state interface{}, config interface{}) bool {
+	return true
+}
+func (n *OCRProcessorNode) Execute(ctx context.Context, state interface{}, config interface{}) (*graft.NodeResult, error) {
+	doc, ok := state.(Document)
+	if !ok {
+		return nil, fmt.Errorf("expected Document state, got %T", state)
+	}
+	
+	processingConfig, ok := config.(ProcessingConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected ProcessingConfig, got %T", config)
+	}
+
 	time.Sleep(500 * time.Millisecond)
 
-	doc.ProcessedBy = append(doc.ProcessedBy, config.ProcessorName+"-ocr")
+	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-ocr")
 
 	if doc.Type == "image" {
 		extractedText := performOCR(doc.Content)
@@ -217,7 +314,7 @@ func (n *OCRProcessorNode) Execute(ctx context.Context, doc Document, config Pro
 
 	return &graft.NodeResult{
 		GlobalState: doc,
-		NextNodes:   []graft.NextNode{{NodeName: "quality_checker", Config: config}},
+		NextNodes:   []graft.NextNode{{NodeName: "quality_checker", Config: ProcessingConfig{}}},
 	}, nil
 }
 
@@ -228,12 +325,25 @@ func (n *NLPProcessorNode) GetName() string {
 	return "nlp_processor"
 }
 
-func (n *NLPProcessorNode) Execute(ctx context.Context, doc Document, config ProcessingConfig) (*graft.NodeResult, error) {
+func (n *NLPProcessorNode) CanStart(ctx context.Context, state interface{}, config interface{}) bool {
+	return true
+}
+func (n *NLPProcessorNode) Execute(ctx context.Context, state interface{}, config interface{}) (*graft.NodeResult, error) {
+	doc, ok := state.(Document)
+	if !ok {
+		return nil, fmt.Errorf("expected Document state, got %T", state)
+	}
+	
+	processingConfig, ok := config.(ProcessingConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected ProcessingConfig, got %T", config)
+	}
+
 	time.Sleep(250 * time.Millisecond)
 
-	doc.ProcessedBy = append(doc.ProcessedBy, config.ProcessorName+"-nlp")
+	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-nlp")
 
-	if config.EnableNLP {
+	if processingConfig.EnableNLP {
 		sentiment := analyzeSentiment(doc.Content)
 		keywords := extractKeywords(doc.Content)
 
@@ -244,7 +354,7 @@ func (n *NLPProcessorNode) Execute(ctx context.Context, doc Document, config Pro
 
 	return &graft.NodeResult{
 		GlobalState: doc,
-		NextNodes:   []graft.NextNode{{NodeName: "quality_checker", Config: config}},
+		NextNodes:   []graft.NextNode{{NodeName: "quality_checker", Config: ProcessingConfig{}}},
 	}, nil
 }
 
@@ -255,27 +365,40 @@ func (n *QualityCheckerNode) GetName() string {
 	return "quality_checker"
 }
 
-func (n *QualityCheckerNode) Execute(ctx context.Context, doc Document, config ProcessingConfig) (*graft.NodeResult, error) {
+func (n *QualityCheckerNode) CanStart(ctx context.Context, state interface{}, config interface{}) bool {
+	return true
+}
+func (n *QualityCheckerNode) Execute(ctx context.Context, state interface{}, config interface{}) (*graft.NodeResult, error) {
+	doc, ok := state.(Document)
+	if !ok {
+		return nil, fmt.Errorf("expected Document state, got %T", state)
+	}
+	
+	processingConfig, ok := config.(ProcessingConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected ProcessingConfig, got %T", config)
+	}
+
 	time.Sleep(100 * time.Millisecond)
 
-	doc.ProcessedBy = append(doc.ProcessedBy, config.ProcessorName+"-quality")
+	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-quality")
 
 	qualityScore := calculateQualityScore(doc)
 	doc.Metadata["quality_score"] = qualityScore
 	doc.Metadata["quality_checked_at"] = time.Now()
 
-	if qualityScore < config.QualityGate {
+	if qualityScore < processingConfig.QualityGate {
 		return &graft.NodeResult{
 			GlobalState: doc,
-			NextNodes:   []graft.NextNode{{NodeName: "quality_enhancer", Config: config}},
-		}, fmt.Errorf("quality check failed: score %.2f below threshold %.2f", qualityScore, config.QualityGate)
+			NextNodes:   []graft.NextNode{{NodeName: "quality_enhancer", Config: ProcessingConfig{}}},
+		}, fmt.Errorf("quality check failed: score %.2f below threshold %.2f", qualityScore, processingConfig.QualityGate)
 	}
 
 	doc.Status = "quality_approved"
 
-	nextNodes := []graft.NextNode{{NodeName: "document_finalizer", Config: config}}
+	nextNodes := []graft.NextNode{{NodeName: "document_finalizer", Config: ProcessingConfig{}}}
 	if doc.Priority >= 8 {
-		nextNodes = append(nextNodes, graft.NextNode{NodeName: "priority_handler", Config: config})
+		nextNodes = append(nextNodes, graft.NextNode{NodeName: "priority_handler", Config: ProcessingConfig{}})
 	}
 
 	return &graft.NodeResult{
@@ -291,16 +414,29 @@ func (n *QualityEnhancerNode) GetName() string {
 	return "quality_enhancer"
 }
 
-func (n *QualityEnhancerNode) Execute(ctx context.Context, doc Document, config ProcessingConfig) (*graft.NodeResult, error) {
+func (n *QualityEnhancerNode) CanStart(ctx context.Context, state interface{}, config interface{}) bool {
+	return true
+}
+func (n *QualityEnhancerNode) Execute(ctx context.Context, state interface{}, config interface{}) (*graft.NodeResult, error) {
+	doc, ok := state.(Document)
+	if !ok {
+		return nil, fmt.Errorf("expected Document state, got %T", state)
+	}
+	
+	processingConfig, ok := config.(ProcessingConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected ProcessingConfig, got %T", config)
+	}
+
 	time.Sleep(200 * time.Millisecond)
 
-	doc.ProcessedBy = append(doc.ProcessedBy, config.ProcessorName+"-enhancer")
+	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-enhancer")
 	doc.Content = enhanceQuality(doc.Content)
 	doc.Metadata["enhanced_at"] = time.Now()
 
 	return &graft.NodeResult{
 		GlobalState: doc,
-		NextNodes:   []graft.NextNode{{NodeName: "quality_checker", Config: config}},
+		NextNodes:   []graft.NextNode{{NodeName: "quality_checker", Config: ProcessingConfig{}}},
 	}, nil
 }
 
@@ -311,16 +447,29 @@ func (n *PriorityHandlerNode) GetName() string {
 	return "priority_handler"
 }
 
-func (n *PriorityHandlerNode) Execute(ctx context.Context, doc Document, config ProcessingConfig) (*graft.NodeResult, error) {
+func (n *PriorityHandlerNode) CanStart(ctx context.Context, state interface{}, config interface{}) bool {
+	return true
+}
+func (n *PriorityHandlerNode) Execute(ctx context.Context, state interface{}, config interface{}) (*graft.NodeResult, error) {
+	doc, ok := state.(Document)
+	if !ok {
+		return nil, fmt.Errorf("expected Document state, got %T", state)
+	}
+	
+	processingConfig, ok := config.(ProcessingConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected ProcessingConfig, got %T", config)
+	}
+
 	time.Sleep(50 * time.Millisecond)
 
-	doc.ProcessedBy = append(doc.ProcessedBy, config.ProcessorName+"-priority")
+	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-priority")
 	doc.Metadata["priority_processed_at"] = time.Now()
 	doc.Metadata["expedited"] = true
 
 	return &graft.NodeResult{
 		GlobalState: doc,
-		NextNodes:   []graft.NextNode{{NodeName: "notification_sender", Config: config}},
+		NextNodes:   []graft.NextNode{{NodeName: "notification_sender", Config: ProcessingConfig{}}},
 	}, nil
 }
 
@@ -331,10 +480,23 @@ func (n *DocumentRepairNode) GetName() string {
 	return "document_repair"
 }
 
-func (n *DocumentRepairNode) Execute(ctx context.Context, doc Document, config ProcessingConfig) (*graft.NodeResult, error) {
+func (n *DocumentRepairNode) CanStart(ctx context.Context, state interface{}, config interface{}) bool {
+	return true
+}
+func (n *DocumentRepairNode) Execute(ctx context.Context, state interface{}, config interface{}) (*graft.NodeResult, error) {
+	doc, ok := state.(Document)
+	if !ok {
+		return nil, fmt.Errorf("expected Document state, got %T", state)
+	}
+	
+	processingConfig, ok := config.(ProcessingConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected ProcessingConfig, got %T", config)
+	}
+
 	time.Sleep(300 * time.Millisecond)
 
-	doc.ProcessedBy = append(doc.ProcessedBy, config.ProcessorName+"-repair")
+	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-repair")
 
 	if doc.Type == "corrupted" {
 		doc.Content = repairDocument(doc.Content)
@@ -343,9 +505,11 @@ func (n *DocumentRepairNode) Execute(ctx context.Context, doc Document, config P
 		doc.Metadata["repaired_at"] = time.Now()
 	}
 
+	// Use the same idempotency key as the original validator
+	validatorKey := fmt.Sprintf("%s-document_validator", doc.ID)
 	return &graft.NodeResult{
 		GlobalState: doc,
-		NextNodes:   []graft.NextNode{{NodeName: "document_validator", Config: config}},
+		NextNodes:   []graft.NextNode{{NodeName: "document_validator", Config: ProcessingConfig{}, IdempotencyKey: &validatorKey}},
 	}, nil
 }
 
@@ -356,17 +520,30 @@ func (n *NotificationSenderNode) GetName() string {
 	return "notification_sender"
 }
 
-func (n *NotificationSenderNode) Execute(ctx context.Context, doc Document, config ProcessingConfig) (*graft.NodeResult, error) {
+func (n *NotificationSenderNode) CanStart(ctx context.Context, state interface{}, config interface{}) bool {
+	return true
+}
+func (n *NotificationSenderNode) Execute(ctx context.Context, state interface{}, config interface{}) (*graft.NodeResult, error) {
+	doc, ok := state.(Document)
+	if !ok {
+		return nil, fmt.Errorf("expected Document state, got %T", state)
+	}
+	
+	processingConfig, ok := config.(ProcessingConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected ProcessingConfig, got %T", config)
+	}
+
 	time.Sleep(50 * time.Millisecond)
 
-	doc.ProcessedBy = append(doc.ProcessedBy, config.ProcessorName+"-notification")
+	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-notification")
 
 	sendNotification(doc)
 	doc.Metadata["notification_sent_at"] = time.Now()
 
 	return &graft.NodeResult{
 		GlobalState: doc,
-		NextNodes:   []graft.NextNode{{NodeName: "document_finalizer", Config: config}},
+		NextNodes:   []graft.NextNode{{NodeName: "document_finalizer", Config: ProcessingConfig{}}},
 	}, nil
 }
 
@@ -377,10 +554,23 @@ func (n *DocumentFinalizerNode) GetName() string {
 	return "document_finalizer"
 }
 
-func (n *DocumentFinalizerNode) Execute(ctx context.Context, doc Document, config ProcessingConfig) (*graft.NodeResult, error) {
+func (n *DocumentFinalizerNode) CanStart(ctx context.Context, state interface{}, config interface{}) bool {
+	return true
+}
+func (n *DocumentFinalizerNode) Execute(ctx context.Context, state interface{}, config interface{}) (*graft.NodeResult, error) {
+	doc, ok := state.(Document)
+	if !ok {
+		return nil, fmt.Errorf("expected Document state, got %T", state)
+	}
+	
+	processingConfig, ok := config.(ProcessingConfig)
+	if !ok {
+		return nil, fmt.Errorf("expected ProcessingConfig, got %T", config)
+	}
+
 	time.Sleep(100 * time.Millisecond)
 
-	doc.ProcessedBy = append(doc.ProcessedBy, config.ProcessorName+"-finalizer")
+	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-finalizer")
 	doc.Status = "completed"
 	doc.Metadata["completed_at"] = time.Now()
 	doc.Metadata["total_processing_nodes"] = len(doc.ProcessedBy)

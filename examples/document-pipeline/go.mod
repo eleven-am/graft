@@ -9,6 +9,8 @@ require (
 	github.com/sanity-io/litter v1.5.8
 )
 
+replace github.com/eleven-am/graft => ../..
+
 require (
 	dario.cat/mergo v1.0.2 // indirect
 	github.com/armon/go-metrics v0.4.1 // indirect
@@ -24,6 +26,7 @@ require (
 	github.com/go-openapi/jsonpointer v0.19.6 // indirect
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
 	github.com/go-openapi/swag v0.22.3 // indirect
+	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/glog v1.2.5 // indirect
 	github.com/golang/groupcache v0.0.0-20210331224755-41bb18bfe9da // indirect

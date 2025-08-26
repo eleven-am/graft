@@ -6,10 +6,11 @@ import (
 )
 
 type Config struct {
-	NodeID   string       `json:"node_id" yaml:"node_id"`
-	BindAddr string       `json:"bind_addr" yaml:"bind_addr"`
-	DataDir  string       `json:"data_dir" yaml:"data_dir"`
-	Logger   *slog.Logger `json:"-" yaml:"-"`
+	NodeID    string       `json:"node_id" yaml:"node_id"`
+	ClusterID string       `json:"cluster_id" yaml:"cluster_id"`
+	BindAddr  string       `json:"bind_addr" yaml:"bind_addr"`
+	DataDir   string       `json:"data_dir" yaml:"data_dir"`
+	Logger    *slog.Logger `json:"-" yaml:"-"`
 
 	Discovery    []DiscoveryConfig  `json:"discovery" yaml:"discovery"`
 	Transport    TransportConfig    `json:"transport" yaml:"transport"`
@@ -164,6 +165,13 @@ type RaftConfig struct {
 	ShutdownOnRemove   bool          `json:"shutdown_on_remove" yaml:"shutdown_on_remove"`
 	TrailingLogs       uint64        `json:"trailing_logs" yaml:"trailing_logs"`
 	LeaderLeaseTimeout time.Duration `json:"leader_lease_timeout" yaml:"leader_lease_timeout"`
+	
+	DiscoveryTimeout  time.Duration `json:"discovery_timeout" yaml:"discovery_timeout"`
+	BootstrapExpected int           `json:"bootstrap_expected" yaml:"bootstrap_expected"`
+	ForceBootstrap    bool          `json:"force_bootstrap" yaml:"force_bootstrap"`
+	ExpectedNodes     []string      `json:"expected_nodes,omitempty" yaml:"expected_nodes,omitempty"`
+	RequireCluster    bool          `json:"require_cluster" yaml:"require_cluster"`
+	JoinTimeout       time.Duration `json:"join_timeout" yaml:"join_timeout"`
 }
 
 type ResourceConfig struct {
@@ -186,6 +194,7 @@ type EngineConfig struct {
 	StateUpdateInterval    time.Duration `json:"state_update_interval" yaml:"state_update_interval"`
 	RetryAttempts          int           `json:"retry_attempts" yaml:"retry_attempts"`
 	RetryBackoff           time.Duration `json:"retry_backoff" yaml:"retry_backoff"`
+	WorkerCount            int           `json:"worker_count" yaml:"worker_count"`
 }
 
 type OrchestratorConfig struct {

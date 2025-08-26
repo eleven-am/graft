@@ -161,7 +161,7 @@ func (k *KubernetesAdapter) createKubernetesClient() (*kubernetes.Clientset, err
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to build kubernetes config: %w", err)
+		return nil, domain.ErrInvalidConfig
 	}
 
 	return kubernetes.NewForConfig(config)

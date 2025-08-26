@@ -14,16 +14,16 @@ import (
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
-		Level: slog.LevelInfo,
+		Level: slog.LevelDebug,
 	}))
 
 	fmt.Println("🚀 Starting Graft Document Processing Pipeline Example")
 	fmt.Println(strings.Repeat("=", 60))
 
 	nodeID := "doc-processor-1"
-	raftAddr := "127.0.0.1:7001"
+	raftAddr := "0.0.0.0:7002"
 	dataDir := "./data"
-	grpcPort := 8001
+	grpcPort := 8002
 
 	manager := graft.New(nodeID, raftAddr, dataDir, logger)
 	if manager == nil {
@@ -52,6 +52,9 @@ func main() {
 	fmt.Println("\n🔥 Running Document Processing Scenarios")
 	fmt.Println(strings.Repeat("=", 60))
 
+	// Track workflow completions
+	completedWorkflows := 0
+
 	scenarios := []DocumentScenario{
 		{
 			Name: "Simple Document Processing",
@@ -69,133 +72,149 @@ func main() {
 				ProcessorName: nodeID,
 			},
 		},
-		{
-			Name: "High Priority Urgent Document",
-			Doc: Document{
-				ID:      "doc-002",
-				Content: "URGENT: This is a high-priority document that requires immediate attention and processing. Please handle with care and ensure quality processing.",
-				Type:    "document",
-			},
-			Config: ProcessingConfig{
-				MaxRetries:    5,
-				Timeout:       60 * time.Second,
-				EnableOCR:     false,
-				EnableNLP:     true,
-				QualityGate:   0.8,
-				ProcessorName: nodeID,
-			},
-		},
-		{
-			Name: "Image Document with OCR",
-			Doc: Document{
-				ID:      "doc-003",
-				Content: "IMAGE_DATA: This represents image content that needs OCR processing to extract text.",
-				Type:    "image",
-			},
-			Config: ProcessingConfig{
-				MaxRetries:    3,
-				Timeout:       45 * time.Second,
-				EnableOCR:     true,
-				EnableNLP:     true,
-				QualityGate:   0.6,
-				ProcessorName: nodeID,
-			},
-		},
-		{
-			Name: "Corrupted Document (Error Recovery)",
-			Doc: Document{
-				ID:      "doc-004",
-				Content: "ERROR: This document has been corrupted and needs repair before processing can continue.",
-				Type:    "corrupted",
-			},
-			Config: ProcessingConfig{
-				MaxRetries:    3,
-				Timeout:       30 * time.Second,
-				EnableOCR:     false,
-				EnableNLP:     false,
-				QualityGate:   0.5,
-				ProcessorName: nodeID,
-			},
-		},
-		{
-			Name: "Multilingual Document",
-			Doc: Document{
-				ID:      "doc-005",
-				Content: "Hola mundo! Este es un documento en español que necesita ser procesado y traducido. Gracias por su atención.",
-				Type:    "text",
-			},
-			Config: ProcessingConfig{
-				MaxRetries:    3,
-				Timeout:       30 * time.Second,
-				EnableOCR:     false,
-				EnableNLP:     true,
-				QualityGate:   0.7,
-				ProcessorName: nodeID,
-			},
-		},
+		// {
+		// 	Name: "High Priority Urgent Document",
+		// 	Doc: Document{
+		// 		ID:      "doc-002",
+		// 		Content: "URGENT: This is a high-priority document that requires immediate attention and processing. Please handle with care and ensure quality processing.",
+		// 		Type:    "document",
+		// 	},
+		// 	Config: ProcessingConfig{
+		// 		MaxRetries:    5,
+		// 		Timeout:       60 * time.Second,
+		// 		EnableOCR:     false,
+		// 		EnableNLP:     true,
+		// 		QualityGate:   0.8,
+		// 		ProcessorName: nodeID,
+		// 	},
+		// },
+		// {
+		// 	Name: "Image Document with OCR",
+		// 	Doc: Document{
+		// 		ID:      "doc-003",
+		// 		Content: "IMAGE_DATA: This represents image content that needs OCR processing to extract text.",
+		// 		Type:    "image",
+		// 	},
+		// 	Config: ProcessingConfig{
+		// 		MaxRetries:    3,
+		// 		Timeout:       45 * time.Second,
+		// 		EnableOCR:     true,
+		// 		EnableNLP:     true,
+		// 		QualityGate:   0.6,
+		// 		ProcessorName: nodeID,
+		// 	},
+		// },
+		// {
+		// 	Name: "Corrupted Document (Error Recovery)",
+		// 	Doc: Document{
+		// 		ID:      "doc-004",
+		// 		Content: "ERROR: This document has been corrupted and needs repair before processing can continue.",
+		// 		Type:    "corrupted",
+		// 	},
+		// 	Config: ProcessingConfig{
+		// 		MaxRetries:    3,
+		// 		Timeout:       30 * time.Second,
+		// 		EnableOCR:     false,
+		// 		EnableNLP:     false,
+		// 		QualityGate:   0.5,
+		// 		ProcessorName: nodeID,
+		// 	},
+		// },
+		// {
+		// 	Name: "Multilingual Document",
+		// 	Doc: Document{
+		// 		ID:      "doc-005",
+		// 		Content: "Hola mundo! Este es un documento en español que necesita ser procesado y traducido. Gracias por su atención.",
+		// 		Type:    "text",
+		// 	},
+		// 	Config: ProcessingConfig{
+		// 		MaxRetries:    3,
+		// 		Timeout:       30 * time.Second,
+		// 		EnableOCR:     false,
+		// 		EnableNLP:     true,
+		// 		QualityGate:   0.7,
+		// 		ProcessorName: nodeID,
+		// 	},
+		// },
 	}
 
-	results := make(chan WorkflowResult, len(scenarios))
+	// APPROACH 2: Event-driven approach (non-blocking, reactive)
+	// Register completion handler for immediate shutdown when all workflows done
+	manager.OnWorkflowCompleted(func(event *graft.WorkflowCompletedEvent) {
+		completedWorkflows++
 
-	for i, scenario := range scenarios {
-		go func(idx int, s DocumentScenario) {
-			fmt.Printf("\n🔄 [%d] Processing: %s\n", idx+1, s.Name)
+		// Use the event data
+		fmt.Printf("\n[%d/%d] ✅ Scenario-%d\n", completedWorkflows, len(scenarios), completedWorkflows)
+		fmt.Printf("    Workflow ID: %s\n", event.WorkflowID)
+		fmt.Printf("    Duration: %v\n", event.Duration.Round(time.Millisecond))
+		fmt.Printf("    Status: completed\n")
+		fmt.Printf("    Nodes Executed: %d\n", len(event.ExecutedNodes))
 
-			workflowID := fmt.Sprintf("workflow-%d-%d", idx+1, time.Now().Unix())
+		if finalDoc, ok := event.FinalState.(Document); ok {
+			fmt.Printf("    📄 Final Document Status: %s\n", finalDoc.Status)
+			fmt.Printf("    📊 Processing Chain: %v\n", finalDoc.ProcessedBy)
+			fmt.Printf("    📈 Word Count: %d | Language: %s | Priority: %d\n",
+				finalDoc.WordCount, finalDoc.Language, finalDoc.Priority)
+		}
 
-			trigger := graft.WorkflowTrigger{
-				WorkflowID: workflowID,
-				InitialNodes: []graft.NodeConfig{
-					{
-						Name:   "document_ingest",
-						Config: s.Config,
-					},
-				},
-				InitialState: s.Doc,
-			}
+		if completedWorkflows == len(scenarios) {
+			fmt.Println("\n🎉 All workflows completed! Shutting down...")
 
-			if err := manager.StartWorkflow(trigger); err != nil {
-				results <- WorkflowResult{
-					ScenarioName: s.Name,
-					WorkflowID:   workflowID,
-					Error:        err,
+			// Shutdown in a goroutine to avoid blocking the completion handler
+			go func() {
+				time.Sleep(100 * time.Millisecond) // Brief delay to let logs flush
+				fmt.Println("\n📊 Final Cluster Statistics")
+				fmt.Println(strings.Repeat("=", 40))
+				fmt.Println(formatClusterInfo(manager.GetClusterInfo()))
+
+				fmt.Println("\n🔄 Shutting down Graft cluster...")
+				if err := manager.Stop(); err != nil {
+					log.Printf("⚠️  Error during shutdown: %v", err)
+					os.Exit(1)
 				}
-				return
-			}
+				fmt.Println("✅ Graft cluster stopped successfully")
+				fmt.Println("\n🎉 Document Processing Pipeline Example Complete!")
+				os.Exit(0)
+			}()
+		}
+	})
 
-			result := monitorWorkflow(manager, workflowID, s.Name, 2*time.Minute)
-			results <- result
-		}(i, scenario)
+	// Start all workflows (completion will be handled by OnComplete callback)
+	for i, scenario := range scenarios {
+		fmt.Printf("\n🔄 [%d] Processing: %s\n", i+1, scenario.Name)
+
+		workflowID := fmt.Sprintf("workflow-%d-%d", i+1, time.Now().Unix())
+
+		trigger := graft.WorkflowTrigger{
+			WorkflowID: workflowID,
+			InitialNodes: []graft.NodeConfig{
+				{
+					Name:   "document_ingest",
+					Config: scenario.Config,
+				},
+			},
+			InitialState: scenario.Doc,
+		}
+
+		if err := manager.StartWorkflow(trigger); err != nil {
+			log.Fatalf("❌ Failed to start workflow %s: %v", workflowID, err)
+		}
+
+		fmt.Printf("✅ Started workflow: %s\n", workflowID)
+
+		// APPROACH 1: Synchronous monitoring (blocks until completion)
+		// Uncomment to use blocking workflow monitoring instead of event-driven approach:
+		// result := monitorWorkflow(manager, workflowID, scenario.Name, 30*time.Second)
+		// printWorkflowResult(result, i+1, len(scenarios))
 
 		time.Sleep(500 * time.Millisecond)
 	}
 
-	fmt.Println("\n⏳ Monitoring workflow executions...")
+	fmt.Println("\n⏳ Workflows started. Completion will be handled automatically...")
+	fmt.Printf("🔄 Processing %d workflow(s). Waiting for completion callbacks...\n", len(scenarios))
 
-	completedCount := 0
-	for completedCount < len(scenarios) {
-		select {
-		case result := <-results:
-			completedCount++
-			printWorkflowResult(result, completedCount, len(scenarios))
-		case <-time.After(3 * time.Minute):
-			fmt.Println("⚠️  Timeout waiting for workflows to complete")
-			break
-		}
-	}
-
-	fmt.Println("\n📊 Final Cluster Statistics")
-	fmt.Println(strings.Repeat("=", 40))
-	fmt.Println(formatClusterInfo(manager.GetClusterInfo()))
-
-	fmt.Println("\n🔄 Shutting down Graft cluster...")
-	if err := manager.Stop(ctx); err != nil {
-		log.Printf("⚠️  Error during shutdown: %v", err)
-	} else {
-		fmt.Println("✅ Graft cluster stopped successfully")
-	}
-
-	fmt.Println("\n🎉 Document Processing Pipeline Example Complete!")
+	// Keep the main goroutine alive - completion callback will handle shutdown
+	select {}
 }
 
 type DocumentScenario struct {
@@ -291,7 +310,7 @@ func monitorWorkflowPolling(manager *graft.Manager, workflowID, scenarioName str
 	for {
 		select {
 		case <-ticker.C:
-			status, err := manager.GetWorkflowState(workflowID)
+			status, err := manager.GetWorkflowStatus(workflowID)
 			if err != nil {
 				return WorkflowResult{
 					ScenarioName: scenarioName,
@@ -335,7 +354,6 @@ func printWorkflowResult(result WorkflowResult, completed, total int) {
 		fmt.Printf("    Status: %s\n", result.Status.Status)
 		fmt.Printf("    Nodes Executed: %d\n", len(result.Status.ExecutedNodes))
 		fmt.Printf("    Pending Nodes: %d\n", len(result.Status.PendingNodes))
-		fmt.Printf("    Ready Nodes: %d\n", len(result.Status.ReadyNodes))
 
 		if result.Status.LastError != nil {
 			fmt.Printf("    ⚠️  Workflow Error: %s\n", *result.Status.LastError)
@@ -356,12 +374,12 @@ func formatClusterInfo(info graft.ClusterInfo) string {
     Status: %s
     Is Leader: %t
     Peers: %v
-    Workflow Metrics:
-      - Total Workflows: %d
-      - Active Workflows: %d
-      - Completed Workflows: %d
-      - Failed Workflows: %d
-      - Nodes Executed: %d`,
+    Metrics:
+      Total Workflows: %d
+      Active Workflows: %d
+      Completed Workflows: %d
+      Failed Workflows: %d
+      Nodes Executed: %d`,
 		info.NodeID,
 		info.Status,
 		info.IsLeader,
@@ -405,6 +423,5 @@ that showcases Graft's key capabilities:
    - Language processing (translation) 
    - NLP analysis (sentiment, keywords)
    - Priority handling (urgent docs)
-   - Error recovery (corrupted docs)
-`)
+   - Error recovery (corrupted docs)`)
 }

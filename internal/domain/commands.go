@@ -2,6 +2,7 @@ package domain
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -10,44 +11,72 @@ type CommandType uint8
 const (
 	CommandPut CommandType = iota
 	CommandDelete
+	CommandCAS
 	CommandBatch
-	CommandAtomicBatch
-	CommandStateUpdate
-	CommandQueueOperation
-	CommandCleanupWorkflow
-	CommandCompleteWorkflowPurge
-	CommandResourceLock
-	CommandResourceUnlock
+	CommandTypeAtomicIncrement
 )
 
 type Command struct {
-	Type           CommandType            `json:"type"`
-	Key            string                 `json:"key,omitempty"`
-	Value          []byte                 `json:"value,omitempty"`
-	Batch          []BatchOp              `json:"batch,omitempty"`
-	IdempotencyKey *string                `json:"idempotency_key,omitempty"`
-	Metadata       map[string]interface{} `json:"metadata,omitempty"`
-	Timestamp      time.Time              `json:"timestamp"`
+	Type      CommandType `json:"type"`
+	Key       string      `json:"key,omitempty"`
+	Value     []byte      `json:"value,omitempty"`
+	Expected  []byte      `json:"expected,omitempty"`
+	Version   int64       `json:"version,omitempty"`
+	Batch     []BatchOp   `json:"batch,omitempty"`
+	RequestID string      `json:"request_id,omitempty"`
+	Timestamp time.Time   `json:"timestamp"`
 }
 
 type BatchOp struct {
-	Type  CommandType `json:"type"`
-	Key   string      `json:"key"`
-	Value []byte      `json:"value,omitempty"`
+	Type     CommandType `json:"type"`
+	Key      string      `json:"key"`
+	Value    []byte      `json:"value,omitempty"`
+	Expected []byte      `json:"expected,omitempty"`
+	Version  int64       `json:"version,omitempty"`
 }
 
 type CommandResult struct {
-	Success bool        `json:"success"`
-	Error   string      `json:"error,omitempty"`
-	Data    interface{} `json:"data,omitempty"`
+	Success      bool     `json:"success"`
+	Error        string   `json:"error,omitempty"`
+	Version      int64    `json:"version,omitempty"`
+	PrevVersion  int64    `json:"prev_version,omitempty"`
+	Events       []Event  `json:"events,omitempty"`
+	BatchResults []Result `json:"batch_results,omitempty"`
 }
 
-func NewPutCommand(key string, value []byte) *Command {
+type Result struct {
+	Key     string `json:"key"`
+	Success bool   `json:"success"`
+	Version int64  `json:"version,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+type EventType uint8
+
+const (
+	EventPut EventType = iota
+	EventDelete
+	EventCAS
+	EventExpire
+)
+
+type Event struct {
+	Type      EventType `json:"type"`
+	Key       string    `json:"key"`
+	Version   int64     `json:"version"`
+	NodeID    string    `json:"node_id"`
+	Timestamp time.Time `json:"timestamp"`
+	RequestID string    `json:"request_id"`
+}
+
+func NewPutCommand(key string, value []byte, version int64) *Command {
 	return &Command{
 		Type:      CommandPut,
 		Key:       key,
 		Value:     value,
+		Version:   version,
 		Timestamp: time.Now(),
+		RequestID: generateRequestID(),
 	}
 }
 
@@ -56,6 +85,29 @@ func NewDeleteCommand(key string) *Command {
 		Type:      CommandDelete,
 		Key:       key,
 		Timestamp: time.Now(),
+		RequestID: generateRequestID(),
+	}
+}
+
+func NewCASCommand(key string, expected, newValue []byte) *Command {
+	return &Command{
+		Type:      CommandCAS,
+		Key:       key,
+		Expected:  expected,
+		Value:     newValue,
+		Timestamp: time.Now(),
+		RequestID: generateRequestID(),
+	}
+}
+
+func NewVersionedCASCommand(key string, version int64, newValue []byte) *Command {
+	return &Command{
+		Type:      CommandCAS,
+		Key:       key,
+		Version:   version,
+		Value:     newValue,
+		Timestamp: time.Now(),
+		RequestID: generateRequestID(),
 	}
 }
 
@@ -64,66 +116,17 @@ func NewBatchCommand(ops []BatchOp) *Command {
 		Type:      CommandBatch,
 		Batch:     ops,
 		Timestamp: time.Now(),
+		RequestID: generateRequestID(),
 	}
 }
 
-func NewAtomicBatchCommand(ops []BatchOp, idempotencyKey string) *Command {
+func NewAtomicIncrementCommand(key string, incrementBy int64) *Command {
 	return &Command{
-		Type:           CommandAtomicBatch,
-		Batch:          ops,
-		IdempotencyKey: &idempotencyKey,
-		Timestamp:      time.Now(),
-	}
-}
-
-func NewStateUpdateCommand(key string, value []byte) *Command {
-	return &Command{
-		Type:      CommandStateUpdate,
+		Type:      CommandTypeAtomicIncrement,
 		Key:       key,
-		Value:     value,
+		Value:     []byte(fmt.Sprintf("%d", incrementBy)),
 		Timestamp: time.Now(),
-	}
-}
-
-func NewQueueOperationCommand(key string, value []byte) *Command {
-	return &Command{
-		Type:      CommandQueueOperation,
-		Key:       key,
-		Value:     value,
-		Timestamp: time.Now(),
-	}
-}
-
-func NewCleanupWorkflowCommand(key string) *Command {
-	return &Command{
-		Type:      CommandCleanupWorkflow,
-		Key:       key,
-		Timestamp: time.Now(),
-	}
-}
-
-func NewCompleteWorkflowPurgeCommand(workflowID string) *Command {
-	return &Command{
-		Type:      CommandCompleteWorkflowPurge,
-		Key:       workflowID,
-		Timestamp: time.Now(),
-	}
-}
-
-func NewResourceLockCommand(key string, value []byte) *Command {
-	return &Command{
-		Type:      CommandResourceLock,
-		Key:       key,
-		Value:     value,
-		Timestamp: time.Now(),
-	}
-}
-
-func NewResourceUnlockCommand(key string) *Command {
-	return &Command{
-		Type:      CommandResourceUnlock,
-		Key:       key,
-		Timestamp: time.Now(),
+		RequestID: generateRequestID(),
 	}
 }
 
@@ -143,23 +146,17 @@ func (c CommandType) String() string {
 		return "PUT"
 	case CommandDelete:
 		return "DELETE"
+	case CommandCAS:
+		return "CAS"
 	case CommandBatch:
 		return "BATCH"
-	case CommandAtomicBatch:
-		return "ATOMIC_BATCH"
-	case CommandStateUpdate:
-		return "STATE_UPDATE"
-	case CommandQueueOperation:
-		return "QUEUE_OPERATION"
-	case CommandCleanupWorkflow:
-		return "CLEANUP_WORKFLOW"
-	case CommandCompleteWorkflowPurge:
-		return "COMPLETE_WORKFLOW_PURGE"
-	case CommandResourceLock:
-		return "RESOURCE_LOCK"
-	case CommandResourceUnlock:
-		return "RESOURCE_UNLOCK"
+	case CommandTypeAtomicIncrement:
+		return "ATOMIC_INCREMENT"
 	default:
 		return "UNKNOWN"
 	}
+}
+
+func generateRequestID() string {
+	return time.Now().Format("20060102150405.999999999")
 }

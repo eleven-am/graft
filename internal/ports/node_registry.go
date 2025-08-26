@@ -2,6 +2,7 @@ package ports
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -12,7 +13,7 @@ type NodePort interface {
 }
 
 type NodeResult struct {
-	GlobalState interface{}
+	GlobalState json.RawMessage
 	NextNodes   []NextNode
 }
 
@@ -25,7 +26,7 @@ type NextNode struct {
 }
 
 type NodeRegistryPort interface {
-	RegisterNode(node NodePort) error
+	RegisterNode(node interface{}) error
 	GetNode(nodeName string) (NodePort, error)
 	ListNodes() []string
 	UnregisterNode(nodeName string) error

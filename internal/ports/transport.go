@@ -1,39 +1,51 @@
 package ports
 
-import "context"
+import (
+	"context"
+
+	"github.com/eleven-am/graft/internal/domain"
+)
 
 type TransportPort interface {
 	Start(ctx context.Context, address string, port int) error
 	Stop() error
-	SendToLeader(ctx context.Context, message Message) (*Response, error)
-	SetMessageHandler(handler MessageHandler)
-	UpdateLeader(nodeID string, address string)
-	GetAddress() string
-	SetRaft(raft RaftPort)
-	RequestJoinFromPeer(ctx context.Context, peerAddress string, nodeInfo NodeInfo) error
+	
+	RegisterEngine(engine EnginePort)
+	RegisterRaft(raft RaftNode)
+	
+	SendTrigger(ctx context.Context, nodeAddr string, trigger domain.WorkflowTrigger) error
+	SendJoinRequest(ctx context.Context, nodeAddr string, request *JoinRequest) (*JoinResponse, error)
 }
 
-type Message struct {
-	Type    MessageType
-	From    string
-	Payload []byte
+type JoinRequest struct {
+	NodeID   string
+	Address  string
+	Port     int
+	Metadata map[string]string
 }
 
-type Response struct {
+type JoinResponse struct {
+	Accepted bool
+	NodeID   string
+	Message  string
+}
+
+type WorkflowRequest struct {
+	WorkflowID string
+	NodeName   string
+	Config     []byte
+}
+
+type WorkflowResponse struct {
 	Success bool
-	Data    []byte
-	Error   string
+	Message string
 }
 
-type MessageHandler interface {
-	HandleMessage(ctx context.Context, message Message) (*Response, error)
+type TriggerRequest struct {
+	Trigger *domain.WorkflowTrigger
 }
 
-type MessageType int
-
-const (
-	StorageRead MessageType = iota
-	StorageWrite
-	StorageDelete
-	HealthCheck
-)
+type TriggerResponse struct {
+	Success bool
+	Message string
+}

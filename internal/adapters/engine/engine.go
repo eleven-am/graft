@@ -2,365 +2,142 @@ package engine
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	json "github.com/goccy/go-json"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/ports"
-	"github.com/google/uuid"
 )
 
 type Engine struct {
-	nodeRegistry    ports.NodeRegistryPort
-	resourceManager ports.ResourceManagerPort
-	storage         ports.StoragePort
-	raft            ports.RaftPort
-	readyQueue      ports.QueuePort
-	pendingQueue    ports.QueuePort
-	semaphore       ports.SemaphorePort
-
-	coordinator       *WorkflowCoordinator
-	stateManager      *StateManager
-	lifecycleManager  *LifecycleManager
-	dataCollector     *WorkflowDataCollector
-	metricsTracker    *MetricsTracker
-	pendingEvaluator  PendingEvaluator
-	evaluationTrigger EvaluationTrigger
-	stateSubscriber   *StateSubscriptionManager
-	cleaner           *WorkflowCleaner
-	logger            *slog.Logger
-	config            Config
-	nodeID            string
+	config       domain.EngineConfig
+	nodeRegistry domain.NodeRegistryPort
+	stateManager *StateManager
+	executor     *Executor
+	queue        ports.QueuePort
+	storage      ports.StoragePort
+	logger       *slog.Logger
+	metrics      *domain.ExecutionMetrics
 
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 }
 
-type Config struct {
-	MaxConcurrentWorkflows int           `json:"max_concurrent_workflows"`
-	NodeExecutionTimeout   time.Duration `json:"node_execution_timeout"`
-	StateUpdateInterval    time.Duration `json:"state_update_interval"`
-	RetryAttempts          int           `json:"retry_attempts"`
-	RetryBackoff           time.Duration `json:"retry_backoff"`
-}
+func NewEngine(config domain.EngineConfig, nodeRegistry domain.NodeRegistryPort, queue ports.QueuePort, storage ports.StoragePort, logger *slog.Logger) *Engine {
+	stateManager := NewStateManager(storage, logger)
+	metrics := domain.NewExecutionMetrics()
+	executor := NewExecutor(config, nodeRegistry, stateManager, queue, storage, logger, metrics)
 
-type WorkflowInstance struct {
-	ID           string              `json:"id"`
-	Status       ports.WorkflowState `json:"status"`
-	CurrentState interface{}         `json:"current_state"`
-	StartedAt    time.Time           `json:"started_at"`
-	CompletedAt  *time.Time          `json:"completed_at,omitempty"`
-	Metadata     map[string]string   `json:"metadata"`
-	LastError    *string             `json:"last_error,omitempty"`
-	mu           sync.RWMutex        `json:"-"`
-}
-
-func NewEngine(config Config, logger *slog.Logger) *Engine {
-	ctx, cancel := context.WithCancel(context.Background())
-
-	engine := &Engine{
-		logger: logger,
-		config: config,
-		nodeID: uuid.New().String(),
-		ctx:    ctx,
-		cancel: cancel,
-	}
-
-	engine.metricsTracker = NewMetricsTracker()
-	engine.coordinator = NewWorkflowCoordinator(engine)
-	engine.stateManager = NewStateManager(engine)
-	engine.lifecycleManager = NewLifecycleManager(logger, HandlerConfig{
-		Timeout:    30 * time.Second,
-		MaxRetries: 3,
-	}, engine.metricsTracker)
-
-	engine.pendingEvaluator = NewPendingEvaluator(engine, logger)
-	engine.evaluationTrigger = NewEvaluationTrigger(3, logger)
-	engine.evaluationTrigger.RegisterEvaluator(engine.pendingEvaluator)
-	engine.stateSubscriber = NewStateSubscriptionManager(engine, engine.nodeID, logger)
-	engine.evaluationTrigger.RegisterStateSubscriber(engine.stateSubscriber)
-
-	return engine
-}
-
-func (e *Engine) SetNodeRegistry(registry ports.NodeRegistryPort) {
-	e.nodeRegistry = registry
-	e.initializeDataCollector()
-}
-
-func (e *Engine) SetResourceManager(manager ports.ResourceManagerPort) {
-	e.resourceManager = manager
-}
-
-func (e *Engine) SetStorage(storage ports.StoragePort) {
-	e.storage = storage
-	e.initializeDataCollector()
-	e.initializeCleaner()
-}
-
-func (e *Engine) SetReadyQueue(queue ports.QueuePort) {
-	e.readyQueue = queue
-	e.initializeDataCollector()
-	e.initializeCleaner()
-}
-
-func (e *Engine) SetPendingQueue(queue ports.QueuePort) {
-	e.pendingQueue = queue
-	e.initializeDataCollector()
-	e.initializeCleaner()
-}
-
-func (e *Engine) SetSemaphore(semaphore ports.SemaphorePort) {
-	e.semaphore = semaphore
-}
-
-func (e *Engine) SetRaft(raft ports.RaftPort) {
-	e.raft = raft
-	e.initializeRaftCleanup()
-}
-
-func (e *Engine) RegisterLifecycleHandlers(completion []ports.CompletionHandler, error []ports.ErrorHandler) {
-	if e.lifecycleManager != nil {
-		e.lifecycleManager.RegisterHandlers(completion, error)
-	}
-}
-
-func (e *Engine) SubscribeToWorkflowState(workflowID string) (<-chan *ports.WorkflowStatus, func(), error) {
-	if e.stateSubscriber == nil {
-		return nil, nil, domain.Error{
-			Type:    domain.ErrorTypeInternal,
-			Message: "state subscriber not initialized",
-		}
-	}
-	return e.stateSubscriber.Subscribe(workflowID)
-}
-
-func (e *Engine) initializeDataCollector() {
-	if e.storage != nil && e.pendingQueue != nil && e.readyQueue != nil && e.nodeRegistry != nil && e.dataCollector == nil {
-		e.dataCollector = NewWorkflowDataCollector(e.storage, e.pendingQueue, e.readyQueue, e.nodeRegistry, e.resourceManager, e.metricsTracker, e.nodeID, e.logger)
-	}
-}
-
-func (e *Engine) initializeCleaner() {
-	if e.storage != nil && e.cleaner == nil {
-		e.cleaner = NewWorkflowCleaner(e.storage, e.readyQueue, e.pendingQueue, e.logger)
-	}
-}
-
-func (e *Engine) initializeRaftCleanup() {
-	if e.raft != nil && e.lifecycleManager != nil {
-		cleanupCallback := func(workflowID string) error {
-			e.logger.Debug("executing Raft-based nuclear cleanup", "workflow_id", workflowID)
-
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-
-			command := domain.NewCompleteWorkflowPurgeCommand(workflowID)
-			result, err := e.raft.Apply(ctx, command)
-
-			if err != nil {
-				return fmt.Errorf("raft cleanup command failed: %w", err)
-			}
-
-			if !result.Success {
-				return fmt.Errorf("raft cleanup command rejected: %s", result.Error)
-			}
-
-			e.logger.Debug("Raft nuclear cleanup completed successfully", "workflow_id", workflowID)
-			return nil
-		}
-
-		e.lifecycleManager.SetCleanupCallback(cleanupCallback)
-		e.logger.Debug("Raft cleanup callback initialized")
+	return &Engine{
+		config:       config,
+		nodeRegistry: nodeRegistry,
+		stateManager: stateManager,
+		executor:     executor,
+		queue:        queue,
+		storage:      storage,
+		logger:       logger.With("component", "engine"),
+		metrics:      metrics,
 	}
 }
 
 func (e *Engine) Start(ctx context.Context) error {
-	if e.nodeRegistry == nil || e.resourceManager == nil ||
-		e.storage == nil || e.readyQueue == nil || e.pendingQueue == nil ||
-		e.semaphore == nil || e.raft == nil {
-		return domain.Error{
-			Type:    domain.ErrorTypeValidation,
-			Message: "missing required dependencies",
-			Details: map[string]interface{}{
-				"node_registry":    e.nodeRegistry != nil,
-				"resource_manager": e.resourceManager != nil,
-				"storage":          e.storage != nil,
-				"ready_queue":      e.readyQueue != nil,
-				"pending_queue":    e.pendingQueue != nil,
-				"semaphore":        e.semaphore != nil,
-				"raft":             e.raft != nil,
-			},
-		}
+	e.logger.Info("starting workflow engine", "worker_count", e.config.WorkerCount)
+
+	e.ctx, e.cancel = context.WithCancel(ctx)
+
+	for i := 0; i < e.config.WorkerCount; i++ {
+		e.wg.Add(1)
+		go e.processWork()
 	}
 
-	if e.storage == nil {
-		return domain.Error{
-			Type:    domain.ErrorTypeInternal,
-			Message: "FATAL: workflow engine requires storage for state persistence",
-			Details: map[string]interface{}{
-				"component":   "workflow_engine",
-				"requirement": "storage",
-			},
-		}
-	}
-	if e.readyQueue == nil || e.pendingQueue == nil {
-		return domain.Error{
-			Type:    domain.ErrorTypeInternal,
-			Message: "FATAL: workflow engine requires both ready and pending queues for distributed execution",
-			Details: map[string]interface{}{
-				"component":     "workflow_engine",
-				"ready_queue":   e.readyQueue != nil,
-				"pending_queue": e.pendingQueue != nil,
-			},
-		}
-	}
-
-	e.logger.Info("starting workflow engine",
-		"max_concurrent_workflows", e.config.MaxConcurrentWorkflows,
-		"node_execution_timeout", e.config.NodeExecutionTimeout,
-	)
-
-	if err := e.evaluationTrigger.Start(ctx); err != nil {
-		e.logger.Error("failed to start evaluation trigger", "error", err.Error())
-		return err
-	}
-
-	e.wg.Add(2)
-	go e.processReadyNodes()
-	go e.processWorkflowCompletions()
-
+	e.logger.Debug("workflow engine started successfully", "workers_launched", e.config.WorkerCount)
 	return nil
 }
 
 func (e *Engine) Stop() error {
-	e.logger.Info("stopping workflow engine")
+	e.logger.Debug("stopping workflow engine")
 
-	if e.evaluationTrigger != nil {
-		if err := e.evaluationTrigger.Stop(); err != nil {
-			e.logger.Error("failed to stop evaluation trigger", "error", err.Error())
-		}
+	if e.cancel != nil {
+		e.cancel()
 	}
 
-	e.cancel()
+	e.logger.Debug("waiting for work processing to complete")
 	e.wg.Wait()
+	e.logger.Debug("work processing completed")
 
-	e.logger.Info("workflow engine stopped")
-	return nil
-}
-
-func (e *Engine) ProcessTrigger(trigger ports.WorkflowTrigger) error {
-	workflow := &WorkflowInstance{
-		ID:           trigger.WorkflowID,
-		Status:       ports.WorkflowStateRunning,
-		CurrentState: trigger.InitialState,
-		StartedAt:    time.Now(),
-		Metadata:     trigger.Metadata,
-	}
-
-	if err := e.stateManager.SaveWorkflowState(context.Background(), workflow); err != nil {
-		e.logger.Error("failed to save initial workflow state",
-			"workflow_id", trigger.WorkflowID,
-			"error", err.Error(),
-		)
+	if err := e.queue.Close(); err != nil {
+		e.logger.Error("failed to close queue", "error", err)
 		return err
 	}
 
-	e.logger.Info("workflow triggered",
-		"workflow_id", trigger.WorkflowID,
-		"initial_nodes", len(trigger.InitialNodes),
-	)
+	e.logger.Debug("workflow engine stopped successfully")
+	return nil
+}
+
+func (e *Engine) ProcessTrigger(trigger domain.WorkflowTrigger) error {
+	workflow := &domain.WorkflowInstance{
+		ID:           trigger.WorkflowID,
+		Status:       domain.WorkflowStateRunning,
+		CurrentState: trigger.InitialState,
+		StartedAt:    time.Now(),
+		Metadata:     trigger.Metadata,
+		Version:      1,
+	}
+
+	if err := e.stateManager.SaveWorkflowState(e.ctx, workflow); err != nil {
+		e.logger.Error("failed to save initial workflow state",
+			"workflow_id", trigger.WorkflowID,
+			"error", err)
+		return domain.NewDiscoveryError("engine", "save_initial_workflow_state", err)
+	}
+
+	e.metrics.IncrementWorkflowsStarted()
 
 	for _, nodeConfig := range trigger.InitialNodes {
-		if err := e.routeInitialNode(trigger.WorkflowID, nodeConfig); err != nil {
-			e.logger.Error("failed to route initial node",
+		if err := e.enqueueInitialNode(trigger.WorkflowID, nodeConfig); err != nil {
+			e.logger.Error("failed to enqueue initial node",
 				"workflow_id", trigger.WorkflowID,
 				"node_name", nodeConfig.Name,
-				"error", err.Error(),
-			)
+				"error", err)
+			return domain.NewDiscoveryError("engine", "enqueue_initial_node", err)
 		}
 	}
+
+	e.logger.Debug("workflow trigger processed successfully",
+		"workflow_id", trigger.WorkflowID)
 
 	return nil
 }
 
-func (e *Engine) GetWorkflowStatusInternal(workflowID string) (*ports.WorkflowStatusInternal, error) {
-	workflow, err := e.stateManager.LoadWorkflowState(context.Background(), workflowID)
+func (e *Engine) GetWorkflowStatus(workflowID string) (*domain.WorkflowStatus, error) {
+	e.logger.Debug("getting workflow status", "workflow_id", workflowID)
+
+	workflow, err := e.stateManager.LoadWorkflowState(e.ctx, workflowID)
 	if err != nil {
-		e.logger.Error("failed to load workflow state for internal status",
-			"workflow_id", workflowID,
-			"error", err.Error())
-		return nil, err
+		return nil, domain.NewDiscoveryError("engine", "load_workflow", err)
 	}
 
-	if workflow == nil {
-		e.logger.Debug("workflow state not found, returning not found error",
-			"workflow_id", workflowID)
-		return nil, domain.NewNotFoundError("workflow", workflowID)
-	}
-
-	status := &ports.WorkflowStatusInternal{
-		WorkflowID:   workflow.ID,
-		Status:       workflow.Status,
-		CurrentState: workflow.CurrentState,
-		StartedAt:    workflow.StartedAt,
-		CompletedAt:  workflow.CompletedAt,
-		LastError:    workflow.LastError,
-	}
-
-	e.logger.Debug("internal workflow status retrieved successfully",
-		"workflow_id", workflowID,
-		"status", workflow.Status)
-
-	return status, nil
-}
-
-func (e *Engine) GetWorkflowStatus(workflowID string) (*ports.WorkflowStatus, error) {
-	workflow, err := e.stateManager.LoadWorkflowState(context.Background(), workflowID)
+	executedNodes, err := e.loadExecutedNodes(workflowID)
 	if err != nil {
-		e.logger.Error("failed to load workflow state for status",
+		e.logger.Warn("failed to load executed nodes",
 			"workflow_id", workflowID,
-			"error", err.Error())
-		return nil, err
-	}
-
-	if workflow == nil {
-		e.logger.Debug("workflow state not found, returning not found error",
-			"workflow_id", workflowID)
-		return nil, domain.NewNotFoundError("workflow", workflowID)
-	}
-
-	ctx := context.Background()
-
-	executedNodes, err := e.dataCollector.collectExecutedNodes(ctx, workflowID)
-	if err != nil {
-		e.logger.Error("failed to collect executed nodes",
-			"workflow_id", workflowID,
-			"error", err.Error())
+			"error", err)
 		executedNodes = []domain.ExecutedNodeData{}
 	}
 
-	pendingNodes, err := e.dataCollector.collectPendingNodes(ctx, workflowID)
+	pendingNodes, err := e.loadPendingNodes(workflowID)
 	if err != nil {
-		e.logger.Error("failed to collect pending nodes",
+		e.logger.Warn("failed to load pending nodes",
 			"workflow_id", workflowID,
-			"error", err.Error())
-		pendingNodes = []domain.PendingNodeData{}
+			"error", err)
+		pendingNodes = []domain.NodeConfig{}
 	}
 
-	readyNodes, err := e.dataCollector.collectReadyNodes(ctx, workflowID)
-	if err != nil {
-		e.logger.Error("failed to collect ready nodes",
-			"workflow_id", workflowID,
-			"error", err.Error())
-		readyNodes = []domain.ReadyNodeData{}
-	}
-
-	status := &ports.WorkflowStatus{
+	status := &domain.WorkflowStatus{
 		WorkflowID:    workflow.ID,
 		Status:        workflow.Status,
 		CurrentState:  workflow.CurrentState,
@@ -368,562 +145,267 @@ func (e *Engine) GetWorkflowStatus(workflowID string) (*ports.WorkflowStatus, er
 		CompletedAt:   workflow.CompletedAt,
 		ExecutedNodes: executedNodes,
 		PendingNodes:  pendingNodes,
-		ReadyNodes:    readyNodes,
 		LastError:     workflow.LastError,
 	}
 
-	e.logger.Debug("workflow status retrieved successfully",
+	e.logger.Debug("workflow status retrieved",
 		"workflow_id", workflowID,
 		"status", workflow.Status,
-		"has_state", workflow.CurrentState != nil,
 		"executed_nodes", len(executedNodes),
-		"pending_nodes", len(pendingNodes),
-		"ready_nodes", len(readyNodes))
+		"pending_nodes", len(pendingNodes))
 
 	return status, nil
 }
 
-func (e *Engine) GetExecutionMetrics() ports.EngineMetrics {
-	e.logger.Debug("calculating execution metrics")
-	var totalWorkflows, activeCount, completedCount, failedCount, nodesExecuted int64
-	var totalExecutionTime time.Duration
-
-	if e.storage != nil {
-		e.logger.Debug("retrieving workflow states")
-		ctx := context.Background()
-		workflowKeys, err := e.storage.List(ctx, "workflow:state:")
-		if err == nil {
-			e.logger.Debug("workflow keys retrieved", "count", len(workflowKeys))
-			totalWorkflows = int64(len(workflowKeys))
-
-			for _, kv := range workflowKeys {
-				if len(kv.Value) == 0 {
-					e.logger.Debug("skipping empty workflow state data for metrics",
-						"key", kv.Key)
-					continue
-				}
-
-				var workflow WorkflowInstance
-				if err := json.Unmarshal(kv.Value, &workflow); err != nil {
-					e.logger.Debug("failed to unmarshal workflow state for metrics",
-						"key", kv.Key,
-						"data_length", len(kv.Value),
-						"error", err.Error())
-					continue
-				}
-
-				switch workflow.Status {
-				case ports.WorkflowStateRunning:
-					activeCount++
-				case ports.WorkflowStateCompleted:
-					completedCount++
-					if workflow.CompletedAt != nil {
-						duration := workflow.CompletedAt.Sub(workflow.StartedAt)
-						totalExecutionTime += duration
-					}
-				case ports.WorkflowStateFailed:
-					failedCount++
-				}
-			}
-		} else {
-			e.logger.Error("storage list failed", "error", err.Error())
-		}
-	} else {
-		e.logger.Warn("storage is nil in GetExecutionMetrics")
-	}
-
-	if e.metricsTracker != nil {
-		nodesExecuted = e.metricsTracker.GetNodesExecuted()
-	}
-
-	var avgExecutionTime time.Duration
-	if completedCount > 0 {
-		avgExecutionTime = totalExecutionTime / time.Duration(completedCount)
-	}
-
-	queueSizes := ports.QueueSizes{}
-	ctx := context.Background()
-
-	if e.readyQueue != nil {
-		isEmpty, err := e.readyQueue.IsEmpty(ctx)
-		if err == nil && !isEmpty {
-			queueSizes.Ready = 1
-		}
-	}
-
-	if e.pendingQueue != nil {
-		pendingItems, err := e.pendingQueue.GetItems(ctx)
-		if err == nil {
-			queueSizes.Pending = len(pendingItems)
-		}
-	}
-
-	metrics := ports.EngineMetrics{
-		TotalWorkflows:       totalWorkflows,
-		ActiveWorkflows:      activeCount,
-		CompletedWorkflows:   completedCount,
-		FailedWorkflows:      failedCount,
-		NodesExecuted:        nodesExecuted,
-		AverageExecutionTime: avgExecutionTime,
-		QueueSizes:           queueSizes,
-		WorkerPoolSize:       e.config.MaxConcurrentWorkflows,
-		PanicMetrics:         e.metricsTracker.GetPanicMetrics(),
-		HandlerMetrics:       e.metricsTracker.GetHandlerMetrics(),
-	}
-
-	e.logger.Debug("execution metrics calculated",
-		"total_workflows", totalWorkflows,
-		"active_workflows", activeCount,
-		"completed_workflows", completedCount,
-		"failed_workflows", failedCount,
-		"nodes_executed", nodesExecuted)
-
-	return metrics
-}
-
-func (e *Engine) processReadyNodes() {
-	defer e.wg.Done()
-
-	for {
-		if err := e.coordinator.ProcessReadyNodes(e.ctx); err != nil {
-			if e.ctx.Err() != nil {
-				return
-			}
-			e.logger.Error("error processing ready nodes", "error", err.Error())
-			time.Sleep(time.Second)
-		}
-	}
-}
-
-func (e *Engine) processWorkflowCompletions() {
-	defer e.wg.Done()
-
-	for {
-		if err := e.coordinator.CheckWorkflowCompletions(e.ctx); err != nil {
-			if e.ctx.Err() != nil {
-				return
-			}
-			e.logger.Error("error checking workflow completions", "error", err.Error())
-			time.Sleep(time.Second)
-		}
-	}
-}
-
-func (e *Engine) queueNodeForExecution(workflowID string, nodeConfig ports.NodeConfig, reason string) error {
-	if e.readyQueue == nil {
-		e.logger.Debug("ready queue not available, cannot execute node",
-			"workflow_id", workflowID,
-			"node_name", nodeConfig.Name,
-			"reason", reason)
-
-		return domain.Error{
-			Type:    domain.ErrorTypeUnavailable,
-			Message: "ready queue not available for node execution",
-			Details: map[string]interface{}{
-				"component": "workflow_engine",
-			},
-		}
-	}
-
-	item := &ports.QueueItem{
-		ID:         generateItemID(),
-		WorkflowID: workflowID,
-		NodeName:   nodeConfig.Name,
-		Config:     nodeConfig.Config,
-		EnqueuedAt: time.Now(),
-	}
-
-	return e.readyQueue.Enqueue(context.Background(), *item)
-}
-
-func (e *Engine) routeInitialNode(workflowID string, nodeConfig ports.NodeConfig) error {
-	ctx := context.Background()
-
-	if e.readyQueue == nil || e.pendingQueue == nil {
-		return domain.Error{
-			Type:    domain.ErrorTypeUnavailable,
-			Message: "ready and pending queues not available for node routing",
-			Details: map[string]interface{}{
-				"component":               "workflow_engine",
-				"ready_queue_available":   e.readyQueue != nil,
-				"pending_queue_available": e.pendingQueue != nil,
-			},
-		}
-	}
-
-	if e.nodeRegistry == nil {
-		return domain.Error{
-			Type:    domain.ErrorTypeUnavailable,
-			Message: "node registry not available for readiness check",
-			Details: map[string]interface{}{
-				"component": "workflow_engine",
-			},
-		}
-	}
-
-	workflow, err := e.stateManager.LoadWorkflowState(ctx, workflowID)
-	if err != nil {
-		return fmt.Errorf("failed to load workflow state for readiness check: %w", err)
-	}
-
-	if workflow == nil {
-		return domain.NewNotFoundError("workflow", workflowID)
-	}
-
-	node, err := e.nodeRegistry.GetNode(nodeConfig.Name)
-	if err != nil {
-		return fmt.Errorf("failed to get node from registry: %w", err)
-	}
-
-	item := &ports.QueueItem{
-		ID:         generateItemID(),
-		WorkflowID: workflowID,
-		NodeName:   nodeConfig.Name,
-		Config:     nodeConfig.Config,
-		EnqueuedAt: time.Now(),
-	}
-
-	workflow.mu.RLock()
-	currentState := workflow.CurrentState
-	workflow.mu.RUnlock()
-
-	canStart := node.CanStart(ctx, currentState, nodeConfig.Config)
-
-	e.logger.Debug("initial node readiness check",
-		"workflow_id", workflowID,
-		"node_name", nodeConfig.Name,
-		"can_start", canStart,
-	)
-
-	if canStart {
-		e.logger.Debug("routing initial node to ready queue",
-			"workflow_id", workflowID,
-			"node_name", nodeConfig.Name,
-		)
-		return e.readyQueue.Enqueue(ctx, *item)
-	} else {
-		e.logger.Debug("routing initial node to pending queue",
-			"workflow_id", workflowID,
-			"node_name", nodeConfig.Name,
-		)
-		return e.pendingQueue.Enqueue(ctx, *item)
-	}
-}
-
 func (e *Engine) PauseWorkflow(ctx context.Context, workflowID string) error {
-	if e.coordinator == nil {
-		return domain.Error{
-			Type:    domain.ErrorTypeInternal,
-			Message: "coordinator not initialized",
+	e.logger.Debug("pausing workflow", "workflow_id", workflowID)
+
+	err := e.stateManager.UpdateWorkflowState(ctx, workflowID, func(wf *domain.WorkflowInstance) error {
+		if wf.Status != domain.WorkflowStateRunning {
+			return domain.ErrInvalidInput
 		}
+		wf.Status = domain.WorkflowStatePaused
+		return nil
+	})
+
+	if err == nil {
+		e.metrics.IncrementWorkflowsPaused()
 	}
-	return e.coordinator.PauseWorkflow(ctx, workflowID)
+
+	return err
 }
 
 func (e *Engine) ResumeWorkflow(ctx context.Context, workflowID string) error {
-	if e.coordinator == nil {
-		return domain.Error{
-			Type:    domain.ErrorTypeInternal,
-			Message: "coordinator not initialized",
+	e.logger.Debug("resuming workflow", "workflow_id", workflowID)
+
+	err := e.stateManager.UpdateWorkflowState(ctx, workflowID, func(wf *domain.WorkflowInstance) error {
+		if wf.Status != domain.WorkflowStatePaused {
+			return domain.ErrInvalidInput
 		}
+		wf.Status = domain.WorkflowStateRunning
+		return nil
+	})
+
+	if err == nil {
+		e.metrics.IncrementWorkflowsResumed()
 	}
-	return e.coordinator.ResumeWorkflow(ctx, workflowID)
+
+	return err
 }
 
 func (e *Engine) StopWorkflow(ctx context.Context, workflowID string) error {
-	if e.coordinator == nil {
-		return domain.Error{
-			Type:    domain.ErrorTypeInternal,
-			Message: "coordinator not initialized",
-		}
+	e.logger.Debug("stopping workflow", "workflow_id", workflowID)
+
+	err := e.stateManager.UpdateWorkflowState(ctx, workflowID, func(wf *domain.WorkflowInstance) error {
+		wf.Status = domain.WorkflowStateFailed
+		now := time.Now()
+		wf.CompletedAt = &now
+		errorStr := "workflow stopped by request"
+		wf.LastError = &errorStr
+		return nil
+	})
+
+	if err == nil {
+		e.metrics.IncrementWorkflowsFailed()
 	}
-	return e.coordinator.StopWorkflow(ctx, workflowID)
+
+	return err
 }
 
-func (e *Engine) EvaluatePendingNodes(ctx context.Context, workflowID string, currentState interface{}) error {
-	if e.pendingEvaluator == nil {
-		return domain.Error{
-			Type:    domain.ErrorTypeInternal,
-			Message: "pending evaluator not initialized",
-		}
-	}
-	return e.pendingEvaluator.EvaluatePendingNodes(ctx, workflowID, currentState)
-}
+func (e *Engine) processWork() {
+	defer e.wg.Done()
+	e.logger.Debug("Worker started")
 
-func (e *Engine) CheckNodeReadiness(node *domain.PendingNodeData, state interface{}, config interface{}) bool {
-	if e.pendingEvaluator == nil {
-		return false
-	}
-	return e.pendingEvaluator.CheckNodeReadiness(node, state, config)
-}
-
-func (e *Engine) ProcessReadyNodes(ctx context.Context) error {
-	if e.coordinator == nil {
-		return domain.Error{
-			Type:    domain.ErrorTypeInternal,
-			Message: "coordinator not initialized",
-		}
-	}
-	return e.coordinator.ProcessReadyNodes(ctx)
-}
-
-func (e *Engine) SaveWorkflowState(ctx context.Context, workflowID string) error {
-	if e.stateManager == nil {
-		return domain.Error{
-			Type:    domain.ErrorTypeInternal,
-			Message: "state manager not initialized",
-		}
-	}
-
-	workflow, err := e.stateManager.LoadWorkflowState(ctx, workflowID)
-	if err != nil {
-		return err
-	}
-
-	if workflow == nil {
-		return domain.NewNotFoundError("workflow", workflowID)
-	}
-
-	return e.stateManager.SaveWorkflowState(ctx, workflow)
-}
-
-func (e *Engine) LoadWorkflowState(ctx context.Context, workflowID string) (*ports.WorkflowInstance, error) {
-	if e.stateManager == nil {
-		return nil, domain.Error{
-			Type:    domain.ErrorTypeInternal,
-			Message: "state manager not initialized",
-		}
-	}
-
-	workflow, err := e.stateManager.LoadWorkflowState(ctx, workflowID)
-	if err != nil {
-		return nil, err
-	}
-
-	if workflow == nil {
-		return nil, domain.NewNotFoundError("workflow", workflowID)
-	}
-
-	return &ports.WorkflowInstance{
-		ID:           workflow.ID,
-		Status:       workflow.Status,
-		CurrentState: workflow.CurrentState,
-		StartedAt:    workflow.StartedAt,
-		CompletedAt:  workflow.CompletedAt,
-		Metadata:     workflow.Metadata,
-		LastError:    workflow.LastError,
-	}, nil
-}
-
-func (e *Engine) UpdateWorkflowState(ctx context.Context, workflowID string, updates map[string]interface{}) error {
-	if e.stateManager == nil {
-		return domain.Error{
-			Type:    domain.ErrorTypeInternal,
-			Message: "state manager not initialized",
-		}
-	}
-	return e.stateManager.UpdateWorkflowState(ctx, workflowID, updates)
-}
-
-func (e *Engine) RecoverActiveWorkflows(ctx context.Context) error {
-	if e.stateManager == nil {
-		return domain.Error{
-			Type:    domain.ErrorTypeInternal,
-			Message: "state manager not initialized",
-		}
-	}
-
-	e.logger.Debug("starting active workflow recovery")
-
-	workflows, err := e.stateManager.ListWorkflowStates(ctx)
-	if err != nil {
-		return fmt.Errorf("failed to list workflows for recovery: %w", err)
-	}
-
-	recoveredCount := 0
-	for _, workflow := range workflows {
-		if workflow.Status == ports.WorkflowStateRunning {
-			e.logger.Debug("recovering active workflow",
-				"workflow_id", workflow.ID,
-				"started_at", workflow.StartedAt,
-			)
-
-			if e.pendingEvaluator != nil {
-				if err := e.pendingEvaluator.EvaluatePendingNodes(ctx, workflow.ID, workflow.CurrentState); err != nil {
-					e.logger.Error("failed to evaluate workflow during recovery",
-						"workflow_id", workflow.ID,
-						"error", err.Error(),
-					)
+	for {
+		select {
+		case <-e.ctx.Done():
+			e.logger.Debug("work processing loop stopped")
+			return
+		case <-e.queue.WaitForItem(e.ctx):
+			for {
+				processed, err := e.processNextItem()
+				if err != nil {
+					e.logger.Error("failed to process work item", "error", err)
+					time.Sleep(100 * time.Millisecond)
+				}
+				if !processed {
+					break
 				}
 			}
-			recoveredCount++
+		case <-time.After(1 * time.Second):
+			// Periodic check for delayed items that are now ready
+			for {
+				processed, err := e.processNextItem()
+				if err != nil {
+					e.logger.Error("failed to process work item", "error", err)
+					time.Sleep(100 * time.Millisecond)
+				}
+				if !processed {
+					break
+				}
+			}
 		}
 	}
+}
 
-	e.logger.Debug("workflow recovery completed",
-		"total_workflows", len(workflows),
-		"recovered_active", recoveredCount,
-	)
+func (e *Engine) processNextItem() (bool, error) {
+	select {
+	case <-e.ctx.Done():
+		return false, nil
+	default:
+	}
+
+	item, claimID, exists, err := e.queue.Claim()
+	if err != nil {
+		e.logger.Error("Failed to claim item", "error", err)
+		return false, domain.NewDiscoveryError("engine", "claim_work_item", err)
+	}
+
+	if !exists {
+		return false, nil
+	}
+
+	var workItem WorkItem
+	if err := json.Unmarshal(item, &workItem); err != nil {
+		e.queue.Complete(claimID)
+		return false, domain.NewDiscoveryError("engine", "unmarshal_work_item", err)
+	}
+
+	e.logger.Debug("processing work item",
+		"workflow_id", workItem.WorkflowID,
+		"node_name", workItem.NodeName,
+		"retry_count", workItem.RetryCount)
+
+	e.metrics.IncrementItemsProcessed()
+
+	execErr := e.executor.ExecuteNodeWithRetry(e.ctx, workItem.WorkflowID, workItem.NodeName, workItem.Config, workItem.RetryCount)
+
+	if err := e.queue.Complete(claimID); err != nil {
+		e.logger.Error("failed to complete work item",
+			"claim_id", claimID,
+			"error", err)
+	}
+
+	return true, execErr
+}
+
+func (e *Engine) enqueueInitialNode(workflowID string, nodeConfig domain.NodeConfig) error {
+	now := time.Now()
+	workItem := WorkItem{
+		WorkflowID:   workflowID,
+		NodeName:     nodeConfig.Name,
+		Config:       nodeConfig.Config,
+		EnqueuedAt:   now,
+		ProcessAfter: now,
+		RetryCount:   0,
+	}
+
+	itemBytes, err := json.Marshal(workItem)
+	if err != nil {
+		return domain.NewDiscoveryError("engine", "marshal_work_item", err)
+	}
+
+	if err := e.queue.Enqueue(itemBytes); err != nil {
+		return domain.NewDiscoveryError("engine", "enqueue_work_item", err)
+	}
+
+	e.metrics.IncrementItemsEnqueued()
+
+	e.logger.Debug("initial node enqueued successfully",
+		"workflow_id", workflowID,
+		"node_name", nodeConfig.Name)
 
 	return nil
 }
 
-func (e *Engine) RestoreWorkflowFromState(ctx context.Context, importData *domain.WorkflowStateImport) (*domain.ValidationResult, error) {
-	e.logger.Debug("starting workflow state import",
-		"workflow_id", importData.WorkflowState.WorkflowID,
-		"resumption_mode", importData.ResumptionMode,
-		"validation_level", importData.ValidationLevel)
+func (e *Engine) loadExecutedNodes(workflowID string) ([]domain.ExecutedNodeData, error) {
+	prefix := fmt.Sprintf("workflow:execution:%s:", workflowID)
 
-	validator := NewStateValidator(e.logger)
-	validationResult, err := validator.ValidateState(ctx, &importData.WorkflowState, importData.ValidationLevel)
+	items, err := e.storage.ListByPrefix(prefix)
 	if err != nil {
-		return nil, fmt.Errorf("failed to validate workflow state: %w", err)
+		return nil, domain.NewDiscoveryError("engine", "list_executed_nodes", err)
 	}
 
-	if !validationResult.Valid {
-		e.logger.Error("workflow state validation failed",
-			"workflow_id", importData.WorkflowState.WorkflowID,
-			"errors", len(validationResult.Errors))
-		return validationResult, nil
+	var executedNodes []domain.ExecutedNodeData
+	for _, item := range items {
+		var node domain.ExecutedNodeData
+		if err := json.Unmarshal(item.Value, &node); err != nil {
+			e.logger.Warn("failed to unmarshal executed node",
+				"key", item.Key,
+				"error", err)
+			continue
+		}
+		executedNodes = append(executedNodes, node)
 	}
 
-	e.logger.Debug("workflow state successfully restored",
-		"workflow_id", importData.WorkflowState.WorkflowID,
-		"resumption_mode", importData.ResumptionMode)
-
-	return validationResult, nil
+	return executedNodes, nil
 }
 
-func (e *Engine) ValidateWorkflowState(state *domain.CompleteWorkflowState) (*domain.ValidationResult, error) {
-	e.logger.Debug("validating workflow state", "workflow_id", state.WorkflowID)
+func (e *Engine) loadPendingNodes(workflowID string) ([]domain.NodeConfig, error) {
+	workflowPrefix := fmt.Sprintf(`"workflow_id":"%s"`, workflowID)
 
-	validator := NewStateValidator(e.logger)
-	result, err := validator.ValidateState(context.Background(), state, domain.ValidationStandard)
+	pendingItems, err := e.queue.GetItemsWithPrefix(workflowPrefix)
 	if err != nil {
-		return nil, fmt.Errorf("failed to validate workflow state: %w", err)
+		return nil, domain.NewDiscoveryError("engine", "get_pending_workflow_items", err)
 	}
 
-	e.logger.Debug("workflow state validation completed",
-		"workflow_id", state.WorkflowID,
-		"valid", result.Valid,
-		"errors", len(result.Errors),
-		"warnings", len(result.Warnings))
+	var pendingNodes []domain.NodeConfig
+	for _, itemBytes := range pendingItems {
+		var workItem struct {
+			WorkflowID string          `json:"workflow_id"`
+			NodeName   string          `json:"node_name"`
+			Config     json.RawMessage `json:"config"`
+		}
+		if err := json.Unmarshal(itemBytes, &workItem); err != nil {
+			e.logger.Warn("failed to unmarshal work item",
+				"error", err)
+			continue
+		}
 
-	return result, nil
+		pendingNodes = append(pendingNodes, domain.NodeConfig{
+			Name:   workItem.NodeName,
+			Config: workItem.Config,
+		})
+	}
+
+	return pendingNodes, nil
 }
 
-func (e *Engine) ExportWorkflowState(ctx context.Context, workflowID string) (*domain.CompleteWorkflowState, error) {
-	e.logger.Debug("exporting workflow state", "workflow_id", workflowID)
+func (e *Engine) GetDeadLetterItems(limit int) ([]ports.DeadLetterItem, error) {
+	e.logger.Debug("getting dead letter queue items", "limit", limit)
 
-	workflow, err := e.LoadWorkflowState(ctx, workflowID)
+	items, err := e.queue.GetDeadLetterItems(limit)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load workflow for export: %w", err)
+		return nil, domain.NewDiscoveryError("engine", "get_dead_letter_items", err)
 	}
 
-	workflowInstance := &WorkflowInstance{
-		ID:           workflow.ID,
-		Status:       workflow.Status,
-		CurrentState: workflow.CurrentState,
-		StartedAt:    workflow.StartedAt,
-		CompletedAt:  workflow.CompletedAt,
-		Metadata:     workflow.Metadata,
-		LastError:    workflow.LastError,
-	}
-
-	if e.dataCollector == nil {
-		e.initializeDataCollector()
-	}
-
-	state, err := e.dataCollector.ExportCompleteWorkflowState(ctx, workflowInstance)
-	if err != nil {
-		return nil, fmt.Errorf("failed to export workflow state: %w", err)
-	}
-
-	e.logger.Debug("workflow state successfully exported",
-		"workflow_id", workflowID,
-		"executed_nodes", len(state.ExecutedNodes),
-		"pending_nodes", len(state.PendingNodes),
-		"ready_nodes", len(state.ReadyNodes))
-
-	return state, nil
+	return items, nil
 }
 
-func (e *Engine) ResumeWorkflowFromPoint(ctx context.Context, workflowID string, resumptionPoint *domain.ResumptionPoint) error {
-	e.logger.Debug("resuming workflow from point",
-		"workflow_id", workflowID,
-		"resumption_node", resumptionPoint.NodeID)
+func (e *Engine) GetDeadLetterSize() (int, error) {
+	e.logger.Debug("getting dead letter queue size")
 
-	workflow, err := e.LoadWorkflowState(ctx, workflowID)
+	size, err := e.queue.GetDeadLetterSize()
 	if err != nil {
-		return fmt.Errorf("failed to load workflow for resumption: %w", err)
+		return 0, domain.NewDiscoveryError("engine", "get_dead_letter_size", err)
 	}
 
-	if workflow.Status == ports.WorkflowStateRunning {
-		return fmt.Errorf("workflow %s is already running", workflowID)
+	return size, nil
+}
+
+func (e *Engine) RetryFromDeadLetter(itemID string) error {
+	e.logger.Debug("retrying item from dead letter queue", "item_id", itemID)
+
+	if err := e.queue.RetryFromDeadLetter(itemID); err != nil {
+		return domain.NewDiscoveryError("engine", "retry_from_dead_letter", err)
 	}
 
-	workflowKey := fmt.Sprintf("workflow:state:%s", workflowID)
-	workflow.Status = ports.WorkflowStateRunning
-	workflowBytes, err := json.Marshal(workflow)
-	if err != nil {
-		return fmt.Errorf("failed to marshal workflow for storage: %w", err)
-	}
-	if err := e.storage.Put(ctx, workflowKey, workflowBytes); err != nil {
-		return fmt.Errorf("failed to update workflow status for resumption: %w", err)
-	}
+	e.metrics.IncrementItemsRetriedFromDeadLetter()
 
-	if resumptionPoint.NodeID != "" {
-		nodeConfig := ports.NodeConfig{
-			Name:   resumptionPoint.NodeID,
-			Config: resumptionPoint.State,
-		}
-		if err := e.queueNodeForExecution(workflowID, nodeConfig, "resumption_point"); err != nil {
-			return fmt.Errorf("failed to queue resumption node: %w", err)
-		}
-	}
-
-	if e.pendingEvaluator != nil {
-		if err := e.pendingEvaluator.EvaluatePendingNodes(ctx, workflowID, workflow.CurrentState); err != nil {
-			e.logger.Error("failed to evaluate pending nodes during resumption",
-				"workflow_id", workflowID,
-				"error", err.Error())
-		}
-	}
-
-	e.logger.Debug("workflow successfully resumed from point",
-		"workflow_id", workflowID,
-		"resumption_node", resumptionPoint.NodeID)
-
+	e.logger.Debug("item successfully retried from dead letter queue", "item_id", itemID)
 	return nil
 }
 
-func (e *Engine) ResumeFromCheckpoint(ctx context.Context, workflowID string, checkpointID string) error {
-	e.logger.Debug("resuming workflow from checkpoint",
-		"workflow_id", workflowID,
-		"checkpoint_id", checkpointID)
-
-	checkpointKey := fmt.Sprintf("workflow:checkpoint:%s:%s", workflowID, checkpointID)
-	checkpointBytes, err := e.storage.Get(ctx, checkpointKey)
-	if err != nil {
-		return fmt.Errorf("failed to load checkpoint %s: %w", checkpointID, err)
-	}
-
-	var checkpoint domain.CheckpointData
-	if err := json.Unmarshal(checkpointBytes, &checkpoint); err != nil {
-		return fmt.Errorf("failed to unmarshal checkpoint %s: %w", checkpointID, err)
-	}
-
-	resumptionPoint := &domain.ResumptionPoint{
-		NodeID:         checkpoint.NodeID,
-		State:          checkpoint.State,
-		Timestamp:      checkpoint.CreatedAt,
-		ValidationHash: fmt.Sprintf("checkpoint_%s_%d", checkpointID, checkpoint.CreatedAt.Unix()),
-		Metadata:       checkpoint.Metadata,
-	}
-
-	return e.ResumeWorkflowFromPoint(ctx, workflowID, resumptionPoint)
-}
-
-func generateItemID() string {
-	return time.Now().Format("20060102150405") + "_" + uuid.New().String()[:8]
+func (e *Engine) GetMetrics() domain.ExecutionMetrics {
+	return e.metrics.GetSnapshot()
 }

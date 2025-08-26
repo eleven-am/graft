@@ -5,82 +5,27 @@ import (
 	"time"
 )
 
-type QueueType string
-
-const (
-	QueueTypeReady      QueueType = "ready"
-	QueueTypePending    QueueType = "pending"
-	QueueTypeDeadLetter QueueType = "dead_letter"
-)
-
 type QueuePort interface {
-	// Queue operations
-	Enqueue(ctx context.Context, item QueueItem) error
-	Dequeue(ctx context.Context, opts ...DequeueOption) (*QueueItem, error)
-	GetItems(ctx context.Context) ([]QueueItem, error)
-	RemoveItem(ctx context.Context, itemID string) error
-	EnqueueBatch(ctx context.Context, items []QueueItem) error
-	DequeueBatch(ctx context.Context, maxItems int, opts ...DequeueOption) ([]QueueItem, error)
-
-	// Utility operations
-	IsEmpty(ctx context.Context) (bool, error)
-	VerifyWorkClaim(ctx context.Context, workItemID string, nodeID string) error
-	ReleaseWorkClaim(ctx context.Context, workItemID string, nodeID string) error
-	ProcessExpiredClaims(ctx context.Context) error
-	GetQueuePartitions(ctx context.Context) ([]QueuePartition, error)
-}
-
-type DequeueOptions struct {
-	NodeID        string
-	ClaimDuration time.Duration
-	PartitionKey  string
-	MaxRetries    int
-}
-
-type DequeueOption func(*DequeueOptions)
-
-func WithClaim(nodeID string, duration time.Duration) DequeueOption {
-	return func(opts *DequeueOptions) {
-		opts.NodeID = nodeID
-		opts.ClaimDuration = duration
-	}
-}
-
-func WithPartition(partitionKey string) DequeueOption {
-	return func(opts *DequeueOptions) {
-		opts.PartitionKey = partitionKey
-	}
-}
-
-func WithMaxRetries(maxRetries int) DequeueOption {
-	return func(opts *DequeueOptions) {
-		opts.MaxRetries = maxRetries
-	}
-}
-
-type QueueItem struct {
-	ID             string
-	WorkflowID     string
-	NodeName       string
-	Config         interface{}
-	Priority       int
-	EnqueuedAt     time.Time
-	PartitionKey   string
-	RetryCount     int
-	MaxRetries     int
-	Checksum       string
-	IdempotencyKey string
+	Enqueue(item []byte) error
+	Peek() (item []byte, exists bool, err error)
+	Claim() (item []byte, claimID string, exists bool, err error)
+	Complete(claimID string) error
+	WaitForItem(ctx context.Context) <-chan struct{}
+	Size() (int, error)
+	HasItemsWithPrefix(dataPrefix string) (bool, error)
+	GetItemsWithPrefix(dataPrefix string) ([][]byte, error)
+	Close() error
+	
+	SendToDeadLetter(item []byte, reason string) error
+	GetDeadLetterItems(limit int) ([]DeadLetterItem, error)
+	GetDeadLetterSize() (int, error)
+	RetryFromDeadLetter(itemID string) error
 }
 
 type DeadLetterItem struct {
-	QueueItem
-	FailedAt      time.Time
-	FailureReason string
-	OriginalQueue string
-}
-
-type QueuePartition struct {
-	Key          string
-	ItemCount    int
-	LastActivity time.Time
+	ID        string    `json:"id"`
+	Item      []byte    `json:"item"`
+	Reason    string    `json:"reason"`
+	Timestamp time.Time `json:"timestamp"`
+	RetryCount int      `json:"retry_count"`
 }
