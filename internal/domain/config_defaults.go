@@ -1,9 +1,12 @@
 package domain
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,6 +20,7 @@ func DefaultConfig() *Config {
 		Resources:    DefaultResourceConfig(),
 		Engine:       DefaultEngineConfig(),
 		Orchestrator: DefaultOrchestratorConfig(),
+		Cluster:      DefaultClusterConfig(),
 	}
 }
 
@@ -76,7 +80,7 @@ func DefaultRaftConfig() RaftConfig {
 		ShutdownOnRemove:   true,
 		TrailingLogs:       10240,
 		LeaderLeaseTimeout: 500 * time.Millisecond,
-		
+
 		DiscoveryTimeout:  10 * time.Second,
 		BootstrapExpected: 0,
 		ForceBootstrap:    false,
@@ -123,6 +127,15 @@ func DefaultOrchestratorConfig() OrchestratorConfig {
 	}
 }
 
+func DefaultClusterConfig() ClusterConfig {
+	return ClusterConfig{
+		ID:              "",
+		Policy:          ClusterPolicyRecover,
+		PersistenceFile: "cluster.json",
+		AllowRecovery:   true,
+	}
+}
+
 func NewConfigFromSimple(nodeID, bindAddr, dataDir string, logger *slog.Logger) *Config {
 	config := DefaultConfig()
 	config.NodeID = nodeID
@@ -130,12 +143,15 @@ func NewConfigFromSimple(nodeID, bindAddr, dataDir string, logger *slog.Logger) 
 	config.DataDir = dataDir
 	config.Logger = logger
 
-	if config.ClusterID == "" {
-		config.ClusterID = uuid.New().String()
-	}
-
 	if logger == nil {
 		config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+
+	// Initialize cluster ID with persistence
+	if err := initializeClusterID(config); err != nil {
+		config.Logger.Warn("failed to initialize cluster ID", "error", err)
+		// Fallback to random UUID
+		config.ClusterID = uuid.New().String()
 	}
 
 	return config
@@ -208,6 +224,27 @@ func (c *Config) WithEngineSettings(maxWorkflows int, nodeTimeout time.Duration,
 	if c.Engine.WorkerCount == 0 {
 		c.Engine.WorkerCount = 10
 	}
+	return c
+}
+
+func (c *Config) WithClusterID(clusterID string) *Config {
+	c.Cluster.ID = clusterID
+	c.ClusterID = clusterID
+	return c
+}
+
+func (c *Config) WithClusterPolicy(policy ClusterPolicy) *Config {
+	c.Cluster.Policy = policy
+	return c
+}
+
+func (c *Config) WithClusterRecovery(enabled bool) *Config {
+	c.Cluster.AllowRecovery = enabled
+	return c
+}
+
+func (c *Config) WithClusterPersistence(persistenceFile string) *Config {
+	c.Cluster.PersistenceFile = persistenceFile
 	return c
 }
 
@@ -311,4 +348,81 @@ func NewConfigError(field string, err error) *ConfigError {
 		Field: field,
 		Err:   err,
 	}
+}
+
+type ClusterPersistence struct {
+	ClusterID string `json:"cluster_id"`
+	CreatedAt string `json:"created_at"`
+	NodeID    string `json:"node_id"`
+}
+
+func initializeClusterID(config *Config) error {
+	if config.Cluster.ID != "" {
+		config.ClusterID = config.Cluster.ID
+		return nil
+	}
+
+	persistenceFile := config.Cluster.PersistenceFile
+	if persistenceFile == "" {
+		persistenceFile = "cluster.json"
+	}
+	if !filepath.IsAbs(persistenceFile) {
+		persistenceFile = filepath.Join(config.DataDir, persistenceFile)
+	}
+
+	if clusterID, err := loadClusterID(persistenceFile, config.Logger); err == nil && clusterID != "" {
+		config.ClusterID = clusterID
+		config.Logger.Info("loaded existing cluster ID", "cluster_id", clusterID, "file", persistenceFile)
+		return nil
+	}
+
+	newClusterID := uuid.New().String()
+	if err := saveClusterID(persistenceFile, newClusterID, config.NodeID, config.Logger); err != nil {
+		return fmt.Errorf("failed to save new cluster ID: %w", err)
+	}
+
+	config.ClusterID = newClusterID
+	config.Logger.Info("generated new cluster ID", "cluster_id", newClusterID, "file", persistenceFile)
+	return nil
+}
+
+func loadClusterID(persistenceFile string, logger *slog.Logger) (string, error) {
+	data, err := os.ReadFile(persistenceFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", fmt.Errorf("failed to read cluster persistence file: %w", err)
+	}
+
+	var persistence ClusterPersistence
+	if err := json.Unmarshal(data, &persistence); err != nil {
+		logger.Warn("failed to parse cluster persistence file, will regenerate", "error", err)
+		return "", err
+	}
+
+	return persistence.ClusterID, nil
+}
+
+func saveClusterID(persistenceFile, clusterID, nodeID string, logger *slog.Logger) error {
+	if err := os.MkdirAll(filepath.Dir(persistenceFile), 0755); err != nil {
+		return fmt.Errorf("failed to create persistence directory: %w", err)
+	}
+
+	persistence := ClusterPersistence{
+		ClusterID: clusterID,
+		CreatedAt: time.Now().Format(time.RFC3339),
+		NodeID:    nodeID,
+	}
+
+	data, err := json.MarshalIndent(persistence, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal cluster persistence: %w", err)
+	}
+
+	if err := os.WriteFile(persistenceFile, data, 0644); err != nil {
+		return fmt.Errorf("failed to write cluster persistence file: %w", err)
+	}
+
+	return nil
 }

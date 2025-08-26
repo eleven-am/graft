@@ -25,6 +25,7 @@ type Config struct {
 	ClusterID          string
 	BindAddr           string
 	DataDir            string
+	ClusterPolicy      domain.ClusterPolicy
 	SnapshotInterval   time.Duration
 	SnapshotThreshold  uint64
 	MaxSnapshots       int
@@ -38,12 +39,13 @@ type Config struct {
 	LeaderLeaseTimeout time.Duration
 }
 
-func DefaultRaftConfig(nodeID, clusterID, bindAddr, dataDir string) *Config {
+func DefaultRaftConfig(nodeID, clusterID, bindAddr, dataDir string, clusterPolicy domain.ClusterPolicy) *Config {
 	return &Config{
 		NodeID:             nodeID,
 		ClusterID:          clusterID,
 		BindAddr:           bindAddr,
 		DataDir:            dataDir,
+		ClusterPolicy:      clusterPolicy,
 		SnapshotInterval:   120 * time.Second,
 		SnapshotThreshold:  1024,
 		MaxSnapshots:       5,
@@ -76,7 +78,7 @@ func NewNode(config *Config, storage *Storage, logger *slog.Logger) (*Node, erro
 	}
 
 	logger = logger.With("component", "raft", "node_id", config.NodeID)
-	fsm := NewFSM(storage.StateDB(), config.NodeID, config.ClusterID, logger)
+	fsm := NewFSM(storage.StateDB(), config.NodeID, config.ClusterID, config.ClusterPolicy, logger)
 
 	return &Node{
 		config:  config,

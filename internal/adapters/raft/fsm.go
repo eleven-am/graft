@@ -22,19 +22,21 @@ type FSM struct {
 	logger           *slog.Logger
 	clusterID        string
 	clusterValidated bool
+	clusterPolicy    domain.ClusterPolicy
 }
 
-func NewFSM(db *badger.DB, nodeID, clusterID string, logger *slog.Logger) *FSM {
+func NewFSM(db *badger.DB, nodeID, clusterID string, clusterPolicy domain.ClusterPolicy, logger *slog.Logger) *FSM {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	fsm := &FSM{
-		db:        db,
-		versions:  make(map[string]int64),
-		nodeID:    nodeID,
-		logger:    logger.With("component", "raft-fsm", "node_id", nodeID),
-		clusterID: clusterID,
+		db:            db,
+		versions:      make(map[string]int64),
+		nodeID:        nodeID,
+		logger:        logger.With("component", "raft-fsm", "node_id", nodeID),
+		clusterID:     clusterID,
+		clusterPolicy: clusterPolicy,
 	}
 
 	if err := fsm.validateCluster(); err != nil {
@@ -632,10 +634,82 @@ func (f *FSM) validateCluster() error {
 			return err
 		}
 
-		if string(storedClusterID) != f.clusterID {
-			return fmt.Errorf("cluster ID mismatch: expected %s, got %s", f.clusterID, string(storedClusterID))
+		storedID := string(storedClusterID)
+		if storedID == f.clusterID {
+			f.logger.Debug("cluster ID validation passed", "cluster_id", f.clusterID)
+			return nil
 		}
 
+		return f.handleClusterMismatch(storedID)
+	})
+}
+
+func (f *FSM) handleClusterMismatch(storedClusterID string) error {
+	f.logger.Warn("cluster ID mismatch detected",
+		"stored_cluster_id", storedClusterID,
+		"expected_cluster_id", f.clusterID,
+		"policy", f.clusterPolicy)
+
+	switch f.clusterPolicy {
+	case domain.ClusterPolicyStrict:
+		return fmt.Errorf("cluster ID mismatch: expected %s, got %s (strict policy)", f.clusterID, storedClusterID)
+
+	case domain.ClusterPolicyAdopt:
+		f.logger.Info("adopting existing cluster ID", "cluster_id", storedClusterID)
+		f.clusterID = storedClusterID
+		return nil
+
+	case domain.ClusterPolicyReset:
+		f.logger.Warn("resetting cluster with new ID", "old_cluster_id", storedClusterID, "new_cluster_id", f.clusterID)
+		return f.resetClusterData()
+
+	case domain.ClusterPolicyRecover:
+		f.logger.Info("attempting cluster recovery", "stored_id", storedClusterID, "expected_id", f.clusterID)
+		return f.attemptClusterRecovery(storedClusterID)
+
+	default:
+		return fmt.Errorf("unknown cluster policy: %v", f.clusterPolicy)
+	}
+}
+
+func (f *FSM) resetClusterData() error {
+	f.logger.Warn("clearing cluster data for reset")
+	return f.db.Update(func(txn *badger.Txn) error {
+		opts := badger.DefaultIteratorOptions
+		opts.PrefetchValues = false
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		keysToDelete := [][]byte{}
+		for it.Rewind(); it.Valid(); it.Next() {
+			key := it.Item().KeyCopy(nil)
+			keyStr := string(key)
+
+			if keyStr != "cluster_id" {
+				keysToDelete = append(keysToDelete, key)
+			}
+		}
+
+		for _, key := range keysToDelete {
+			if err := txn.Delete(key); err != nil {
+				return fmt.Errorf("failed to delete key %s: %w", string(key), err)
+			}
+		}
+
+		if err := txn.Set([]byte("cluster_id"), []byte(f.clusterID)); err != nil {
+			return fmt.Errorf("failed to set new cluster ID: %w", err)
+		}
+
+		f.logger.Info("cluster data reset completed", "new_cluster_id", f.clusterID)
 		return nil
 	})
+}
+
+func (f *FSM) attemptClusterRecovery(storedClusterID string) error {
+	f.logger.Info("recovering by adopting stored cluster ID",
+		"stored_cluster_id", storedClusterID,
+		"attempted_cluster_id", f.clusterID)
+
+	f.clusterID = storedClusterID
+	return nil
 }

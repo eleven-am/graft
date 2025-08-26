@@ -77,7 +77,7 @@ func NewWithConfig(config *domain.Config) *Manager {
 	logger := config.Logger.With("component", "graft", "node_id", config.NodeID)
 	discoveryManager := createDiscoveryManager(config, logger)
 
-	raftConfig := raft.DefaultRaftConfig(config.NodeID, config.ClusterID, config.BindAddr, config.DataDir)
+	raftConfig := raft.DefaultRaftConfig(config.NodeID, config.ClusterID, config.BindAddr, config.DataDir, config.Cluster.Policy)
 
 	raftStorage, err := raft.NewStorage(config.DataDir, logger)
 	if err != nil {

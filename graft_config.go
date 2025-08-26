@@ -163,6 +163,17 @@ const (
 	NetworkingNodePort = domain.NetworkingNodePort
 )
 
+type ClusterPolicy = domain.ClusterPolicy
+
+const (
+	ClusterPolicyStrict  ClusterPolicy = domain.ClusterPolicyStrict
+	ClusterPolicyAdopt   ClusterPolicy = domain.ClusterPolicyAdopt
+	ClusterPolicyReset   ClusterPolicy = domain.ClusterPolicyReset
+	ClusterPolicyRecover ClusterPolicy = domain.ClusterPolicyRecover
+)
+
+type ClusterConfig = domain.ClusterConfig
+
 // DefaultConfig returns a Config with sensible defaults for most use cases.
 // This includes basic settings for local development and testing.
 func DefaultConfig() *Config {
@@ -314,6 +325,26 @@ func (cb *ConfigBuilder) WithResourceLimits(maxTotal, defaultPerType int, perTyp
 // These settings control the engine's execution behavior and fault tolerance.
 func (cb *ConfigBuilder) WithEngineSettings(maxWorkflows int, nodeTimeout time.Duration, retryAttempts int) *ConfigBuilder {
 	cb.config.WithEngineSettings(maxWorkflows, nodeTimeout, retryAttempts)
+	return cb
+}
+
+func (cb *ConfigBuilder) WithClusterID(clusterID string) *ConfigBuilder {
+	cb.config.WithClusterID(clusterID)
+	return cb
+}
+
+func (cb *ConfigBuilder) WithClusterPolicy(policy ClusterPolicy) *ConfigBuilder {
+	cb.config.WithClusterPolicy(policy)
+	return cb
+}
+
+func (cb *ConfigBuilder) WithClusterRecovery(enabled bool) *ConfigBuilder {
+	cb.config.WithClusterRecovery(enabled)
+	return cb
+}
+
+func (cb *ConfigBuilder) WithClusterPersistence(persistenceFile string) *ConfigBuilder {
+	cb.config.WithClusterPersistence(persistenceFile)
 	return cb
 }
 

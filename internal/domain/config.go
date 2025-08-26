@@ -18,6 +18,7 @@ type Config struct {
 	Resources    ResourceConfig     `json:"resources" yaml:"resources"`
 	Engine       EngineConfig       `json:"engine" yaml:"engine"`
 	Orchestrator OrchestratorConfig `json:"orchestrator" yaml:"orchestrator"`
+	Cluster      ClusterConfig      `json:"cluster" yaml:"cluster"`
 }
 
 type DiscoveryType string
@@ -165,7 +166,7 @@ type RaftConfig struct {
 	ShutdownOnRemove   bool          `json:"shutdown_on_remove" yaml:"shutdown_on_remove"`
 	TrailingLogs       uint64        `json:"trailing_logs" yaml:"trailing_logs"`
 	LeaderLeaseTimeout time.Duration `json:"leader_lease_timeout" yaml:"leader_lease_timeout"`
-	
+
 	DiscoveryTimeout  time.Duration `json:"discovery_timeout" yaml:"discovery_timeout"`
 	BootstrapExpected int           `json:"bootstrap_expected" yaml:"bootstrap_expected"`
 	ForceBootstrap    bool          `json:"force_bootstrap" yaml:"force_bootstrap"`
@@ -201,4 +202,20 @@ type OrchestratorConfig struct {
 	ShutdownTimeout time.Duration `json:"shutdown_timeout" yaml:"shutdown_timeout"`
 	StartupTimeout  time.Duration `json:"startup_timeout" yaml:"startup_timeout"`
 	GracePeriod     time.Duration `json:"grace_period" yaml:"grace_period"`
+}
+
+type ClusterPolicy int
+
+const (
+	ClusterPolicyStrict ClusterPolicy = iota
+	ClusterPolicyAdopt
+	ClusterPolicyReset
+	ClusterPolicyRecover
+)
+
+type ClusterConfig struct {
+	ID              string        `json:"id,omitempty" yaml:"id,omitempty"`
+	Policy          ClusterPolicy `json:"policy" yaml:"policy"`
+	PersistenceFile string        `json:"persistence_file,omitempty" yaml:"persistence_file,omitempty"`
+	AllowRecovery   bool          `json:"allow_recovery" yaml:"allow_recovery"`
 }
