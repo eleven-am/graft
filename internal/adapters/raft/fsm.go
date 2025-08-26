@@ -28,7 +28,7 @@ func NewFSM(db *badger.DB, nodeID, clusterID string, logger *slog.Logger) *FSM {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	
+
 	fsm := &FSM{
 		db:        db,
 		versions:  make(map[string]int64),
@@ -36,13 +36,13 @@ func NewFSM(db *badger.DB, nodeID, clusterID string, logger *slog.Logger) *FSM {
 		logger:    logger.With("component", "raft-fsm", "node_id", nodeID),
 		clusterID: clusterID,
 	}
-	
+
 	if err := fsm.validateCluster(); err != nil {
 		fsm.logger.Error("cluster validation failed during FSM creation", "error", err)
 	} else {
 		fsm.clusterValidated = true
 	}
-	
+
 	return fsm
 }
 
@@ -76,6 +76,8 @@ func (f *FSM) Apply(log *raft.Log) interface{} {
 		return f.applyCAS(cmd)
 	case domain.CommandBatch:
 		return f.applyBatch(cmd)
+	case domain.CommandTypeAtomicIncrement:
+		return f.applyAtomicIncrement(cmd)
 	default:
 		f.logger.Error("unknown command type", "command_type", cmd.Type)
 		return &domain.CommandResult{
@@ -92,12 +94,12 @@ func (f *FSM) applyPut(cmd domain.Command) *domain.CommandResult {
 			Error:   "key cannot be empty",
 		}
 	}
-	
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
 	currentVersion := f.versions[cmd.Key]
-	
+
 	if cmd.Version > 0 && cmd.Version != currentVersion+1 {
 		return &domain.CommandResult{
 			Success:     false,
@@ -107,11 +109,11 @@ func (f *FSM) applyPut(cmd domain.Command) *domain.CommandResult {
 	}
 
 	newVersion := currentVersion + 1
-	
+
 	err := f.db.Update(func(txn *badger.Txn) error {
 		versionKey := fmt.Sprintf("v:%s", cmd.Key)
 		versionBytes, _ := json.Marshal(newVersion)
-		
+
 		if err := txn.Set([]byte(cmd.Key), cmd.Value); err != nil {
 			return err
 		}
@@ -194,7 +196,7 @@ func (f *FSM) applyCAS(cmd domain.Command) *domain.CommandResult {
 			}
 			return err
 		}
-		
+
 		currentValue, err = item.ValueCopy(nil)
 		if err != nil {
 			return err
@@ -218,7 +220,7 @@ func (f *FSM) applyCAS(cmd domain.Command) *domain.CommandResult {
 
 	if cmd.Version > 0 {
 		if currentVersion != cmd.Version {
-			f.logger.Info("CAS version mismatch", 
+			f.logger.Info("CAS version mismatch",
 				"key", cmd.Key,
 				"expected_version", cmd.Version,
 				"current_version", currentVersion)
@@ -238,11 +240,11 @@ func (f *FSM) applyCAS(cmd domain.Command) *domain.CommandResult {
 	}
 
 	newVersion := currentVersion + 1
-	
+
 	err = f.db.Update(func(txn *badger.Txn) error {
 		versionKey := fmt.Sprintf("v:%s", cmd.Key)
 		versionBytes, _ := json.Marshal(newVersion)
-		
+
 		if err := txn.Set([]byte(cmd.Key), cmd.Value); err != nil {
 			return err
 		}
@@ -275,6 +277,110 @@ func (f *FSM) applyCAS(cmd domain.Command) *domain.CommandResult {
 	}
 }
 
+func (f *FSM) applyAtomicIncrement(cmd domain.Command) *domain.CommandResult {
+	if cmd.Key == "" {
+		return &domain.CommandResult{
+			Success: false,
+			Error:   "key cannot be empty",
+		}
+	}
+
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	var currentValue int64 = 0
+	var currentVersion int64 = 0
+
+	err := f.db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(cmd.Key))
+		if err != nil {
+			if err == badger.ErrKeyNotFound {
+				return nil
+			}
+			return err
+		}
+
+		valueBytes, err := item.ValueCopy(nil)
+		if err != nil {
+			return err
+		}
+
+		if err := json.Unmarshal(valueBytes, &currentValue); err != nil {
+			return fmt.Errorf("failed to unmarshal current value as int64: %v", err)
+		}
+
+		versionKey := fmt.Sprintf("v:%s", cmd.Key)
+		vItem, err := txn.Get([]byte(versionKey))
+		if err == nil {
+			versionBytes, _ := vItem.ValueCopy(nil)
+			json.Unmarshal(versionBytes, &currentVersion)
+		}
+		return nil
+	})
+
+	if err != nil {
+		return &domain.CommandResult{
+			Success: false,
+			Error:   err.Error(),
+		}
+	}
+
+	var incrementBy int64 = 1
+	if len(cmd.Value) > 0 {
+		if err := json.Unmarshal(cmd.Value, &incrementBy); err != nil {
+			return &domain.CommandResult{
+				Success: false,
+				Error:   fmt.Sprintf("failed to parse increment value: %v", err),
+			}
+		}
+	}
+
+	newValue := currentValue + incrementBy
+	newVersion := currentVersion + 1
+
+	newValueBytes, err := json.Marshal(newValue)
+	if err != nil {
+		return &domain.CommandResult{
+			Success: false,
+			Error:   fmt.Sprintf("failed to marshal new value: %v", err),
+		}
+	}
+
+	err = f.db.Update(func(txn *badger.Txn) error {
+		versionKey := fmt.Sprintf("v:%s", cmd.Key)
+		versionBytes, _ := json.Marshal(newVersion)
+
+		if err := txn.Set([]byte(cmd.Key), newValueBytes); err != nil {
+			return err
+		}
+		return txn.Set([]byte(versionKey), versionBytes)
+	})
+
+	if err != nil {
+		return &domain.CommandResult{
+			Success: false,
+			Error:   err.Error(),
+		}
+	}
+
+	f.versions[cmd.Key] = newVersion
+
+	return &domain.CommandResult{
+		Success: true,
+		Version: newVersion,
+		Events: []domain.Event{
+			{
+				Type:      domain.EventPut,
+				Key:       cmd.Key,
+				Version:   newVersion,
+				NodeID:    f.nodeID,
+				Timestamp: time.Now(),
+				RequestID: cmd.RequestID,
+			},
+		},
+	}
+}
+
 func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -289,14 +395,14 @@ func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 				newVersion := f.versions[op.Key] + 1
 				versionKey := fmt.Sprintf("v:%s", op.Key)
 				versionBytes, _ := json.Marshal(newVersion)
-				
+
 				if err := txn.Set([]byte(op.Key), op.Value); err != nil {
 					return err
 				}
 				if err := txn.Set([]byte(versionKey), versionBytes); err != nil {
 					return err
 				}
-				
+
 				f.versions[op.Key] = newVersion
 				results = append(results, domain.Result{
 					Key:     op.Key,
@@ -320,7 +426,7 @@ func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 				if err := txn.Delete([]byte(versionKey)); err != nil {
 					return err
 				}
-				
+
 				delete(f.versions, op.Key)
 				results = append(results, domain.Result{
 					Key:     op.Key,
@@ -340,7 +446,7 @@ func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 				if err == nil {
 					currentValue, _ = item.ValueCopy(nil)
 				}
-				
+
 				if op.Expected != nil && !bytes.Equal(currentValue, op.Expected) {
 					results = append(results, domain.Result{
 						Key:     op.Key,
@@ -349,18 +455,18 @@ func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 					})
 					continue
 				}
-				
+
 				newVersion := f.versions[op.Key] + 1
 				versionKey := fmt.Sprintf("v:%s", op.Key)
 				versionBytes, _ := json.Marshal(newVersion)
-				
+
 				if err := txn.Set([]byte(op.Key), op.Value); err != nil {
 					return err
 				}
 				if err := txn.Set([]byte(versionKey), versionBytes); err != nil {
 					return err
 				}
-				
+
 				f.versions[op.Key] = newVersion
 				results = append(results, domain.Result{
 					Key:     op.Key,
@@ -508,7 +614,7 @@ func (s *fsmSnapshot) Release() {}
 
 func (f *FSM) validateCluster() error {
 	const clusterKey = "cluster_id"
-	
+
 	return f.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(clusterKey))
 		if err != nil {
@@ -520,16 +626,16 @@ func (f *FSM) validateCluster() error {
 			}
 			return err
 		}
-		
+
 		storedClusterID, err := item.ValueCopy(nil)
 		if err != nil {
 			return err
 		}
-		
+
 		if string(storedClusterID) != f.clusterID {
 			return fmt.Errorf("cluster ID mismatch: expected %s, got %s", f.clusterID, string(storedClusterID))
 		}
-		
+
 		return nil
 	})
 }

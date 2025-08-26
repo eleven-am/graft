@@ -21,7 +21,7 @@ func main() {
 	fmt.Println(strings.Repeat("=", 60))
 
 	nodeID := "doc-processor-1"
-	raftAddr := "0.0.0.0:7002"
+	raftAddr := "127.0.0.1:7002"
 	dataDir := "./data"
 	grpcPort := 8002
 
