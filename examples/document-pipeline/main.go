@@ -232,7 +232,7 @@ type WorkflowResult struct {
 }
 
 func registerWorkflowNodes(manager *graft.Manager) error {
-	nodes := []interface{}{
+	nodes := []graft.Node{
 		&DocumentIngestNode{},
 		&DocumentValidatorNode{},
 		&ContentAnalyzerNode{},

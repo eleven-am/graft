@@ -206,14 +206,14 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	if len(existingPeers) == 0 && !m.shouldBootstrap(existingPeers, &m.config.Raft) {
 		// We should NOT bootstrap but have no peers - keep waiting and retry discovery
 		m.logger.Info("deferring bootstrap decision, will wait for other nodes")
-		
+
 		// Continue with longer wait for other nodes to appear or bootstrap
-		extendedTimeout := m.config.Raft.DiscoveryTimeout * 3 // Wait 3x longer 
+		extendedTimeout := m.config.Raft.DiscoveryTimeout * 3 // Wait 3x longer
 		existingPeers, err = m.waitForDiscovery(ctx, extendedTimeout)
 		if err != nil {
 			return fmt.Errorf("extended discovery wait failed: %w", err)
 		}
-		
+
 		// Final check - if still no peers after extended wait, force bootstrap
 		if len(existingPeers) == 0 {
 			m.logger.Warn("no peers found after extended wait, proceeding with bootstrap")
@@ -268,26 +268,41 @@ func (m *Manager) Stop() error {
 	return nil
 }
 
-func (m *Manager) RegisterNode(node interface{}) error {
-	return m.nodeRegistry.RegisterNode(node)
+func (m *Manager) RegisterNode(node Node) error {
+	internalNode := adaptNode(node)
+	return m.nodeRegistry.RegisterNode(internalNode)
 }
 
 func (m *Manager) UnregisterNode(nodeName string) error {
 	return m.nodeRegistry.UnregisterNode(nodeName)
 }
 
-func (m *Manager) StartWorkflow(trigger domain.WorkflowTrigger) error {
+func (m *Manager) StartWorkflow(trigger WorkflowTrigger) error {
 	if m.engine == nil {
 		return fmt.Errorf("engine not started")
 	}
-	return m.engine.ProcessTrigger(trigger)
+	internalTrigger, err := trigger.toInternal()
+	if err != nil {
+		return err
+	}
+	return m.engine.ProcessTrigger(internalTrigger)
 }
 
-func (m *Manager) GetWorkflowStatus(workflowID string) (*domain.WorkflowStatus, error) {
+func (m *Manager) GetWorkflowStatus(workflowID string) (*WorkflowStatus, error) {
 	if m.engine == nil {
 		return nil, fmt.Errorf("engine not started")
 	}
-	return m.engine.GetWorkflowStatus(workflowID)
+	internalStatus, err := m.engine.GetWorkflowStatus(workflowID)
+	if err != nil {
+		return nil, err
+	}
+
+	publicStatus, err := workflowStatusFromInternal(*internalStatus)
+	if err != nil {
+		return nil, err
+	}
+
+	return &publicStatus, nil
 }
 
 func (m *Manager) PauseWorkflow(ctx context.Context, workflowID string) error {
@@ -378,41 +393,49 @@ func (m *Manager) Unsubscribe(pattern string) error {
 	return m.eventManager.Unsubscribe(pattern)
 }
 
-func (m *Manager) SubscribeToWorkflowState(workflowID string) (<-chan *domain.WorkflowStatus, func(), error) {
+func (m *Manager) SubscribeToWorkflowState(workflowID string) (<-chan *WorkflowStatus, func(), error) {
 	if m.engine == nil {
 		return nil, nil, fmt.Errorf("engine not started")
 	}
 
-	statusChan := make(chan *domain.WorkflowStatus, 10)
+	statusChan := make(chan *WorkflowStatus, 10)
 	pattern := fmt.Sprintf("workflow:state:%s", workflowID)
-	
+
 	err := m.eventManager.Subscribe(pattern, func(key string, data interface{}) {
-		status, err := m.engine.GetWorkflowStatus(workflowID)
+		internalStatus, err := m.engine.GetWorkflowStatus(workflowID)
 		if err != nil {
-			m.logger.Error("failed to get workflow status for subscription", 
-				"workflow_id", workflowID, 
+			m.logger.Error("failed to get workflow status for subscription",
+				"workflow_id", workflowID,
 				"error", err)
 			return
 		}
-		
+
+		publicStatus, err := workflowStatusFromInternal(*internalStatus)
+		if err != nil {
+			m.logger.Error("failed to convert workflow status for subscription",
+				"workflow_id", workflowID,
+				"error", err)
+			return
+		}
+
 		select {
-		case statusChan <- status:
+		case statusChan <- &publicStatus:
 		default:
-			m.logger.Warn("workflow status channel full, dropping update", 
+			m.logger.Warn("workflow status channel full, dropping update",
 				"workflow_id", workflowID)
 		}
 	})
-	
+
 	if err != nil {
 		close(statusChan)
 		return nil, nil, err
 	}
-	
+
 	unsubscribe := func() {
 		m.eventManager.Unsubscribe(pattern)
 		close(statusChan)
 	}
-	
+
 	return statusChan, unsubscribe, nil
 }
 
@@ -487,10 +510,10 @@ func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) (
 	}
 
 	m.logger.Info("waiting for discovery to find peers", "timeout", timeout)
-	
+
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
-	
+
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
@@ -550,13 +573,297 @@ func (m *Manager) shouldBootstrap(peers []ports.Peer, raftConfig *domain.RaftCon
 	// Among expected nodes, use lexicographic sorting - lowest ID bootstraps
 	sort.Strings(expectedNodes)
 	shouldBootstrap := expectedNodes[0] == m.nodeID
-	
+
 	if shouldBootstrap {
 		m.logger.Info("lexicographic decision: will bootstrap as leader", "node_id", m.nodeID, "expected_nodes", expectedNodes)
 	} else {
 		m.logger.Info("lexicographic decision: will wait for other node to bootstrap", "node_id", m.nodeID, "lowest_expected", expectedNodes[0])
 	}
-	
+
 	return shouldBootstrap
 }
 
+// Public API types for user convenience (accept interface{} instead of json.RawMessage)
+
+type WorkflowTrigger struct {
+	WorkflowID   string            `json:"workflow_id"`
+	InitialNodes []NodeConfig      `json:"initial_nodes"`
+	InitialState interface{}       `json:"initial_state"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+}
+
+type NodeConfig struct {
+	Name   string      `json:"name"`
+	Config interface{} `json:"config"`
+}
+
+type NextNode struct {
+	NodeName       string         `json:"node_name"`
+	Config         interface{}    `json:"config"`
+	Priority       int            `json:"priority,omitempty"`
+	Delay          *time.Duration `json:"delay,omitempty"`
+	IdempotencyKey *string        `json:"idempotency_key,omitempty"`
+}
+
+type NodeResult struct {
+	GlobalState interface{} `json:"global_state"`
+	NextNodes   []NextNode  `json:"next_nodes"`
+}
+
+type WorkflowStatus struct {
+	WorkflowID    string             `json:"workflow_id"`
+	Status        WorkflowState      `json:"status"`
+	CurrentState  interface{}        `json:"current_state"`
+	StartedAt     time.Time          `json:"started_at"`
+	CompletedAt   *time.Time         `json:"completed_at,omitempty"`
+	ExecutedNodes []ExecutedNodeData `json:"executed_nodes"`
+	PendingNodes  []NodeConfig       `json:"pending_nodes"`
+	LastError     *string            `json:"last_error,omitempty"`
+}
+
+type ExecutedNodeData struct {
+	NodeName   string        `json:"node_name"`
+	ExecutedAt time.Time     `json:"executed_at"`
+	Duration   time.Duration `json:"duration"`
+	Status     string        `json:"status"`
+	Config     interface{}   `json:"config"`
+	Results    interface{}   `json:"results"`
+	Error      *string       `json:"error,omitempty"`
+}
+
+type WorkflowState string
+
+const (
+	WorkflowStateRunning   WorkflowState = "running"
+	WorkflowStateCompleted WorkflowState = "completed"
+	WorkflowStateFailed    WorkflowState = "failed"
+	WorkflowStatePaused    WorkflowState = "paused"
+)
+
+// Node interface for users to implement
+type Node interface {
+	GetName() string
+	CanStart(ctx context.Context, state interface{}, config interface{}) bool
+	Execute(ctx context.Context, state interface{}, config interface{}) (*NodeResult, error)
+}
+
+// Conversion functions between public and internal types
+
+func (w WorkflowTrigger) toInternal() (domain.WorkflowTrigger, error) {
+	initialState, err := marshalToRawMessage(w.InitialState)
+	if err != nil {
+		return domain.WorkflowTrigger{}, fmt.Errorf("failed to marshal initial state: %w", err)
+	}
+
+	nodes := make([]domain.NodeConfig, len(w.InitialNodes))
+	for i, node := range w.InitialNodes {
+		internalNode, err := node.toInternal()
+		if err != nil {
+			return domain.WorkflowTrigger{}, fmt.Errorf("failed to convert node %s: %w", node.Name, err)
+		}
+		nodes[i] = internalNode
+	}
+
+	return domain.WorkflowTrigger{
+		WorkflowID:   w.WorkflowID,
+		InitialNodes: nodes,
+		InitialState: initialState,
+		Metadata:     w.Metadata,
+	}, nil
+}
+
+func (n NodeConfig) toInternal() (domain.NodeConfig, error) {
+	config, err := marshalToRawMessage(n.Config)
+	if err != nil {
+		return domain.NodeConfig{}, fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	return domain.NodeConfig{
+		Name:   n.Name,
+		Config: config,
+	}, nil
+}
+
+func (r *NodeResult) toInternal() (domain.NodeResult, error) {
+	nextNodes := make([]domain.NextNode, len(r.NextNodes))
+	for i, node := range r.NextNodes {
+		internalNode, err := node.toInternal()
+		if err != nil {
+			return domain.NodeResult{}, fmt.Errorf("failed to convert next node: %w", err)
+		}
+		nextNodes[i] = internalNode
+	}
+
+	return domain.NodeResult{
+		GlobalState: r.GlobalState,
+		NextNodes:   nextNodes,
+	}, nil
+}
+
+func (n NextNode) toInternal() (domain.NextNode, error) {
+	config, err := marshalToRawMessage(n.Config)
+	if err != nil {
+		return domain.NextNode{}, fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	return domain.NextNode{
+		NodeName:       n.NodeName,
+		Config:         config,
+		Priority:       n.Priority,
+		Delay:          n.Delay,
+		IdempotencyKey: n.IdempotencyKey,
+	}, nil
+}
+
+func workflowStatusFromInternal(w domain.WorkflowStatus) (WorkflowStatus, error) {
+	var currentState interface{}
+	if len(w.CurrentState) > 0 {
+		if err := json.Unmarshal(w.CurrentState, &currentState); err != nil {
+			return WorkflowStatus{}, fmt.Errorf("failed to unmarshal current state: %w", err)
+		}
+	}
+
+	executedNodes := make([]ExecutedNodeData, len(w.ExecutedNodes))
+	for i, node := range w.ExecutedNodes {
+		publicNode, err := executedNodeDataFromInternal(node)
+		if err != nil {
+			return WorkflowStatus{}, fmt.Errorf("failed to convert executed node: %w", err)
+		}
+		executedNodes[i] = publicNode
+	}
+
+	pendingNodes := make([]NodeConfig, len(w.PendingNodes))
+	for i, node := range w.PendingNodes {
+		publicNode, err := nodeConfigFromInternal(node)
+		if err != nil {
+			return WorkflowStatus{}, fmt.Errorf("failed to convert pending node: %w", err)
+		}
+		pendingNodes[i] = publicNode
+	}
+
+	return WorkflowStatus{
+		WorkflowID:    w.WorkflowID,
+		Status:        WorkflowState(w.Status),
+		CurrentState:  currentState,
+		StartedAt:     w.StartedAt,
+		CompletedAt:   w.CompletedAt,
+		ExecutedNodes: executedNodes,
+		PendingNodes:  pendingNodes,
+		LastError:     w.LastError,
+	}, nil
+}
+
+func executedNodeDataFromInternal(e domain.ExecutedNodeData) (ExecutedNodeData, error) {
+	var config interface{}
+	if len(e.Config) > 0 {
+		if err := json.Unmarshal(e.Config, &config); err != nil {
+			return ExecutedNodeData{}, fmt.Errorf("failed to unmarshal config: %w", err)
+		}
+	}
+
+	var results interface{}
+	if len(e.Results) > 0 {
+		if err := json.Unmarshal(e.Results, &results); err != nil {
+			return ExecutedNodeData{}, fmt.Errorf("failed to unmarshal results: %w", err)
+		}
+	}
+
+	return ExecutedNodeData{
+		NodeName:   e.NodeName,
+		ExecutedAt: e.ExecutedAt,
+		Duration:   e.Duration,
+		Status:     e.Status,
+		Config:     config,
+		Results:    results,
+		Error:      e.Error,
+	}, nil
+}
+
+func nodeConfigFromInternal(n domain.NodeConfig) (NodeConfig, error) {
+	var config interface{}
+	if len(n.Config) > 0 {
+		if err := json.Unmarshal(n.Config, &config); err != nil {
+			return NodeConfig{}, fmt.Errorf("failed to unmarshal config: %w", err)
+		}
+	}
+
+	return NodeConfig{
+		Name:   n.Name,
+		Config: config,
+	}, nil
+}
+
+func marshalToRawMessage(v interface{}) (json.RawMessage, error) {
+	if v == nil {
+		return json.RawMessage("null"), nil
+	}
+
+	if raw, ok := v.(json.RawMessage); ok {
+		return raw, nil
+	}
+
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return json.RawMessage(data), nil
+}
+
+// Node adapter - converts between public Node interface and internal domain.NodePort
+type nodeAdapter struct {
+	publicNode Node
+}
+
+func adaptNode(node Node) domain.NodePort {
+	return &nodeAdapter{publicNode: node}
+}
+
+func (a *nodeAdapter) GetName() string {
+	return a.publicNode.GetName()
+}
+
+func (a *nodeAdapter) CanStart(ctx context.Context, state []byte, config []byte) bool {
+	var stateValue interface{}
+	if len(state) > 0 && string(state) != "null" {
+		if err := json.Unmarshal(state, &stateValue); err != nil {
+			stateValue = nil
+		}
+	}
+
+	var configValue interface{}
+	if len(config) > 0 && string(config) != "null" {
+		if err := json.Unmarshal(config, &configValue); err != nil {
+			configValue = nil
+		}
+	}
+
+	return a.publicNode.CanStart(ctx, stateValue, configValue)
+}
+
+func (a *nodeAdapter) Execute(ctx context.Context, state []byte, config []byte) (*domain.NodeResult, error) {
+	var stateValue interface{}
+	if len(state) > 0 && string(state) != "null" {
+		if err := json.Unmarshal(state, &stateValue); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal state for node %s: %w", a.publicNode.GetName(), err)
+		}
+	}
+
+	var configValue interface{}
+	if len(config) > 0 && string(config) != "null" {
+		if err := json.Unmarshal(config, &configValue); err != nil {
+			return nil, fmt.Errorf("failed to unmarshal config for node %s: %w", a.publicNode.GetName(), err)
+		}
+	}
+
+	result, err := a.publicNode.Execute(ctx, stateValue, configValue)
+	if err != nil {
+		return nil, err
+	}
+
+	internalResult, err := result.toInternal()
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert node result for node %s: %w", a.publicNode.GetName(), err)
+	}
+
+	return &internalResult, nil
+}
