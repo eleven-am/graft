@@ -75,7 +75,7 @@ func (n *ProcessDataNode) Execute(ctx context.Context, state *DataState, config 
         NextNodes: []graft.NextNode{
             {
                 NodeName: "ValidateData",
-                Config:   &DataConfig{Threshold: 0.8, Mode: "strict"},
+                Config:   &DataConfig{Threshold: 0.8, Mode: "strict"},  // Can use struct
             },
         },
     }, nil
