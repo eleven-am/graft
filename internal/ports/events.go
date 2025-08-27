@@ -24,6 +24,9 @@ type EventManager interface {
 
 	Subscribe(pattern string, handler func(key string, event interface{})) error
 	Unsubscribe(pattern string) error
+
+	BroadcastCommand(ctx context.Context, devCmd *domain.DevCommand) error
+	RegisterCommandHandler(cmdName string, handler domain.CommandHandler) error
 }
 
 type EventHandler func(interface{})

@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -14,6 +15,7 @@ const (
 	CommandCAS
 	CommandBatch
 	CommandTypeAtomicIncrement
+	CommandTypeDev
 )
 
 type Command struct {
@@ -152,8 +154,28 @@ func (c CommandType) String() string {
 		return "BATCH"
 	case CommandTypeAtomicIncrement:
 		return "ATOMIC_INCREMENT"
+	case CommandTypeDev:
+		return "DEV_COMMAND"
 	default:
 		return "UNKNOWN"
+	}
+}
+
+type DevCommand struct {
+	Command string      `json:"command"`
+	Params  interface{} `json:"params"`
+}
+
+type CommandHandler func(ctx context.Context, from string, params interface{}) error
+
+func (dc *DevCommand) ToInternalCommand() *Command {
+	payload, _ := json.Marshal(dc)
+	return &Command{
+		Type:      CommandTypeDev,
+		Key:       "dev-cmd:" + dc.Command,
+		Value:     payload,
+		RequestID: generateRequestID(),
+		Timestamp: time.Now(),
 	}
 }
 

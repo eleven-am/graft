@@ -34,6 +34,7 @@ type Manager struct {
 	nodeErrorHandlers         []func(*domain.NodeErrorEvent)
 	genericHandlers           []genericSubscription
 
+	commandHandlers      map[string]domain.CommandHandler
 	channelSubscriptions map[string][]chan ports.StorageEvent
 }
 
@@ -58,6 +59,7 @@ func NewManager(logger *slog.Logger) *Manager {
 	return &Manager{
 		logger:               logger.With("component", "event-manager"),
 		subscriptions:        make(map[string]*subscription),
+		commandHandlers:      make(map[string]domain.CommandHandler),
 		channelSubscriptions: make(map[string][]chan ports.StorageEvent),
 	}
 }
@@ -72,6 +74,7 @@ func NewManagerWithStorage(storage ports.StoragePort, nodeID string, logger *slo
 		nodeID:               nodeID,
 		logger:               logger.With("component", "event-manager"),
 		subscriptions:        make(map[string]*subscription),
+		commandHandlers:      make(map[string]domain.CommandHandler),
 		channelSubscriptions: make(map[string][]chan ports.StorageEvent),
 	}
 }
@@ -148,6 +151,8 @@ func (m *Manager) processStorageEvent(event *ports.StorageEvent) error {
 		return m.processWorkflowEvent(event, parts)
 	case "node":
 		return m.processNodeEvent(event, parts)
+	case "dev-cmd":
+		return m.processDevCommand(event, parts)
 	default:
 		return nil
 	}
@@ -495,6 +500,65 @@ func (m *Manager) patternMatches(pattern, key string) bool {
 		return strings.HasPrefix(key, prefix)
 	}
 	return pattern == key
+}
+
+func (m *Manager) BroadcastCommand(ctx context.Context, devCmd *domain.DevCommand) error {
+	internalCmd := devCmd.ToInternalCommand()
+	domainEvent := domain.Event{
+		Type:      domain.EventType(internalCmd.Type),
+		Key:       internalCmd.Key,
+		Version:   internalCmd.Version,
+		NodeID:    m.nodeID,
+		Timestamp: internalCmd.Timestamp,
+		RequestID: internalCmd.RequestID,
+	}
+	return m.Broadcast(domainEvent)
+}
+
+func (m *Manager) RegisterCommandHandler(cmdName string, handler domain.CommandHandler) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.commandHandlers[cmdName] = handler
+	return nil
+}
+
+func (m *Manager) processDevCommand(event *ports.StorageEvent, keyParts []string) error {
+	if len(keyParts) < 2 {
+		return nil
+	}
+
+	cmdName := keyParts[1]
+	
+	data, _, exists, err := m.storage.Get(event.Key)
+	if err != nil {
+		return domain.ErrInvalidInput
+	}
+	if !exists {
+		return nil
+	}
+
+	var devCmd domain.DevCommand
+	if err := json.Unmarshal(data, &devCmd); err != nil {
+		return domain.ErrInvalidInput
+	}
+
+	m.mu.RLock()
+	handler, exists := m.commandHandlers[cmdName]
+	m.mu.RUnlock()
+
+	if !exists {
+		m.logger.Warn("no handler registered for dev command", "command", cmdName)
+		return nil
+	}
+
+	ctx := context.Background()
+	go m.safeCall(func() {
+		if err := handler(ctx, event.NodeID, devCmd.Params); err != nil {
+			m.logger.Error("dev command handler failed", "command", cmdName, "error", err)
+		}
+	})
+
+	return nil
 }
 
 func (m *Manager) safeCall(fn func()) {

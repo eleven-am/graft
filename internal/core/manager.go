@@ -62,6 +62,8 @@ type WorkflowResumedEvent = domain.WorkflowResumedEvent
 type NodeStartedEvent = domain.NodeStartedEvent
 type NodeCompletedEvent = domain.NodeCompletedEvent
 type NodeErrorEvent = domain.NodeErrorEvent
+type CommandHandler = domain.CommandHandler
+type DevCommand = domain.DevCommand
 
 func New(nodeID, bindAddr, dataDir string, logger *slog.Logger) *Manager {
 	config := domain.NewConfigFromSimple(nodeID, bindAddr, dataDir, logger)
@@ -398,6 +400,14 @@ func (m *Manager) Unsubscribe(pattern string) error {
 	return m.eventManager.Unsubscribe(pattern)
 }
 
+func (m *Manager) BroadcastCommand(ctx context.Context, devCmd *DevCommand) error {
+	return m.eventManager.BroadcastCommand(ctx, devCmd)
+}
+
+func (m *Manager) RegisterCommandHandler(cmdName string, handler CommandHandler) error {
+	return m.eventManager.RegisterCommandHandler(cmdName, handler)
+}
+
 func (m *Manager) SubscribeToWorkflowState(workflowID string) (<-chan *WorkflowStatus, func(), error) {
 	if m.engine == nil {
 		return nil, nil, fmt.Errorf("engine not started")
@@ -587,8 +597,6 @@ func (m *Manager) shouldBootstrap(peers []ports.Peer, raftConfig *domain.RaftCon
 
 	return shouldBootstrap
 }
-
-// Public API types for user convenience (accept interface{} instead of json.RawMessage)
 
 type WorkflowTrigger struct {
 	WorkflowID   string            `json:"workflow_id"`

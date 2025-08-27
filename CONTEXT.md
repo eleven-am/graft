@@ -594,6 +594,154 @@ config := &domain.Config{
 - Rolling cluster updates supported
 - Backward compatibility within major versions
 
+## Cross-Node Developer Messaging
+
+Graft provides a built-in cluster command system that allows developers to send messages and commands across nodes in the cluster.
+
+### Quick Start
+
+#### 1. Register Command Handlers
+
+Use type-safe handlers for your commands:
+
+```go
+type DeployParams struct {
+    Service string `json:"service"`
+    Version string `json:"version"`
+    Replicas int   `json:"replicas"`
+}
+
+// Register a typed handler using the wrapper
+manager.RegisterCommandHandler("deploy", 
+    graft.WrapHandler(func(ctx context.Context, from string, params DeployParams) error {
+        log.Printf("Deploy command from %s: %+v", from, params)
+        return deployService(params.Service, params.Version, params.Replicas)
+    }),
+)
+
+// Or register a generic handler
+manager.RegisterCommandHandler("scale", 
+    func(ctx context.Context, from string, params interface{}) error {
+        log.Printf("Scale command from %s: %+v", from, params)
+        return scaleService(params)
+    },
+)
+```
+
+#### 2. Broadcast Commands
+
+Send commands to all nodes in the cluster:
+
+```go
+// Using typed parameters
+deployCmd := &graft.DevCommand{
+    Command: "deploy",
+    Params: DeployParams{
+        Service:  "api",
+        Version:  "1.2.3", 
+        Replicas: 3,
+    },
+}
+
+// Broadcast to all nodes
+if err := manager.BroadcastCommand(ctx, deployCmd); err != nil {
+    log.Printf("Failed to broadcast deploy command: %v", err)
+}
+
+// Using map parameters for flexibility
+scaleCmd := &graft.DevCommand{
+    Command: "scale",
+    Params: map[string]interface{}{
+        "service": "worker",
+        "count":   10,
+    },
+}
+
+if err := manager.BroadcastCommand(ctx, scaleCmd); err != nil {
+    log.Printf("Failed to broadcast scale command: %v", err)
+}
+```
+
+### How It Works
+
+1. **Commands are distributed via Raft**: All cluster commands go through the same consensus mechanism as workflows, ensuring ordering and consistency
+2. **Type-safe handlers**: Use `graft.WrapHandler[T]()` to wrap typed handlers that automatically convert `interface{}` parameters to your specific struct types
+3. **No storage overhead**: Unlike workflows, dev commands execute immediately without persisting to storage
+4. **Cross-node execution**: Commands execute on every node in the cluster simultaneously
+
+### Advanced Usage
+
+#### Custom Command Types
+
+Define your own command structures for type safety:
+
+```go
+type ConfigUpdateParams struct {
+    Key   string      `json:"key"`
+    Value interface{} `json:"value"`
+    Scope string      `json:"scope"` // "global", "local", etc.
+}
+
+type LogLevelParams struct {
+    Level  string `json:"level"`  // "debug", "info", "warn", "error"
+    Module string `json:"module"` // Optional module filter
+}
+
+// Register handlers
+manager.RegisterCommandHandler("config-update",
+    graft.WrapHandler(func(ctx context.Context, from string, params ConfigUpdateParams) error {
+        return updateConfig(params.Key, params.Value, params.Scope)
+    }),
+)
+
+manager.RegisterCommandHandler("set-log-level",
+    graft.WrapHandler(func(ctx context.Context, from string, params LogLevelParams) error {
+        return setLogLevel(params.Level, params.Module)
+    }),
+)
+```
+
+#### Error Handling
+
+Command handlers should return errors for failed operations:
+
+```go
+manager.RegisterCommandHandler("risky-operation",
+    graft.WrapHandler(func(ctx context.Context, from string, params RiskyParams) error {
+        if err := validateParams(params); err != nil {
+            return fmt.Errorf("invalid params: %w", err)
+        }
+        
+        if err := performOperation(params); err != nil {
+            return fmt.Errorf("operation failed: %w", err)
+        }
+        
+        log.Printf("Operation completed successfully from node %s", from)
+        return nil
+    }),
+)
+```
+
+### Use Cases
+
+- **Configuration updates**: Push config changes to all nodes
+- **Log level changes**: Adjust logging across the cluster
+- **Cache invalidation**: Clear caches on all nodes
+- **Feature flag updates**: Toggle features cluster-wide
+- **Health checks**: Trigger diagnostics across nodes
+- **Deployment coordination**: Coordinate rolling updates
+- **Maintenance tasks**: Run cleanup operations cluster-wide
+
+### Best Practices
+
+1. **Use type-safe handlers**: Prefer `graft.WrapHandler[T]()` for compile-time safety
+2. **Keep commands simple**: Commands should be lightweight operations
+3. **Handle errors gracefully**: Return descriptive errors from handlers
+4. **Use meaningful command names**: Use clear, descriptive names like "deploy", "scale", "update-config"
+5. **Validate parameters**: Always validate input parameters in handlers
+6. **Log command execution**: Log both successful and failed command executions
+7. **Don't block**: Keep command handlers fast and non-blocking
+
 ## Need Help?
 
 - Check examples in `/examples` directory
