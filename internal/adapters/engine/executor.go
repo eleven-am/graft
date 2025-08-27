@@ -14,21 +14,25 @@ import (
 
 type Executor struct {
 	config       domain.EngineConfig
+	nodeID       string
 	nodeRegistry ports.NodeRegistryPort
 	stateManager *StateManager
 	queue        ports.QueuePort
 	storage      ports.StoragePort
+	eventManager ports.EventManager
 	logger       *slog.Logger
 	metrics      *domain.ExecutionMetrics
 }
 
-func NewExecutor(config domain.EngineConfig, nodeRegistry ports.NodeRegistryPort, stateManager *StateManager, queue ports.QueuePort, storage ports.StoragePort, logger *slog.Logger, metrics *domain.ExecutionMetrics) *Executor {
+func NewExecutor(config domain.EngineConfig, nodeID string, nodeRegistry ports.NodeRegistryPort, stateManager *StateManager, queue ports.QueuePort, storage ports.StoragePort, eventManager ports.EventManager, logger *slog.Logger, metrics *domain.ExecutionMetrics) *Executor {
 	return &Executor{
 		config:       config,
+		nodeID:       nodeID,
 		nodeRegistry: nodeRegistry,
 		stateManager: stateManager,
 		queue:        queue,
 		storage:      storage,
+		eventManager: eventManager,
 		logger:       logger.With("component", "executor"),
 		metrics:      metrics,
 	}
@@ -63,9 +67,6 @@ func (e *Executor) ExecuteNodeWithRetry(ctx context.Context, workflowID, nodeNam
 	}
 
 	if workflow.Status == domain.WorkflowStatePaused {
-		e.logger.Debug("workflow is paused, skipping execution",
-			"workflow_id", workflowID,
-			"node_name", nodeName)
 		return nil
 	}
 
@@ -79,16 +80,8 @@ func (e *Executor) ExecuteNodeWithRetry(ctx context.Context, workflowID, nodeNam
 
 	enrichedCtx := domain.WithWorkflowContext(ctx, workflowCtx)
 
-	fmt.Printf("🚀🚀🚀 EXECUTOR: About to call CanStart for node %s\n", nodeName)
-	fmt.Printf("🚀 workflow.CurrentState type: %T\n", workflow.CurrentState)
-	fmt.Printf("🚀 config type: %T\n", config)
-
 	canStart := node.CanStart(enrichedCtx, workflow.CurrentState, config)
-	fmt.Printf("🚀 CanStart returned: %v\n", canStart)
 	if !canStart {
-		e.logger.Debug("node cannot start with current state",
-			"workflow_id", workflowID,
-			"node_name", nodeName)
 		return e.requeueNode(ctx, workflowID, nodeName, config)
 	}
 
@@ -98,6 +91,13 @@ func (e *Executor) ExecuteNodeWithRetry(ctx context.Context, workflowID, nodeNam
 	defer cancel()
 
 	e.metrics.IncrementNodesExecuted()
+
+	if err := e.emitNodeStartedEvent(workflowCtx, config); err != nil {
+		e.logger.Error("failed to emit node started event",
+			"workflow_id", workflowID,
+			"node_name", nodeName,
+			"error", err)
+	}
 
 	var portResult *ports.NodeResult
 	var err error
@@ -139,7 +139,7 @@ func (e *Executor) ExecuteNodeWithRetry(ctx context.Context, workflowID, nodeNam
 
 		e.metrics.IncrementNodesFailed()
 
-		if errors.Is(err, context.DeadlineExceeded) {
+		if errors.Is(err, context.DeadlineExceeded) || timeoutCtx.Err() == context.DeadlineExceeded {
 			e.metrics.IncrementNodesTimedOut()
 
 			e.logger.Warn("node execution timed out",
@@ -196,11 +196,12 @@ func (e *Executor) ExecuteNodeWithRetry(ctx context.Context, workflowID, nodeNam
 		return err
 	}
 
-	e.logger.Debug("node executed successfully",
-		"workflow_id", workflowID,
-		"node_name", nodeName,
-		"duration", duration,
-		"next_nodes_count", len(nodeResult.NextNodes))
+	if err := e.emitNodeCompletedEvent(workflowCtx, portResult, duration); err != nil {
+		e.logger.Error("failed to emit node completed event",
+			"workflow_id", workflowID,
+			"node_name", nodeName,
+			"error", err)
+	}
 
 	if len(nodeResult.NextNodes) == 0 {
 		return e.checkWorkflowCompletion(ctx, workflowID)
@@ -220,9 +221,6 @@ func (e *Executor) ExecuteNodeWithRetry(ctx context.Context, workflowID, nodeNam
 }
 
 func (e *Executor) enqueueNextNode(ctx context.Context, workflowID string, nextNode domain.NextNode) error {
-	e.logger.Debug("enqueuing next node",
-		"workflow_id", workflowID,
-		"node_name", nextNode.NodeName)
 
 	now := time.Now()
 	workItem := WorkItem{
@@ -244,17 +242,10 @@ func (e *Executor) enqueueNextNode(ctx context.Context, workflowID string, nextN
 
 	e.metrics.IncrementItemsEnqueued()
 
-	e.logger.Debug("next node enqueued successfully",
-		"workflow_id", workflowID,
-		"node_name", nextNode.NodeName)
-
 	return nil
 }
 
 func (e *Executor) requeueNode(ctx context.Context, workflowID, nodeName string, config json.RawMessage) error {
-	e.logger.Debug("requeuing node",
-		"workflow_id", workflowID,
-		"node_name", nodeName)
 
 	now := time.Now()
 	workItem := WorkItem{
@@ -283,6 +274,21 @@ func (e *Executor) handleExecutionFailure(ctx context.Context, workflow *domain.
 		"node_name", executedNode.NodeName,
 		"error", execErr)
 
+	workflowCtx := &domain.WorkflowContext{
+		WorkflowID:  workflow.ID,
+		NodeName:    executedNode.NodeName,
+		ExecutionID: fmt.Sprintf("%s-%s-%d", workflow.ID, executedNode.NodeName, time.Now().UnixNano()),
+		StartedAt:   workflow.StartedAt,
+		Metadata:    workflow.Metadata,
+	}
+
+	if err := e.emitNodeErrorEvent(workflowCtx, workflow.CurrentState, execErr, executedNode.Duration, executedNode.Config); err != nil {
+		e.logger.Error("failed to emit node error event",
+			"workflow_id", workflow.ID,
+			"node_name", executedNode.NodeName,
+			"error", err)
+	}
+
 	err := e.stateManager.UpdateWorkflowState(ctx, workflow.ID, func(wf *domain.WorkflowInstance) error {
 		wf.Status = domain.WorkflowStateFailed
 		now := time.Now()
@@ -303,7 +309,6 @@ func (e *Executor) handleExecutionFailure(ctx context.Context, workflow *domain.
 }
 
 func (e *Executor) checkWorkflowCompletion(ctx context.Context, workflowID string) error {
-	e.logger.Debug("checking workflow completion", "workflow_id", workflowID)
 
 	workflowPrefix := fmt.Sprintf(`"workflow_id":"%s"`, workflowID)
 	hasPendingNodes, err := e.queue.HasItemsWithPrefix(workflowPrefix)
@@ -338,8 +343,6 @@ func (e *Executor) checkWorkflowCompletion(ctx context.Context, workflowID strin
 		return err
 	}
 
-	e.logger.Debug("workflow has pending nodes, not marking as complete",
-		"workflow_id", workflowID)
 	return nil
 }
 
@@ -357,10 +360,6 @@ func (e *Executor) persistExecutedNode(ctx context.Context, workflowID string, e
 	if err := e.storage.Put(executionKey, nodeBytes, 1); err != nil {
 		return domain.NewDiscoveryError("executor", "persist_executed_node", err)
 	}
-
-	e.logger.Debug("executed node persisted",
-		"workflow_id", workflowID,
-		"node_name", executedNode.NodeName)
 
 	return nil
 }
@@ -396,11 +395,6 @@ func (e *Executor) requeueNodeWithBackoff(ctx context.Context, workflowID, nodeN
 			return e.handleExecutionFailure(ctx, workflow, &executedNode, err)
 		}
 
-		e.logger.Debug("work item successfully sent to dead letter queue",
-			"workflow_id", workflowID,
-			"node_name", nodeName,
-			"retry_count", retryCount)
-
 		return nil
 	}
 
@@ -410,12 +404,6 @@ func (e *Executor) requeueNodeWithBackoff(ctx context.Context, workflowID, nodeN
 	if delay > maxDelay {
 		delay = maxDelay
 	}
-
-	e.logger.Debug("applying backoff delay",
-		"workflow_id", workflowID,
-		"node_name", nodeName,
-		"delay", delay,
-		"retry_count", retryCount)
 
 	now := time.Now()
 	workItem := WorkItem{
@@ -438,12 +426,6 @@ func (e *Executor) requeueNodeWithBackoff(ctx context.Context, workflowID, nodeN
 
 	e.metrics.IncrementNodesRetried()
 	e.metrics.IncrementItemsEnqueued()
-
-	e.logger.Debug("node requeued with backoff",
-		"workflow_id", workflowID,
-		"node_name", nodeName,
-		"new_retry_count", retryCount+1,
-		"delay", delay)
 
 	return nil
 }
@@ -475,11 +457,6 @@ func (e *Executor) sendToDeadLetterQueue(ctx context.Context, workflowID, nodeNa
 	}
 
 	e.metrics.IncrementItemsSentToDeadLetter()
-
-	e.logger.Debug("work item sent to dead letter queue",
-		"workflow_id", workflowID,
-		"node_name", nodeName,
-		"reason", reason)
 
 	return nil
 }
@@ -520,10 +497,6 @@ func (e *Executor) publishWorkflowCompletedEvent(ctx context.Context, workflowID
 		return domain.NewDiscoveryError("executor", "publish_workflow_completed_event", err)
 	}
 
-	e.logger.Debug("workflow completed event published",
-		"workflow_id", workflowID,
-		"event_key", eventKey)
-
 	return nil
 }
 
@@ -559,13 +532,98 @@ func (e *Executor) loadExecutedNodeNames(ctx context.Context, workflowID string)
 	return result, nil
 }
 
-func convertMetadata(metadata map[string]string) map[string]interface{} {
-	if metadata == nil {
-		return nil
+func (e *Executor) emitNodeStartedEvent(workflowCtx *domain.WorkflowContext, config json.RawMessage) error {
+	event := domain.NodeStartedEvent{
+		WorkflowID:  workflowCtx.WorkflowID,
+		NodeName:    workflowCtx.NodeName,
+		Config:      config,
+		StartedAt:   time.Now(),
+		ExecutionID: workflowCtx.ExecutionID,
+		NodeID:      e.nodeID,
 	}
-	result := make(map[string]interface{})
-	for k, v := range metadata {
-		result[k] = v
+
+	eventBytes, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal node started event: %w", err)
 	}
-	return result
+
+	eventKey := fmt.Sprintf("workflow:%s:node:%s:started", workflowCtx.WorkflowID, workflowCtx.NodeName)
+	if err := e.storage.Put(eventKey, eventBytes, 1); err != nil {
+		return fmt.Errorf("failed to store node started event: %w", err)
+	}
+
+	domainEvent := domain.Event{
+		Type:      domain.EventPut,
+		Key:       eventKey,
+		Timestamp: time.Now(),
+	}
+
+	return e.eventManager.Broadcast(domainEvent)
+}
+
+func (e *Executor) emitNodeCompletedEvent(workflowCtx *domain.WorkflowContext, result *ports.NodeResult, duration time.Duration) error {
+	var nextNodeNames []string
+	for _, nextNode := range result.NextNodes {
+		nextNodeNames = append(nextNodeNames, nextNode.NodeName)
+	}
+
+	event := domain.NodeCompletedEvent{
+		WorkflowID:  workflowCtx.WorkflowID,
+		NodeName:    workflowCtx.NodeName,
+		Result:      result.GlobalState,
+		CompletedAt: time.Now(),
+		Duration:    duration,
+		ExecutionID: workflowCtx.ExecutionID,
+		NextNodes:   nextNodeNames,
+	}
+
+	eventBytes, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal node completed event: %w", err)
+	}
+
+	eventKey := fmt.Sprintf("workflow:%s:node:%s:completed", workflowCtx.WorkflowID, workflowCtx.NodeName)
+	if err := e.storage.Put(eventKey, eventBytes, 1); err != nil {
+		return fmt.Errorf("failed to store node completed event: %w", err)
+	}
+
+	domainEvent := domain.Event{
+		Type:      domain.EventPut,
+		Key:       eventKey,
+		Timestamp: time.Now(),
+	}
+
+	return e.eventManager.Broadcast(domainEvent)
+}
+
+func (e *Executor) emitNodeErrorEvent(workflowCtx *domain.WorkflowContext, currentState interface{}, err error, duration time.Duration, config json.RawMessage) error {
+	event := domain.NodeErrorEvent{
+		WorkflowID:   workflowCtx.WorkflowID,
+		NodeName:     workflowCtx.NodeName,
+		Error:        err,
+		FailedAt:     time.Now(),
+		Duration:     duration,
+		ExecutionID:  workflowCtx.ExecutionID,
+		Config:       config,
+		CurrentState: currentState,
+		Recoverable:  true,
+	}
+
+	eventBytes, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal node error event: %w", err)
+	}
+
+	eventKey := fmt.Sprintf("workflow:%s:node:%s:error", workflowCtx.WorkflowID, workflowCtx.NodeName)
+	if err := e.storage.Put(eventKey, eventBytes, 1); err != nil {
+		return fmt.Errorf("failed to store node error event: %w", err)
+	}
+
+	domainEvent := domain.Event{
+		Type:      domain.EventPut,
+		Key:       eventKey,
+		Timestamp: time.Now(),
+	}
+
+	return e.eventManager.Broadcast(domainEvent)
 }

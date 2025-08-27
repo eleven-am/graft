@@ -20,7 +20,6 @@ type AppStorage struct {
 	logger   *slog.Logger
 
 	mu     sync.RWMutex
-	subs   map[string][]chan ports.StorageEvent
 	closed bool
 }
 
@@ -29,7 +28,6 @@ func NewAppStorage(raftNode ports.RaftNode, db *badger.DB, logger *slog.Logger) 
 		raftNode: raftNode,
 		db:       db,
 		logger:   logger.With("component", "app-storage"),
-		subs:     make(map[string][]chan ports.StorageEvent),
 	}
 }
 
@@ -78,10 +76,6 @@ func (s *AppStorage) Put(key string, value []byte, version int64) error {
 		return errors.New(result.Error)
 	}
 
-	for _, event := range result.Events {
-		s.broadcastEvent(event)
-	}
-
 	return nil
 }
 
@@ -106,10 +100,6 @@ func (s *AppStorage) Delete(key string) error {
 
 	if !result.Success {
 		return errors.New(result.Error)
-	}
-
-	for _, event := range result.Events {
-		s.broadcastEvent(event)
 	}
 
 	return nil
@@ -186,10 +176,6 @@ func (s *AppStorage) BatchWrite(ops []ports.WriteOp) error {
 		return errors.New(result.Error)
 	}
 
-	for _, event := range result.Events {
-		s.broadcastEvent(event)
-	}
-
 	return nil
 }
 
@@ -246,25 +232,25 @@ func (s *AppStorage) GetNext(prefix string) (key string, value []byte, exists bo
 		opts.PrefetchValues = true
 		it := txn.NewIterator(opts)
 		defer it.Close()
-		
+
 		for it.Rewind(); it.Valid(); it.Next() {
 			item := it.Item()
 			keyBytes := item.Key()
 			key = string(keyBytes)
-			
+
 			if s.isMetadataKey(keyBytes) {
 				continue
 			}
-			
+
 			exists = true
 			value, err = item.ValueCopy(nil)
 			return err
 		}
-		
+
 		exists = false
 		return nil
 	})
-	
+
 	return key, value, exists, err
 }
 
@@ -275,34 +261,34 @@ func (s *AppStorage) GetNextAfter(prefix string, afterKey string) (key string, v
 		opts.PrefetchValues = true
 		it := txn.NewIterator(opts)
 		defer it.Close()
-		
+
 		it.Seek([]byte(afterKey))
 		if !it.Valid() {
 			exists = false
 			return nil
 		}
-		
+
 		it.Next()
-		
+
 		for it.Valid() {
 			item := it.Item()
 			keyBytes := item.Key()
 			key = string(keyBytes)
-			
+
 			if s.isMetadataKey(keyBytes) {
 				it.Next()
 				continue
 			}
-			
+
 			exists = true
 			value, err = item.ValueCopy(nil)
 			return err
 		}
-		
+
 		exists = false
 		return nil
 	})
-	
+
 	return key, value, exists, err
 }
 
@@ -314,20 +300,20 @@ func (s *AppStorage) CountPrefix(prefix string) (count int, err error) {
 		opts.PrefetchSize = 1
 		it := txn.NewIterator(opts)
 		defer it.Close()
-		
+
 		for it.Rewind(); it.Valid(); it.Next() {
 			keyBytes := it.Item().Key()
-			
+
 			if s.isMetadataKey(keyBytes) {
 				continue
 			}
-			
+
 			count++
 		}
-		
+
 		return nil
 	})
-	
+
 	return count, err
 }
 
@@ -335,36 +321,36 @@ func (s *AppStorage) AtomicIncrement(key string) (newValue int64, err error) {
 	if s.raftNode == nil {
 		return 0, domain.ErrNotStarted
 	}
-	
+
 	command := *domain.NewAtomicIncrementCommand(key, 1)
-	
+
 	result, err := s.raftNode.Apply(command, 5*time.Second)
 	if err != nil {
 		return 0, domain.NewDiscoveryError("app-storage", "raft_apply_increment", err)
 	}
-	
+
 	if result == nil {
 		return 0, domain.NewDiscoveryError("app-storage", "nil_increment_result", nil)
 	}
-	
+
 	if !result.Success {
 		return 0, fmt.Errorf("atomic increment failed: %s", result.Error)
 	}
-	
+
 	value, _, exists, err := s.Get(key)
 	if err != nil {
 		return 0, domain.NewDiscoveryError("app-storage", "get_counter_after_increment", err)
 	}
-	
+
 	if !exists {
 		return 0, domain.NewDiscoveryError("app-storage", "counter_missing_after_increment", nil)
 	}
-	
+
 	var counterValue int64
 	if err := json.Unmarshal(value, &counterValue); err != nil {
 		return 0, domain.NewDiscoveryError("app-storage", "parse_counter_value", err)
 	}
-	
+
 	return counterValue, nil
 }
 
@@ -528,67 +514,6 @@ func (s *AppStorage) RestoreCompressedSnapshot(snapshot io.Reader) error {
 	return domain.ErrNotFound
 }
 
-func (s *AppStorage) Subscribe(prefix string) (<-chan ports.StorageEvent, func(), error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.closed {
-		return nil, nil, &domain.StorageError{Type: domain.ErrClosed, Message: "storage is closed"}
-	}
-
-	ch := make(chan ports.StorageEvent, 100)
-	s.subs[prefix] = append(s.subs[prefix], ch)
-
-	unsubscribe := func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-
-		subs := s.subs[prefix]
-		for i, sub := range subs {
-			if sub == ch {
-				s.subs[prefix] = append(subs[:i], subs[i+1:]...)
-				close(ch)
-				break
-			}
-		}
-	}
-
-	return ch, unsubscribe, nil
-}
-
-func (s *AppStorage) SubscribeToKey(key string) (<-chan ports.StorageEvent, func(), error) {
-	return s.Subscribe(key)
-}
-
-func (s *AppStorage) broadcastEvent(event domain.Event) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.closed {
-		return
-	}
-
-	storageEvent := ports.StorageEvent{
-		Type:      domain.EventType(event.Type),
-		Key:       event.Key,
-		Version:   event.Version,
-		NodeID:    event.NodeID,
-		Timestamp: event.Timestamp,
-		RequestID: event.RequestID,
-	}
-
-	for prefix, subs := range s.subs {
-		if len(storageEvent.Key) >= len(prefix) && storageEvent.Key[:len(prefix)] == prefix {
-			for _, ch := range subs {
-				select {
-				case ch <- storageEvent:
-				default:
-				}
-			}
-		}
-	}
-}
-
 func (s *AppStorage) SetRaftNode(node ports.RaftNode) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -604,14 +529,6 @@ func (s *AppStorage) Close() error {
 	}
 
 	s.closed = true
-
-	for _, subs := range s.subs {
-		for _, ch := range subs {
-			close(ch)
-		}
-	}
-
-	s.subs = make(map[string][]chan ports.StorageEvent)
 
 	return nil
 }

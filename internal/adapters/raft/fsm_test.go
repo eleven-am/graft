@@ -18,7 +18,7 @@ func setupTestFSM(t *testing.T) (*FSM, *badger.DB, func()) {
 	db, err := badger.Open(opts)
 	require.NoError(t, err)
 
-	fsm := NewFSM(db, "test-node-1", "test-cluster", domain.ClusterPolicyRecover, nil)
+	fsm := NewFSM(db, nil, "test-node-1", "test-cluster", domain.ClusterPolicyRecover, nil)
 
 	cleanup := func() {
 		db.Close()

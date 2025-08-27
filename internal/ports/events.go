@@ -10,6 +10,8 @@ type EventManager interface {
 	Start(ctx context.Context) error
 	Stop() error
 
+	Broadcast(event domain.Event) error
+
 	OnWorkflowStarted(handler func(event *domain.WorkflowStartedEvent)) error
 	OnWorkflowCompleted(handler func(event *domain.WorkflowCompletedEvent)) error
 	OnWorkflowFailed(handler func(event *domain.WorkflowErrorEvent)) error

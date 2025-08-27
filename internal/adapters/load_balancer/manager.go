@@ -13,10 +13,10 @@ import (
 )
 
 type Manager struct {
-	storage     ports.StoragePort
-	events      ports.EventManager
-	nodeID      string
-	logger      *slog.Logger
+	storage ports.StoragePort
+	events  ports.EventManager
+	nodeID  string
+	logger  *slog.Logger
 
 	mu      sync.RWMutex
 	running bool
@@ -62,7 +62,6 @@ func (m *Manager) Start(ctx context.Context) error {
 		return domain.NewDiscoveryError("load-balancer", "initialize", err)
 	}
 
-	m.logger.Debug("load balancer started", "nodeID", m.nodeID)
 	return nil
 }
 
@@ -77,7 +76,6 @@ func (m *Manager) Stop() error {
 	m.cancel()
 	m.running = false
 
-	m.logger.Debug("load balancer stopped")
 	return nil
 }
 
@@ -180,12 +178,6 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 		}
 
 		if otherNodeLoad < currentNodeLoad {
-			m.logger.Debug("found less loaded node, passing on work",
-				"currentLoad", currentNodeLoad,
-				"otherNodeID", otherNodeID,
-				"otherLoad", otherNodeLoad,
-				"workflowID", workflowID,
-				"nodeName", nodeName)
 			return false, nil
 		}
 	}

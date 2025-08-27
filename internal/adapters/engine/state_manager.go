@@ -2,8 +2,8 @@ package engine
 
 import (
 	"context"
-	json "github.com/goccy/go-json"
 	"fmt"
+	json "github.com/goccy/go-json"
 	"log/slog"
 	"time"
 
@@ -24,13 +24,9 @@ func NewStateManager(storage ports.StoragePort, logger *slog.Logger) *StateManag
 }
 
 func (sm *StateManager) SaveWorkflowState(ctx context.Context, workflow *domain.WorkflowInstance) error {
-	sm.logger.Debug("saving workflow state", 
-		"workflow_id", workflow.ID, 
-		"status", workflow.Status,
-		"version", workflow.Version)
 
 	key := fmt.Sprintf("workflow:state:%s", workflow.ID)
-	
+
 	workflowBytes, err := json.Marshal(workflow)
 	if err != nil {
 		return domain.NewDiscoveryError("state_manager", "marshal_workflow", err)
@@ -40,18 +36,13 @@ func (sm *StateManager) SaveWorkflowState(ctx context.Context, workflow *domain.
 		return domain.NewDiscoveryError("state_manager", "save_workflow_state", err)
 	}
 
-	sm.logger.Debug("workflow state saved successfully", 
-		"workflow_id", workflow.ID,
-		"version", workflow.Version)
-	
 	return nil
 }
 
 func (sm *StateManager) LoadWorkflowState(ctx context.Context, workflowID string) (*domain.WorkflowInstance, error) {
-	sm.logger.Debug("loading workflow state", "workflow_id", workflowID)
-	
+
 	key := fmt.Sprintf("workflow:state:%s", workflowID)
-	
+
 	data, _, exists, err := sm.storage.Get(key)
 	if err != nil {
 		return nil, domain.NewDiscoveryError("state_manager", "load_workflow_state", err)
@@ -65,17 +56,11 @@ func (sm *StateManager) LoadWorkflowState(ctx context.Context, workflowID string
 		return nil, domain.NewDiscoveryError("state_manager", "unmarshal_workflow", err)
 	}
 
-	sm.logger.Debug("workflow state loaded successfully", 
-		"workflow_id", workflowID,
-		"status", workflow.Status,
-		"version", workflow.Version)
-
 	return &workflow, nil
 }
 
 func (sm *StateManager) UpdateWorkflowState(ctx context.Context, workflowID string, updateFn func(*domain.WorkflowInstance) error) error {
-	sm.logger.Debug("updating workflow state with versioning", "workflow_id", workflowID)
-	
+
 	key := fmt.Sprintf("workflow:state:%s", workflowID)
 
 	for retries := 0; retries < 10; retries++ {
@@ -85,7 +70,7 @@ func (sm *StateManager) UpdateWorkflowState(ctx context.Context, workflowID stri
 		}
 
 		oldVersion := workflow.Version
-		
+
 		if err := updateFn(workflow); err != nil {
 			return domain.NewDiscoveryError("state_manager", "update_function", err)
 		}
@@ -99,11 +84,6 @@ func (sm *StateManager) UpdateWorkflowState(ctx context.Context, workflowID stri
 
 		err = sm.storage.Put(key, newBytes, oldVersion+1)
 		if err == nil {
-			sm.logger.Debug("workflow state updated successfully", 
-				"workflow_id", workflowID,
-				"old_version", oldVersion,
-				"new_version", workflow.Version,
-				"retries", retries)
 			return nil
 		}
 
@@ -111,11 +91,6 @@ func (sm *StateManager) UpdateWorkflowState(ctx context.Context, workflowID stri
 			return domain.NewDiscoveryError("state_manager", "update_workflow_state_retries", err)
 		}
 
-		sm.logger.Debug("update failed, retrying", 
-			"workflow_id", workflowID, 
-			"retry", retries,
-			"error", err)
-		
 		time.Sleep(time.Duration(retries) * 10 * time.Millisecond)
 	}
 

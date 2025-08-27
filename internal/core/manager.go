@@ -85,7 +85,9 @@ func NewWithConfig(config *domain.Config) *Manager {
 		return nil
 	}
 
-	raftAdapter, err := raft.NewNode(raftConfig, raftStorage, logger)
+	eventManager := events.NewManager(logger)
+
+	raftAdapter, err := raft.NewNode(raftConfig, raftStorage, eventManager, logger)
 	if err != nil {
 		logger.Error("failed to create raft node", "error", err)
 		return nil
@@ -93,12 +95,12 @@ func NewWithConfig(config *domain.Config) *Manager {
 
 	appStorage := storage.NewAppStorage(raftAdapter, raftStorage.StateDB(), logger)
 
-	eventManager := events.NewManagerWithStorage(appStorage, config.NodeID, logger)
+	eventManager.SetStorage(appStorage, config.NodeID)
 
 	nodeRegistryManager := node_registry.NewManager(logger)
 
-	queueAdapter := queue.NewQueue("main", appStorage)
-	engineAdapter := engine.NewEngine(config.Engine, nodeRegistryManager, queueAdapter, appStorage, logger)
+	queueAdapter := queue.NewQueue("main", appStorage, eventManager, logger)
+	engineAdapter := engine.NewEngine(config.Engine, config.NodeID, nodeRegistryManager, queueAdapter, appStorage, eventManager, logger)
 
 	return &Manager{
 		config:       config,

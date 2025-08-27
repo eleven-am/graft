@@ -72,13 +72,13 @@ type Node struct {
 	mu        sync.Mutex
 }
 
-func NewNode(config *Config, storage *Storage, logger *slog.Logger) (*Node, error) {
+func NewNode(config *Config, storage *Storage, eventManager ports.EventManager, logger *slog.Logger) (*Node, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	logger = logger.With("component", "raft", "node_id", config.NodeID)
-	fsm := NewFSM(storage.StateDB(), config.NodeID, config.ClusterID, config.ClusterPolicy, logger)
+	fsm := NewFSM(storage.StateDB(), eventManager, config.NodeID, config.ClusterID, config.ClusterPolicy, logger)
 
 	return &Node{
 		config:  config,

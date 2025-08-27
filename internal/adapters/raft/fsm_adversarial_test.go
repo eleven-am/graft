@@ -28,7 +28,7 @@ func TestFSM_ConcurrentApply(t *testing.T) {
 	db := createTestBadgerDB(t)
 	defer db.Close()
 
-	fsm := NewFSM(db, "node1", "cluster1", domain.ClusterPolicyRecover, slog.Default())
+	fsm := NewFSM(db, nil, "node1", "cluster1", domain.ClusterPolicyRecover, slog.Default())
 
 	const numGoroutines = 10
 	const numOperations = 100
@@ -84,7 +84,7 @@ func TestFSM_LargeSnapshot(t *testing.T) {
 	db := createTestBadgerDB(t)
 	defer db.Close()
 
-	fsm := NewFSM(db, "node1", "cluster1", domain.ClusterPolicyRecover, slog.Default())
+	fsm := NewFSM(db, nil, "node1", "cluster1", domain.ClusterPolicyRecover, slog.Default())
 
 	const numEntries = 1000
 	for i := 0; i < numEntries; i++ {
@@ -122,7 +122,7 @@ func TestFSM_LargeSnapshot(t *testing.T) {
 	newDB := createTestBadgerDB(t)
 	defer newDB.Close()
 
-	newFSM := NewFSM(newDB, "node2", "cluster1", domain.ClusterPolicyRecover, slog.Default())
+	newFSM := NewFSM(newDB, nil, "node2", "cluster1", domain.ClusterPolicyRecover, slog.Default())
 	err = newFSM.Restore(io.NopCloser(bytes.NewReader(sink.data.Bytes())))
 	require.NoError(t, err)
 
@@ -148,7 +148,7 @@ func TestFSM_InvalidCommands(t *testing.T) {
 	db := createTestBadgerDB(t)
 	defer db.Close()
 
-	fsm := NewFSM(db, "node1", "cluster1", domain.ClusterPolicyRecover, slog.Default())
+	fsm := NewFSM(db, nil, "node1", "cluster1", domain.ClusterPolicyRecover, slog.Default())
 
 	tests := []struct {
 		name          string
@@ -222,7 +222,7 @@ func TestFSM_DeleteCommand(t *testing.T) {
 	db := createTestBadgerDB(t)
 	defer db.Close()
 
-	fsm := NewFSM(db, "node1", "cluster1", domain.ClusterPolicyRecover, slog.Default())
+	fsm := NewFSM(db, nil, "node1", "cluster1", domain.ClusterPolicyRecover, slog.Default())
 
 	putCmd := domain.Command{
 		Type:      domain.CommandPut,
@@ -280,7 +280,7 @@ func TestFSM_BatchCommand(t *testing.T) {
 	db := createTestBadgerDB(t)
 	defer db.Close()
 
-	fsm := NewFSM(db, "node1", "cluster1", domain.ClusterPolicyRecover, slog.Default())
+	fsm := NewFSM(db, nil, "node1", "cluster1", domain.ClusterPolicyRecover, slog.Default())
 
 	batchOps := []domain.BatchOp{
 		{

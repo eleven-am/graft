@@ -40,9 +40,6 @@ type StoragePort interface {
 	RestoreSnapshot(snapshot io.Reader) error
 	RestoreCompressedSnapshot(snapshot io.Reader) error
 
-	Subscribe(prefix string) (<-chan StorageEvent, func(), error)
-	SubscribeToKey(key string) (<-chan StorageEvent, func(), error)
-
 	SetRaftNode(node RaftNode)
 	Close() error
 }

@@ -14,11 +14,13 @@ import (
 
 type Engine struct {
 	config       domain.EngineConfig
+	nodeID       string
 	nodeRegistry ports.NodeRegistryPort
 	stateManager *StateManager
 	executor     *Executor
 	queue        ports.QueuePort
 	storage      ports.StoragePort
+	eventManager ports.EventManager
 	logger       *slog.Logger
 	metrics      *domain.ExecutionMetrics
 
@@ -27,18 +29,20 @@ type Engine struct {
 	wg     sync.WaitGroup
 }
 
-func NewEngine(config domain.EngineConfig, nodeRegistry ports.NodeRegistryPort, queue ports.QueuePort, storage ports.StoragePort, logger *slog.Logger) *Engine {
+func NewEngine(config domain.EngineConfig, nodeID string, nodeRegistry ports.NodeRegistryPort, queue ports.QueuePort, storage ports.StoragePort, eventManager ports.EventManager, logger *slog.Logger) *Engine {
 	stateManager := NewStateManager(storage, logger)
 	metrics := domain.NewExecutionMetrics()
-	executor := NewExecutor(config, nodeRegistry, stateManager, queue, storage, logger, metrics)
+	executor := NewExecutor(config, nodeID, nodeRegistry, stateManager, queue, storage, eventManager, logger, metrics)
 
 	return &Engine{
 		config:       config,
+		nodeID:       nodeID,
 		nodeRegistry: nodeRegistry,
 		stateManager: stateManager,
 		executor:     executor,
 		queue:        queue,
 		storage:      storage,
+		eventManager: eventManager,
 		logger:       logger.With("component", "engine"),
 		metrics:      metrics,
 	}
@@ -54,27 +58,22 @@ func (e *Engine) Start(ctx context.Context) error {
 		go e.processWork()
 	}
 
-	e.logger.Debug("workflow engine started successfully", "workers_launched", e.config.WorkerCount)
 	return nil
 }
 
 func (e *Engine) Stop() error {
-	e.logger.Debug("stopping workflow engine")
 
 	if e.cancel != nil {
 		e.cancel()
 	}
 
-	e.logger.Debug("waiting for work processing to complete")
 	e.wg.Wait()
-	e.logger.Debug("work processing completed")
 
 	if err := e.queue.Close(); err != nil {
 		e.logger.Error("failed to close queue", "error", err)
 		return err
 	}
 
-	e.logger.Debug("workflow engine stopped successfully")
 	return nil
 }
 
@@ -97,6 +96,26 @@ func (e *Engine) ProcessTrigger(trigger domain.WorkflowTrigger) error {
 
 	e.metrics.IncrementWorkflowsStarted()
 
+	var initialNodeNames []string
+	for _, node := range trigger.InitialNodes {
+		initialNodeNames = append(initialNodeNames, node.Name)
+	}
+
+	startedEvent := domain.WorkflowStartedEvent{
+		WorkflowID:   trigger.WorkflowID,
+		Trigger:      trigger,
+		StartedAt:    workflow.StartedAt,
+		InitialNodes: initialNodeNames,
+		NodeID:       e.nodeID,
+		Metadata:     convertMetadata(trigger.Metadata),
+	}
+
+	if err := e.emitWorkflowStartedEvent(startedEvent); err != nil {
+		e.logger.Error("failed to emit workflow started event",
+			"workflow_id", trigger.WorkflowID,
+			"error", err)
+	}
+
 	for _, nodeConfig := range trigger.InitialNodes {
 		if err := e.enqueueInitialNode(trigger.WorkflowID, nodeConfig); err != nil {
 			e.logger.Error("failed to enqueue initial node",
@@ -107,14 +126,10 @@ func (e *Engine) ProcessTrigger(trigger domain.WorkflowTrigger) error {
 		}
 	}
 
-	e.logger.Debug("workflow trigger processed successfully",
-		"workflow_id", trigger.WorkflowID)
-
 	return nil
 }
 
 func (e *Engine) GetWorkflowStatus(workflowID string) (*domain.WorkflowStatus, error) {
-	e.logger.Debug("getting workflow status", "workflow_id", workflowID)
 
 	workflow, err := e.stateManager.LoadWorkflowState(e.ctx, workflowID)
 	if err != nil {
@@ -148,17 +163,10 @@ func (e *Engine) GetWorkflowStatus(workflowID string) (*domain.WorkflowStatus, e
 		LastError:     workflow.LastError,
 	}
 
-	e.logger.Debug("workflow status retrieved",
-		"workflow_id", workflowID,
-		"status", workflow.Status,
-		"executed_nodes", len(executedNodes),
-		"pending_nodes", len(pendingNodes))
-
 	return status, nil
 }
 
 func (e *Engine) PauseWorkflow(ctx context.Context, workflowID string) error {
-	e.logger.Debug("pausing workflow", "workflow_id", workflowID)
 
 	err := e.stateManager.UpdateWorkflowState(ctx, workflowID, func(wf *domain.WorkflowInstance) error {
 		if wf.Status != domain.WorkflowStateRunning {
@@ -176,7 +184,6 @@ func (e *Engine) PauseWorkflow(ctx context.Context, workflowID string) error {
 }
 
 func (e *Engine) ResumeWorkflow(ctx context.Context, workflowID string) error {
-	e.logger.Debug("resuming workflow", "workflow_id", workflowID)
 
 	err := e.stateManager.UpdateWorkflowState(ctx, workflowID, func(wf *domain.WorkflowInstance) error {
 		if wf.Status != domain.WorkflowStatePaused {
@@ -194,7 +201,6 @@ func (e *Engine) ResumeWorkflow(ctx context.Context, workflowID string) error {
 }
 
 func (e *Engine) StopWorkflow(ctx context.Context, workflowID string) error {
-	e.logger.Debug("stopping workflow", "workflow_id", workflowID)
 
 	err := e.stateManager.UpdateWorkflowState(ctx, workflowID, func(wf *domain.WorkflowInstance) error {
 		wf.Status = domain.WorkflowStateFailed
@@ -214,12 +220,10 @@ func (e *Engine) StopWorkflow(ctx context.Context, workflowID string) error {
 
 func (e *Engine) processWork() {
 	defer e.wg.Done()
-	e.logger.Debug("Worker started")
 
 	for {
 		select {
 		case <-e.ctx.Done():
-			e.logger.Debug("work processing loop stopped")
 			return
 		case <-e.queue.WaitForItem(e.ctx):
 			for {
@@ -271,11 +275,6 @@ func (e *Engine) processNextItem() (bool, error) {
 		return false, domain.NewDiscoveryError("engine", "unmarshal_work_item", err)
 	}
 
-	e.logger.Debug("processing work item",
-		"workflow_id", workItem.WorkflowID,
-		"node_name", workItem.NodeName,
-		"retry_count", workItem.RetryCount)
-
 	e.metrics.IncrementItemsProcessed()
 
 	execErr := e.executor.ExecuteNodeWithRetry(e.ctx, workItem.WorkflowID, workItem.NodeName, workItem.Config, workItem.RetryCount)
@@ -310,10 +309,6 @@ func (e *Engine) enqueueInitialNode(workflowID string, nodeConfig domain.NodeCon
 	}
 
 	e.metrics.IncrementItemsEnqueued()
-
-	e.logger.Debug("initial node enqueued successfully",
-		"workflow_id", workflowID,
-		"node_name", nodeConfig.Name)
 
 	return nil
 }
@@ -372,7 +367,6 @@ func (e *Engine) loadPendingNodes(workflowID string) ([]domain.NodeConfig, error
 }
 
 func (e *Engine) GetDeadLetterItems(limit int) ([]ports.DeadLetterItem, error) {
-	e.logger.Debug("getting dead letter queue items", "limit", limit)
 
 	items, err := e.queue.GetDeadLetterItems(limit)
 	if err != nil {
@@ -383,7 +377,6 @@ func (e *Engine) GetDeadLetterItems(limit int) ([]ports.DeadLetterItem, error) {
 }
 
 func (e *Engine) GetDeadLetterSize() (int, error) {
-	e.logger.Debug("getting dead letter queue size")
 
 	size, err := e.queue.GetDeadLetterSize()
 	if err != nil {
@@ -394,7 +387,6 @@ func (e *Engine) GetDeadLetterSize() (int, error) {
 }
 
 func (e *Engine) RetryFromDeadLetter(itemID string) error {
-	e.logger.Debug("retrying item from dead letter queue", "item_id", itemID)
 
 	if err := e.queue.RetryFromDeadLetter(itemID); err != nil {
 		return domain.NewDiscoveryError("engine", "retry_from_dead_letter", err)
@@ -402,10 +394,40 @@ func (e *Engine) RetryFromDeadLetter(itemID string) error {
 
 	e.metrics.IncrementItemsRetriedFromDeadLetter()
 
-	e.logger.Debug("item successfully retried from dead letter queue", "item_id", itemID)
 	return nil
 }
 
 func (e *Engine) GetMetrics() domain.ExecutionMetrics {
 	return e.metrics.GetSnapshot()
+}
+
+func (e *Engine) emitWorkflowStartedEvent(event domain.WorkflowStartedEvent) error {
+	eventBytes, err := json.Marshal(event)
+	if err != nil {
+		return fmt.Errorf("failed to marshal workflow started event: %w", err)
+	}
+
+	eventKey := fmt.Sprintf("workflow:%s:started", event.WorkflowID)
+	if err := e.storage.Put(eventKey, eventBytes, 1); err != nil {
+		return fmt.Errorf("failed to store workflow started event: %w", err)
+	}
+
+	domainEvent := domain.Event{
+		Type:      domain.EventPut,
+		Key:       eventKey,
+		Timestamp: time.Now(),
+	}
+
+	return e.eventManager.Broadcast(domainEvent)
+}
+
+func convertMetadata(metadata map[string]string) map[string]interface{} {
+	if metadata == nil {
+		return nil
+	}
+	result := make(map[string]interface{})
+	for k, v := range metadata {
+		result[k] = v
+	}
+	return result
 }

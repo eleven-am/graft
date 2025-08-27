@@ -11,11 +11,13 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/eleven-am/graft/internal/domain"
+	"github.com/eleven-am/graft/internal/ports"
 	"github.com/hashicorp/raft"
 )
 
 type FSM struct {
 	db               *badger.DB
+	eventManager     ports.EventManager
 	mu               sync.RWMutex
 	versions         map[string]int64
 	nodeID           string
@@ -25,13 +27,14 @@ type FSM struct {
 	clusterPolicy    domain.ClusterPolicy
 }
 
-func NewFSM(db *badger.DB, nodeID, clusterID string, clusterPolicy domain.ClusterPolicy, logger *slog.Logger) *FSM {
+func NewFSM(db *badger.DB, eventManager ports.EventManager, nodeID, clusterID string, clusterPolicy domain.ClusterPolicy, logger *slog.Logger) *FSM {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	fsm := &FSM{
 		db:            db,
+		eventManager:  eventManager,
 		versions:      make(map[string]int64),
 		nodeID:        nodeID,
 		logger:        logger.With("component", "raft-fsm", "node_id", nodeID),
@@ -131,19 +134,23 @@ func (f *FSM) applyPut(cmd domain.Command) *domain.CommandResult {
 
 	f.versions[cmd.Key] = newVersion
 
+	event := domain.Event{
+		Type:      domain.EventPut,
+		Key:       cmd.Key,
+		Version:   newVersion,
+		NodeID:    f.nodeID,
+		Timestamp: time.Now(),
+		RequestID: cmd.RequestID,
+	}
+
+	if f.eventManager != nil {
+		f.eventManager.Broadcast(event)
+	}
+
 	return &domain.CommandResult{
 		Success: true,
 		Version: newVersion,
-		Events: []domain.Event{
-			{
-				Type:      domain.EventPut,
-				Key:       cmd.Key,
-				Version:   newVersion,
-				NodeID:    f.nodeID,
-				Timestamp: time.Now(),
-				RequestID: cmd.RequestID,
-			},
-		},
+		Events:  []domain.Event{event},
 	}
 }
 
@@ -168,17 +175,21 @@ func (f *FSM) applyDelete(cmd domain.Command) *domain.CommandResult {
 
 	delete(f.versions, cmd.Key)
 
+	event := domain.Event{
+		Type:      domain.EventDelete,
+		Key:       cmd.Key,
+		NodeID:    f.nodeID,
+		Timestamp: time.Now(),
+		RequestID: cmd.RequestID,
+	}
+
+	if f.eventManager != nil {
+		f.eventManager.Broadcast(event)
+	}
+
 	return &domain.CommandResult{
 		Success: true,
-		Events: []domain.Event{
-			{
-				Type:      domain.EventDelete,
-				Key:       cmd.Key,
-				NodeID:    f.nodeID,
-				Timestamp: time.Now(),
-				RequestID: cmd.RequestID,
-			},
-		},
+		Events:  []domain.Event{event},
 	}
 }
 
@@ -262,20 +273,24 @@ func (f *FSM) applyCAS(cmd domain.Command) *domain.CommandResult {
 
 	f.versions[cmd.Key] = newVersion
 
+	event := domain.Event{
+		Type:      domain.EventCAS,
+		Key:       cmd.Key,
+		Version:   newVersion,
+		NodeID:    f.nodeID,
+		Timestamp: time.Now(),
+		RequestID: cmd.RequestID,
+	}
+
+	if f.eventManager != nil {
+		f.eventManager.Broadcast(event)
+	}
+
 	return &domain.CommandResult{
 		Success:     true,
 		Version:     newVersion,
 		PrevVersion: currentVersion,
-		Events: []domain.Event{
-			{
-				Type:      domain.EventCAS,
-				Key:       cmd.Key,
-				Version:   newVersion,
-				NodeID:    f.nodeID,
-				Timestamp: time.Now(),
-				RequestID: cmd.RequestID,
-			},
-		},
+		Events:      []domain.Event{event},
 	}
 }
 
@@ -367,19 +382,23 @@ func (f *FSM) applyAtomicIncrement(cmd domain.Command) *domain.CommandResult {
 
 	f.versions[cmd.Key] = newVersion
 
+	event := domain.Event{
+		Type:      domain.EventPut,
+		Key:       cmd.Key,
+		Version:   newVersion,
+		NodeID:    f.nodeID,
+		Timestamp: time.Now(),
+		RequestID: cmd.RequestID,
+	}
+
+	if f.eventManager != nil {
+		f.eventManager.Broadcast(event)
+	}
+
 	return &domain.CommandResult{
 		Success: true,
 		Version: newVersion,
-		Events: []domain.Event{
-			{
-				Type:      domain.EventPut,
-				Key:       cmd.Key,
-				Version:   newVersion,
-				NodeID:    f.nodeID,
-				Timestamp: time.Now(),
-				RequestID: cmd.RequestID,
-			},
-		},
+		Events:  []domain.Event{event},
 	}
 }
 
@@ -492,6 +511,12 @@ func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 		return &domain.CommandResult{
 			Success: false,
 			Error:   err.Error(),
+		}
+	}
+
+	if f.eventManager != nil {
+		for _, event := range events {
+			f.eventManager.Broadcast(event)
 		}
 	}
 

@@ -22,6 +22,52 @@ func (_m *MockEventManager) EXPECT() *MockEventManager_Expecter {
 	return &MockEventManager_Expecter{mock: &_m.Mock}
 }
 
+// Broadcast provides a mock function with given fields: event
+func (_m *MockEventManager) Broadcast(event domain.Event) error {
+	ret := _m.Called(event)
+
+	if len(ret) == 0 {
+		panic("no return value specified for Broadcast")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(domain.Event) error); ok {
+		r0 = rf(event)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockEventManager_Broadcast_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Broadcast'
+type MockEventManager_Broadcast_Call struct {
+	*mock.Call
+}
+
+// Broadcast is a helper method to define mock.On call
+//   - event domain.Event
+func (_e *MockEventManager_Expecter) Broadcast(event interface{}) *MockEventManager_Broadcast_Call {
+	return &MockEventManager_Broadcast_Call{Call: _e.mock.On("Broadcast", event)}
+}
+
+func (_c *MockEventManager_Broadcast_Call) Run(run func(event domain.Event)) *MockEventManager_Broadcast_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(domain.Event))
+	})
+	return _c
+}
+
+func (_c *MockEventManager_Broadcast_Call) Return(_a0 error) *MockEventManager_Broadcast_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockEventManager_Broadcast_Call) RunAndReturn(run func(domain.Event) error) *MockEventManager_Broadcast_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // OnNodeCompleted provides a mock function with given fields: handler
 func (_m *MockEventManager) OnNodeCompleted(handler func(*domain.NodeCompletedEvent)) error {
 	ret := _m.Called(handler)

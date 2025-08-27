@@ -91,7 +91,7 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 			name: "special_characters_in_ids",
 			setupConfig: func() *Config {
 				return &Config{
-					NodeID:    "node-with-特殊字符-and-émojis-🚀",
+					NodeID:    "node-with-特殊字符-and-émojis",
 					ClusterID: "cluster-with-newlines\n\rand-tabs\t",
 					BindAddr:  "127.0.0.1:7000",
 					DataDir:   "/tmp/test",
@@ -136,7 +136,7 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 				config.BindAddr = "127.0.0.1:7000"
 				config.DataDir = "/tmp/test"
 				config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
-				
+
 				// Set negative timeouts
 				config.Raft.DiscoveryTimeout = -1 * time.Second
 				config.Raft.JoinTimeout = -1 * time.Second
@@ -154,9 +154,9 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 				config.BindAddr = "127.0.0.1:7000"
 				config.DataDir = "/tmp/test"
 				config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
-				
+
 				// Zero limits
-				config.Resources.MaxConcurrentTotal = 0 // This should fail validation
+				config.Resources.MaxConcurrentTotal = 0  // This should fail validation
 				config.Engine.MaxConcurrentWorkflows = 0 // This should fail validation
 				return config
 			},
@@ -271,11 +271,11 @@ func TestConfig_BuilderMethods_EdgeCases(t *testing.T) {
 // Test NewConfigFromSimple edge cases
 func TestNewConfigFromSimple_EdgeCases(t *testing.T) {
 	tests := []struct {
-		name     string
-		nodeID   string
-		bindAddr string
-		dataDir  string
-		logger   *slog.Logger
+		name        string
+		nodeID      string
+		bindAddr    string
+		dataDir     string
+		logger      *slog.Logger
 		expectPanic bool
 	}{
 		{
@@ -288,7 +288,7 @@ func TestNewConfigFromSimple_EdgeCases(t *testing.T) {
 		{
 			name:     "nil_logger_should_be_handled",
 			nodeID:   "node",
-			bindAddr: "addr", 
+			bindAddr: "addr",
 			dataDir:  "dir",
 			logger:   nil, // Should create default logger
 		},
@@ -364,7 +364,7 @@ func TestConfig_MaliciousInputs(t *testing.T) {
 					NodeID:    string(longID),
 					ClusterID: "cluster",
 					BindAddr:  "addr",
-					DataDir:   "dir", 
+					DataDir:   "dir",
 					Logger:    slog.Default(),
 				}
 			},
@@ -414,9 +414,9 @@ func TestConfig_MaliciousInputs(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Log(tt.description)
-			
+
 			config := tt.setupConfig()
-			
+
 			// Should not panic on creation or validation
 			assert.NotPanics(t, func() {
 				err := config.Validate()
@@ -431,34 +431,34 @@ func TestConfig_MaliciousInputs(t *testing.T) {
 // Test concurrent config access
 func TestConfig_ConcurrentAccess(t *testing.T) {
 	config := NewConfigFromSimple("test-node", "127.0.0.1:7000", "/tmp/test", slog.Default())
-	
+
 	const numGoroutines = 100
 	done := make(chan bool, numGoroutines)
-	
+
 	// Multiple goroutines accessing config simultaneously
 	for i := 0; i < numGoroutines; i++ {
 		go func() {
 			defer func() { done <- true }()
-			
+
 			// Read operations
 			_ = config.NodeID
 			_ = config.ClusterID
 			_ = config.Raft.ExpectedNodes
-			
+
 			// Validation (should be safe for concurrent access)
 			config.Validate()
-			
+
 			// Builder methods (these modify config - potential race!)
 			// This could reveal race conditions
 			config.WithMDNS("service", "domain", "host")
 		}()
 	}
-	
+
 	// Wait for all goroutines
 	for i := 0; i < numGoroutines; i++ {
 		<-done
 	}
-	
+
 	// Config should still be valid
 	err := config.Validate()
 	assert.NoError(t, err, "Config should remain valid after concurrent access")

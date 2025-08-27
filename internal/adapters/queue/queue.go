@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -16,15 +17,22 @@ import (
 type Queue struct {
 	name          string
 	storage       ports.StoragePort
+	eventManager  ports.EventManager
+	logger        *slog.Logger
 	mu            sync.RWMutex
 	closed        bool
 	workflowIndex sync.Map
 }
 
-func NewQueue(name string, storage ports.StoragePort) *Queue {
+func NewQueue(name string, storage ports.StoragePort, eventManager ports.EventManager, logger *slog.Logger) *Queue {
+	if logger == nil {
+		logger = slog.Default()
+	}
 	return &Queue{
-		name:    name,
-		storage: storage,
+		name:         name,
+		storage:      storage,
+		eventManager: eventManager,
+		logger:       logger,
 	}
 }
 
@@ -53,6 +61,15 @@ func (q *Queue) Enqueue(item []byte) error {
 	}
 
 	q.updateWorkflowIndex(item, sequence, true)
+
+	event := domain.Event{
+		Type:      domain.EventPut,
+		Key:       key,
+		Timestamp: time.Now(),
+	}
+	if err := q.eventManager.Broadcast(event); err != nil {
+		q.logger.Warn("failed to broadcast queue enqueue event", "error", err)
+	}
 
 	return nil
 }
@@ -91,7 +108,6 @@ func (q *Queue) Claim() (item []byte, claimID string, exists bool, err error) {
 		return nil, "", false, &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
 	}
 
-	// Scan for items that are ready to process (ProcessAfter <= now)
 	prefix := fmt.Sprintf("queue:%s:pending:", q.name)
 	now := time.Now()
 	maxSkips := 100
@@ -105,7 +121,7 @@ func (q *Queue) Claim() (item []byte, claimID string, exists bool, err error) {
 	for itemExists && skipped < maxSkips {
 		queueItem, err := domain.QueueItemFromBytes(value)
 		if err != nil {
-				currentKey, value, itemExists, err = q.storage.GetNextAfter(prefix, currentKey)
+			currentKey, value, itemExists, err = q.storage.GetNextAfter(prefix, currentKey)
 			if err != nil {
 				return nil, "", false, err
 			}
@@ -116,7 +132,7 @@ func (q *Queue) Claim() (item []byte, claimID string, exists bool, err error) {
 			ProcessAfter time.Time `json:"process_after"`
 		}
 		if err := json.Unmarshal(queueItem.Data, &workItem); err != nil {
-				workItem.ProcessAfter = time.Time{}
+			workItem.ProcessAfter = time.Time{}
 		}
 
 		if workItem.ProcessAfter.IsZero() || workItem.ProcessAfter.Before(now) || workItem.ProcessAfter.Equal(now) {
@@ -178,25 +194,17 @@ func (q *Queue) WaitForItem(ctx context.Context) <-chan struct{} {
 		defer close(ch)
 
 		prefix := fmt.Sprintf("queue:%s:pending:", q.name)
-		eventCh, unsubscribe, err := q.storage.Subscribe(prefix)
+		err := q.eventManager.Subscribe(prefix, func(key string, event interface{}) {
+			select {
+			case ch <- struct{}{}:
+			default:
+			}
+		})
 		if err != nil {
 			return
 		}
-		defer unsubscribe()
 
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case event := <-eventCh:
-				if event.Type == domain.EventPut {
-					select {
-					case ch <- struct{}{}:
-					default:
-					}
-				}
-			}
-		}
+		<-ctx.Done()
 	}()
 
 	return ch
@@ -243,9 +251,9 @@ func (q *Queue) HasItemsWithPrefix(dataPrefix string) (bool, error) {
 
 		if len(queueItem.Data) > 0 {
 			dataStr := string(queueItem.Data)
-			if len(dataStr) >= len(dataPrefix) && 
-			   dataStr[:len(dataPrefix)] == dataPrefix ||
-			   strings.Contains(dataStr, dataPrefix) {
+			if len(dataStr) >= len(dataPrefix) &&
+				dataStr[:len(dataPrefix)] == dataPrefix ||
+				strings.Contains(dataStr, dataPrefix) {
 				return true, nil
 			}
 		}
@@ -269,7 +277,7 @@ func (q *Queue) GetItemsWithPrefix(dataPrefix string) ([][]byte, error) {
 			if len(sequences) == 0 {
 				return [][]byte{}, nil
 			}
-			
+
 			var matchingItems [][]byte
 			for _, seq := range sequences {
 				key := domain.QueuePendingKey(q.name, seq)
@@ -280,12 +288,12 @@ func (q *Queue) GetItemsWithPrefix(dataPrefix string) ([][]byte, error) {
 				if !exists {
 					continue
 				}
-				
+
 				queueItem, err := domain.QueueItemFromBytes(value)
 				if err != nil {
 					continue
 				}
-				
+
 				matchingItems = append(matchingItems, queueItem.Data)
 			}
 			return matchingItems, nil
@@ -307,9 +315,9 @@ func (q *Queue) GetItemsWithPrefix(dataPrefix string) ([][]byte, error) {
 
 		if len(queueItem.Data) > 0 {
 			dataStr := string(queueItem.Data)
-			if len(dataStr) >= len(dataPrefix) && 
-			   dataStr[:len(dataPrefix)] == dataPrefix ||
-			   strings.Contains(dataStr, dataPrefix) {
+			if len(dataStr) >= len(dataPrefix) &&
+				dataStr[:len(dataPrefix)] == dataPrefix ||
+				strings.Contains(dataStr, dataPrefix) {
 				matchingItems = append(matchingItems, queueItem.Data)
 			}
 		}
@@ -452,13 +460,13 @@ func (q *Queue) updateWorkflowIndex(itemData []byte, sequence int64, add bool) {
 		if sequenceMapInterface, exists := q.workflowIndex.Load(workflowID); exists {
 			sequenceMap := sequenceMapInterface.(*sync.Map)
 			sequenceMap.Delete(sequence)
-			
+
 			var hasItems bool
 			sequenceMap.Range(func(_, _ interface{}) bool {
 				hasItems = true
 				return false
 			})
-			
+
 			if !hasItems {
 				q.workflowIndex.Delete(workflowID)
 			}
@@ -468,19 +476,19 @@ func (q *Queue) updateWorkflowIndex(itemData []byte, sequence int64, add bool) {
 
 func (q *Queue) extractWorkflowID(itemData []byte) string {
 	itemStr := string(itemData)
-	
+
 	workflowIDStart := strings.Index(itemStr, `"workflow_id":"`)
 	if workflowIDStart == -1 {
 		return ""
 	}
-	
+
 	valueStart := workflowIDStart + len(`"workflow_id":"`)
-	
+
 	valueEnd := strings.Index(itemStr[valueStart:], `"`)
 	if valueEnd == -1 {
 		return ""
 	}
-	
+
 	return itemStr[valueStart : valueStart+valueEnd]
 }
 
@@ -488,18 +496,18 @@ func (q *Queue) extractWorkflowIDFromPrefix(dataPrefix string) string {
 	if !strings.HasPrefix(dataPrefix, `"workflow_id":"`) {
 		return ""
 	}
-	
+
 	valueStart := len(`"workflow_id":"`)
 	if len(dataPrefix) <= valueStart {
 		return ""
 	}
-	
+
 	remaining := dataPrefix[valueStart:]
 	valueEnd := strings.Index(remaining, `"`)
 	if valueEnd == -1 {
 		return remaining
 	}
-	
+
 	return remaining[:valueEnd]
 }
 
@@ -513,34 +521,34 @@ func (q *Queue) getWorkflowSequences(workflowID string) []int64 {
 	if !exists {
 		return nil
 	}
-	
+
 	sequenceMap := sequenceMapInterface.(*sync.Map)
 	var sequences []int64
-	
+
 	sequenceMap.Range(func(key, _ interface{}) bool {
 		if seq, ok := key.(int64); ok {
 			sequences = append(sequences, seq)
 		}
 		return true
 	})
-	
+
 	return sequences
 }
 
 func (q *Queue) rebuildWorkflowIndex() {
 	prefix := fmt.Sprintf("queue:%s:pending:", q.name)
-	
+
 	currentKey, value, exists, err := q.storage.GetNext(prefix)
 	if err != nil || !exists {
 		return
 	}
-	
+
 	for exists {
 		queueItem, err := domain.QueueItemFromBytes(value)
 		if err == nil {
 			q.updateWorkflowIndex(queueItem.Data, queueItem.Sequence, true)
 		}
-		
+
 		currentKey, value, exists, err = q.storage.GetNextAfter(prefix, currentKey)
 		if err != nil {
 			break

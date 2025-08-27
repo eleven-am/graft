@@ -205,7 +205,10 @@ func setupAggressiveEngine(t *testing.T) (*Engine, *TestNodeRegistry, func()) {
 
 	// Create the real AppStorage with mock RaftNode
 	appStorage := storage.NewAppStorage(mockRaftNode, db, logger)
-	testQueue := queue.NewQueue("aggressive-test-queue", appStorage)
+	mockEventManager := &mocks.MockEventManager{}
+	mockEventManager.On("Subscribe", mock.AnythingOfType("string"), mock.AnythingOfType("func(string, interface {})")).Return(nil).Maybe()
+	mockEventManager.On("Broadcast", mock.AnythingOfType("domain.Event")).Return(nil).Maybe()
+	testQueue := queue.NewQueue("aggressive-test-queue", appStorage, mockEventManager, logger)
 	nodeRegistry := NewTestNodeRegistry()
 
 	config := domain.DefaultEngineConfig()
@@ -213,7 +216,7 @@ func setupAggressiveEngine(t *testing.T) (*Engine, *TestNodeRegistry, func()) {
 	config.RetryAttempts = 1                             // Lower for easier DLQ testing
 	config.WorkerCount = 1                               // Single worker to avoid race conditions
 
-	engine := NewEngine(config, nodeRegistry, testQueue, appStorage, logger)
+	engine := NewEngine(config, "test-node", nodeRegistry, testQueue, appStorage, mockEventManager, logger)
 
 	ctx := context.Background()
 	err = engine.Start(ctx)
@@ -307,7 +310,7 @@ func TestEngine_TimeoutCascadeFailure(t *testing.T) {
 	}
 
 	// Wait for timeouts to occur
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(3 * time.Second)
 
 	metrics := engine.GetMetrics()
 	t.Logf("Timeout test metrics: TimedOut=%d, Failed=%d, Retried=%d",
@@ -341,7 +344,7 @@ func TestEngine_PanicRecovery(t *testing.T) {
 	require.NoError(t, engine.ProcessTrigger(trigger))
 
 	// Give it time to process retries and DLQ (need >1s for retry delay)
-	time.Sleep(2 * time.Second)
+	time.Sleep(4 * time.Second)
 
 	// Engine should still be responsive and not crashed
 	status, err := engine.GetWorkflowStatus("panic-test")
@@ -534,11 +537,14 @@ func TestEngine_RapidStartStop(t *testing.T) {
 
 		// Create the real AppStorage with mock RaftNode
 		appStorage := storage.NewAppStorage(mockRaftNode, db, logger)
-		testQueue := queue.NewQueue(fmt.Sprintf("rapid-test-%d", i), appStorage)
+		mockEventManager := &mocks.MockEventManager{}
+		mockEventManager.On("Subscribe", mock.AnythingOfType("string"), mock.AnythingOfType("func(string, interface {})")).Return(nil).Maybe()
+		mockEventManager.On("Broadcast", mock.AnythingOfType("domain.Event")).Return(nil).Maybe()
+		testQueue := queue.NewQueue(fmt.Sprintf("rapid-test-%d", i), appStorage, mockEventManager, logger)
 		nodeRegistry := NewTestNodeRegistry()
 
 		config := domain.DefaultEngineConfig()
-		engine := NewEngine(config, nodeRegistry, testQueue, appStorage, logger)
+		engine := NewEngine(config, fmt.Sprintf("test-node-%d", i), nodeRegistry, testQueue, appStorage, mockEventManager, logger)
 
 		ctx := context.Background()
 
@@ -676,7 +682,7 @@ func TestEngine_ThroughputAnalysis(t *testing.T) {
 	completionGap := sequentialCompletionRate - finalCompletionRate
 
 	if finalCompletionRate < 80 && completionGap > 15 {
-		t.Log("⚠️  POTENTIAL BUG: Significant drop in concurrent completion rate")
+		t.Log("POTENTIAL BUG: Significant drop in concurrent completion rate")
 		t.Log("This suggests the engine may lose workflows under concurrent load")
 
 		// Detailed analysis

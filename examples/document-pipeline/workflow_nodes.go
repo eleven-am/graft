@@ -5,12 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand"
-	"os"
 	"strings"
 	"time"
 
 	"github.com/eleven-am/graft"
-	"github.com/sanity-io/litter"
 )
 
 func marshalConfig(config ProcessingConfig) (json.RawMessage, error) {
@@ -50,14 +48,7 @@ func (n *DocumentIngestNode) GetName() string {
 }
 
 func (n *DocumentIngestNode) CanStart(ctx context.Context, state Document, config ProcessingConfig) bool {
-	fmt.Fprintf(os.Stderr, "🔥🔥🔥 DocumentIngestNode.CanStart CALLED 🔥🔥🔥\n")
-	fmt.Fprintf(os.Stderr, "📝 STATE TYPE: %T\n", state)
-	fmt.Fprintf(os.Stderr, "📝 STATE VALUE: %s\n", litter.Sdump(state))
-	fmt.Fprintf(os.Stderr, "📝 CONFIG TYPE: %T\n", config)
-	fmt.Fprintf(os.Stderr, "📝 CONFIG VALUE: %s\n", litter.Sdump(config))
-
 	result := state.Status != "processing_complete"
-	fmt.Fprintf(os.Stderr, "🔥 DocumentIngestNode.CanStart returning: %v\n", result)
 	return result
 }
 
@@ -583,6 +574,6 @@ func repairDocument(content string) string {
 }
 
 func sendNotification(doc Document) {
-	fmt.Printf("📧 PRIORITY NOTIFICATION: Document %s completed with %d processing steps\n",
+	fmt.Printf("PRIORITY NOTIFICATION: Document %s completed with %d processing steps\n",
 		doc.ID, len(doc.ProcessedBy))
 }
