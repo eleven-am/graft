@@ -5,11 +5,9 @@ go 1.23.0
 toolchain go1.24.4
 
 require (
-	github.com/eleven-am/graft v0.1.12
+	github.com/eleven-am/graft v0.1.14
 	github.com/sanity-io/litter v1.5.8
 )
-
-replace github.com/eleven-am/graft => ../..
 
 require (
 	dario.cat/mergo v1.0.2 // indirect
