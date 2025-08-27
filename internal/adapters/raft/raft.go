@@ -61,15 +61,18 @@ func DefaultRaftConfig(nodeID, clusterID, bindAddr, dataDir string, clusterPolic
 }
 
 type Node struct {
-	raft      *raft.Raft
-	config    *Config
-	storage   *Storage
-	fsm       *FSM
-	transport raft.Transport
-	logger    *slog.Logger
-	started   bool
-	stopped   bool
-	mu        sync.Mutex
+	raft         *raft.Raft
+	config       *Config
+	storage      *Storage
+	fsm          *FSM
+	transport    raft.Transport
+	logger       *slog.Logger
+	started      bool
+	stopped      bool
+	mu           sync.Mutex
+	eventManager ports.EventManager
+	observer     *raft.Observer
+	observerChan chan raft.Observation
 }
 
 func NewNode(config *Config, storage *Storage, eventManager ports.EventManager, logger *slog.Logger) (*Node, error) {
@@ -80,11 +83,17 @@ func NewNode(config *Config, storage *Storage, eventManager ports.EventManager, 
 	logger = logger.With("component", "raft", "node_id", config.NodeID)
 	fsm := NewFSM(storage.StateDB(), eventManager, config.NodeID, config.ClusterID, config.ClusterPolicy, logger)
 
+	observerChan := make(chan raft.Observation, 100)
+	observer := raft.NewObserver(observerChan, false, nil)
+
 	return &Node{
-		config:  config,
-		storage: storage,
-		fsm:     fsm,
-		logger:  logger,
+		config:       config,
+		storage:      storage,
+		fsm:          fsm,
+		logger:       logger,
+		eventManager: eventManager,
+		observer:     observer,
+		observerChan: observerChan,
 	}, nil
 }
 
@@ -165,6 +174,9 @@ func (r *Node) Start(ctx context.Context, existingPeers []ports.Peer) error {
 		return fmt.Errorf("failed to create raft node: %w", err)
 	}
 	r.raft = raftNode
+
+	r.raft.RegisterObserver(r.observer)
+	go r.processObservations(ctx)
 
 	if len(existingPeers) > 0 {
 		peerStrings := make([]string, len(existingPeers))
@@ -713,6 +725,64 @@ func (s *slogAdapter) StandardLogger(opts *hclog.StandardLoggerOptions) *log.Log
 
 func (s *slogAdapter) StandardWriter(opts *hclog.StandardLoggerOptions) io.Writer {
 	return os.Stderr
+}
+
+func (r *Node) processObservations(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case obs := <-r.observerChan:
+			r.handleObservation(obs)
+		}
+	}
+}
+
+func (r *Node) handleObservation(obs raft.Observation) {
+	if r.eventManager == nil {
+		return
+	}
+
+	switch data := obs.Data.(type) {
+	case raft.PeerObservation:
+		if data.Removed {
+			event := &domain.NodeLeftEvent{
+				NodeID:   string(data.Peer.ID),
+				Address:  string(data.Peer.Address),
+				LeftAt:   time.Now(),
+				Metadata: make(map[string]interface{}),
+			}
+			if notifier, ok := r.eventManager.(interface{ NotifyNodeLeft(*domain.NodeLeftEvent) }); ok {
+				notifier.NotifyNodeLeft(event)
+			}
+			r.logger.Info("node left cluster", "node_id", event.NodeID, "address", event.Address)
+		} else {
+			event := &domain.NodeJoinedEvent{
+				NodeID:   string(data.Peer.ID),
+				Address:  string(data.Peer.Address),
+				JoinedAt: time.Now(),
+				Metadata: make(map[string]interface{}),
+			}
+			if notifier, ok := r.eventManager.(interface{ NotifyNodeJoined(*domain.NodeJoinedEvent) }); ok {
+				notifier.NotifyNodeJoined(event)
+			}
+			r.logger.Info("node joined cluster", "node_id", event.NodeID, "address", event.Address)
+		}
+
+	case raft.LeaderObservation:
+		event := &domain.LeaderChangedEvent{
+			NewLeaderID:   string(data.LeaderID),
+			NewLeaderAddr: string(data.LeaderAddr),
+			ChangedAt:     time.Now(),
+			Metadata:      make(map[string]interface{}),
+		}
+		if notifier, ok := r.eventManager.(interface {
+			NotifyLeaderChanged(*domain.LeaderChangedEvent)
+		}); ok {
+			notifier.NotifyLeaderChanged(event)
+		}
+		r.logger.Info("leader changed", "new_leader", event.NewLeaderID, "address", event.NewLeaderAddr)
+	}
 }
 
 func makeAdvertiseAddr(bindAddr string) (string, error) {

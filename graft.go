@@ -97,6 +97,25 @@ type NodeCompletedEvent = core.NodeCompletedEvent
 // NodeErrorEvent is emitted when an individual node encounters an error.
 type NodeErrorEvent = core.NodeErrorEvent
 
+// Cluster membership events for monitoring cluster topology changes
+
+// NodeJoinedEvent is emitted when a new node joins the cluster.
+type NodeJoinedEvent = core.NodeJoinedEvent
+
+// NodeLeftEvent is emitted when a node leaves the cluster.
+type NodeLeftEvent = core.NodeLeftEvent
+
+// LeaderChangedEvent is emitted when cluster leadership changes.
+type LeaderChangedEvent = core.LeaderChangedEvent
+
+// Cross-node developer messaging types
+
+// DevCommand represents a developer command that can be broadcast across cluster nodes.
+type DevCommand = core.DevCommand
+
+// CommandHandler defines the signature for handling developer commands.
+type CommandHandler = core.CommandHandler
+
 // Context types for workflow execution
 
 // WorkflowContext provides metadata about the current workflow execution
@@ -189,4 +208,33 @@ func NewWithConfig(config *domain.Config) *Manager {
 //	}
 func GetWorkflowContext(ctx context.Context) (*WorkflowContext, bool) {
 	return domain.GetWorkflowContext(ctx)
+}
+
+// WrapHandler creates a type-safe command handler wrapper that automatically converts
+// interface{} parameters to the specified concrete type T.
+//
+// This wrapper enables you to write strongly-typed command handlers while still
+// conforming to the generic CommandHandler interface expected by the command system.
+//
+// Parameters:
+//   - handler: A typed handler function that accepts parameters of type T
+//
+// Returns:
+//   - CommandHandler: A generic handler that can be registered with the command system
+//
+// Example usage:
+//
+//	type DeployParams struct {
+//	    Service  string `json:"service"`
+//	    Version  string `json:"version"`
+//	    Replicas int    `json:"replicas"`
+//	}
+//
+//	handler := graft.WrapHandler(func(ctx context.Context, from string, params DeployParams) error {
+//	    return deployService(params.Service, params.Version, params.Replicas)
+//	})
+//
+//	manager.RegisterCommandHandler("deploy", handler)
+func WrapHandler[T any](handler func(ctx context.Context, from string, params T) error) CommandHandler {
+	return core.WrapHandler(handler)
 }

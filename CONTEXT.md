@@ -742,6 +742,323 @@ manager.RegisterCommandHandler("risky-operation",
 6. **Log command execution**: Log both successful and failed command executions
 7. **Don't block**: Keep command handlers fast and non-blocking
 
+## Cluster Membership Events
+
+Graft automatically monitors cluster membership changes and provides real-time notifications when nodes join, leave, or when leadership changes occur.
+
+### Event Types
+
+Graft provides three types of cluster membership events:
+
+- **NodeJoinedEvent**: Fired when a new node joins the cluster
+- **NodeLeftEvent**: Fired when a node leaves the cluster (gracefully or due to failure)
+- **LeaderChangedEvent**: Fired when cluster leadership changes
+
+### Quick Start
+
+#### 1. Register Event Handlers
+
+Register handlers to receive notifications about cluster membership changes:
+
+```go
+// Monitor node joins
+manager.OnNodeJoined(func(event *graft.NodeJoinedEvent) {
+    log.Printf("Node joined cluster: %s at %s (joined: %v)", 
+        event.NodeID, event.Address, event.JoinedAt)
+    
+    // Update your application state
+    updateNodeRegistry(event.NodeID, event.Address)
+    
+    // Access optional metadata
+    if priority, ok := event.Metadata["priority"].(string); ok {
+        log.Printf("Node priority: %s", priority)
+    }
+})
+
+// Monitor node departures
+manager.OnNodeLeft(func(event *graft.NodeLeftEvent) {
+    log.Printf("Node left cluster: %s at %s (left: %v)", 
+        event.NodeID, event.Address, event.LeftAt)
+    
+    // Clean up resources for this node
+    cleanupNodeResources(event.NodeID)
+    
+    // Check if this affects your application
+    if isImportantNode(event.NodeID) {
+        triggerFailoverProcedures()
+    }
+})
+
+// Monitor leadership changes
+manager.OnLeaderChanged(func(event *graft.LeaderChangedEvent) {
+    log.Printf("Leadership changed: %s -> %s at %s", 
+        event.PreviousID, event.NewLeaderID, event.NewLeaderAddr)
+    
+    // Update leader-specific logic
+    if event.NewLeaderID == getCurrentNodeID() {
+        log.Println("This node is now the leader!")
+        onBecomeLeader()
+    } else if event.PreviousID == getCurrentNodeID() {
+        log.Println("This node is no longer the leader")
+        onLoseLeadership()
+    }
+})
+```
+
+#### 2. Event-Driven Architecture Patterns
+
+Use cluster membership events to build resilient distributed applications:
+
+```go
+type ClusterMonitor struct {
+    activeNodes   map[string]NodeInfo
+    currentLeader string
+    isLeader      bool
+    mu           sync.RWMutex
+}
+
+func NewClusterMonitor(manager *graft.Manager) *ClusterMonitor {
+    cm := &ClusterMonitor{
+        activeNodes: make(map[string]NodeInfo),
+    }
+    
+    // Track cluster membership
+    manager.OnNodeJoined(cm.handleNodeJoined)
+    manager.OnNodeLeft(cm.handleNodeLeft)
+    manager.OnLeaderChanged(cm.handleLeaderChanged)
+    
+    return cm
+}
+
+func (cm *ClusterMonitor) handleNodeJoined(event *graft.NodeJoinedEvent) {
+    cm.mu.Lock()
+    defer cm.mu.Unlock()
+    
+    cm.activeNodes[event.NodeID] = NodeInfo{
+        Address:  event.Address,
+        JoinedAt: event.JoinedAt,
+    }
+    
+    log.Printf("Cluster now has %d nodes", len(cm.activeNodes))
+    
+    // Trigger rebalancing if needed
+    if len(cm.activeNodes) >= 3 {
+        cm.triggerRebalancing()
+    }
+}
+
+func (cm *ClusterMonitor) handleNodeLeft(event *graft.NodeLeftEvent) {
+    cm.mu.Lock()
+    defer cm.mu.Unlock()
+    
+    delete(cm.activeNodes, event.NodeID)
+    
+    log.Printf("Cluster now has %d nodes", len(cm.activeNodes))
+    
+    // Handle potential split-brain scenarios
+    if len(cm.activeNodes) < 2 {
+        cm.enterMaintenanceMode()
+    }
+}
+
+func (cm *ClusterMonitor) handleLeaderChanged(event *graft.LeaderChangedEvent) {
+    cm.mu.Lock()
+    defer cm.mu.Unlock()
+    
+    cm.currentLeader = event.NewLeaderID
+    cm.isLeader = (event.NewLeaderID == getCurrentNodeID())
+    
+    if cm.isLeader {
+        cm.onBecomeLeader()
+    } else {
+        cm.onBecomeFollower()
+    }
+}
+```
+
+### Event Fields
+
+#### NodeJoinedEvent
+```go
+type NodeJoinedEvent struct {
+    NodeID   string                 // Unique node identifier
+    Address  string                 // Node's network address
+    JoinedAt time.Time              // When the node joined
+    Metadata map[string]interface{} // Optional additional data
+}
+```
+
+#### NodeLeftEvent
+```go
+type NodeLeftEvent struct {
+    NodeID   string                 // Unique node identifier
+    Address  string                 // Node's network address  
+    LeftAt   time.Time              // When the node left
+    Metadata map[string]interface{} // Optional additional data
+}
+```
+
+#### LeaderChangedEvent
+```go
+type LeaderChangedEvent struct {
+    NewLeaderID   string                 // New leader's node ID
+    NewLeaderAddr string                 // New leader's address
+    PreviousID    string                 // Previous leader (may be empty)
+    ChangedAt     time.Time              // When leadership changed
+    Metadata      map[string]interface{} // Optional additional data
+}
+```
+
+### Advanced Usage
+
+#### Building a Load Balancer
+
+Use membership events to maintain an accurate view of cluster topology:
+
+```go
+type LoadBalancer struct {
+    nodes    []string
+    current  int
+    mu       sync.RWMutex
+}
+
+func NewLoadBalancer(manager *graft.Manager) *LoadBalancer {
+    lb := &LoadBalancer{}
+    
+    manager.OnNodeJoined(func(event *graft.NodeJoinedEvent) {
+        lb.mu.Lock()
+        defer lb.mu.Unlock()
+        lb.nodes = append(lb.nodes, event.Address)
+        log.Printf("Load balancer updated: %d nodes available", len(lb.nodes))
+    })
+    
+    manager.OnNodeLeft(func(event *graft.NodeLeftEvent) {
+        lb.mu.Lock()
+        defer lb.mu.Unlock()
+        for i, addr := range lb.nodes {
+            if addr == event.Address {
+                lb.nodes = append(lb.nodes[:i], lb.nodes[i+1:]...)
+                break
+            }
+        }
+        log.Printf("Load balancer updated: %d nodes available", len(lb.nodes))
+    })
+    
+    return lb
+}
+
+func (lb *LoadBalancer) NextNode() string {
+    lb.mu.RLock()
+    defer lb.mu.RUnlock()
+    
+    if len(lb.nodes) == 0 {
+        return ""
+    }
+    
+    node := lb.nodes[lb.current%len(lb.nodes)]
+    lb.current++
+    return node
+}
+```
+
+#### Implementing Circuit Breakers
+
+Use membership events to implement circuit breaker patterns:
+
+```go
+type CircuitBreaker struct {
+    healthyNodes map[string]bool
+    mu          sync.RWMutex
+}
+
+func NewCircuitBreaker(manager *graft.Manager) *CircuitBreaker {
+    cb := &CircuitBreaker{
+        healthyNodes: make(map[string]bool),
+    }
+    
+    manager.OnNodeJoined(func(event *graft.NodeJoinedEvent) {
+        cb.mu.Lock()
+        cb.healthyNodes[event.NodeID] = true
+        cb.mu.Unlock()
+        log.Printf("Circuit breaker: node %s marked healthy", event.NodeID)
+    })
+    
+    manager.OnNodeLeft(func(event *graft.NodeLeftEvent) {
+        cb.mu.Lock()
+        cb.healthyNodes[event.NodeID] = false
+        cb.mu.Unlock()
+        log.Printf("Circuit breaker: node %s marked unhealthy", event.NodeID)
+    })
+    
+    return cb
+}
+
+func (cb *CircuitBreaker) IsNodeHealthy(nodeID string) bool {
+    cb.mu.RLock()
+    defer cb.mu.RUnlock()
+    return cb.healthyNodes[nodeID]
+}
+```
+
+### Integration with Service Discovery
+
+Combine membership events with external service discovery systems:
+
+```go
+// Update external load balancer when cluster changes
+manager.OnNodeJoined(func(event *graft.NodeJoinedEvent) {
+    updateExternalLoadBalancer("add", event.Address)
+})
+
+manager.OnNodeLeft(func(event *graft.NodeLeftEvent) {
+    updateExternalLoadBalancer("remove", event.Address)
+})
+
+// Update service registry
+manager.OnLeaderChanged(func(event *graft.LeaderChangedEvent) {
+    updateServiceRegistry("graft-leader", event.NewLeaderAddr)
+})
+```
+
+### Use Cases
+
+- **Dynamic load balancing**: Maintain up-to-date node lists for request routing
+- **Health monitoring**: Track cluster health and trigger alerts
+- **Auto-scaling**: Automatically adjust cluster size based on membership
+- **Split-brain detection**: Monitor for network partitions
+- **Resource management**: Redistribute work when nodes join/leave  
+- **Leader-specific operations**: Execute logic only on the leader node
+- **Service discovery integration**: Update external systems with cluster changes
+- **Circuit breaker patterns**: Implement fault tolerance mechanisms
+
+### Best Practices
+
+1. **Handle network partitions**: Design for temporary node disconnections
+2. **Implement exponential backoff**: When responding to rapid membership changes
+3. **Use metadata effectively**: Include node roles, capabilities, or priorities
+4. **Monitor event patterns**: Frequent joins/leaves may indicate network issues
+5. **Consider eventual consistency**: Membership views may briefly differ across nodes
+6. **Plan for leader failures**: Always have leadership transition logic
+7. **Log membership events**: Essential for debugging cluster issues
+8. **Test failure scenarios**: Simulate node failures and network partitions
+
+### Troubleshooting
+
+**Events not firing:**
+- Ensure event handlers are registered before starting the cluster
+- Check Raft observer is properly configured
+- Verify network connectivity between nodes
+
+**Duplicate events:**
+- This is expected behavior during network partitions
+- Implement idempotent event handlers
+- Use node IDs and timestamps to deduplicate
+
+**Missing node left events:**
+- Abrupt shutdowns may not trigger immediate events
+- Implement timeout-based detection for critical scenarios
+- Monitor Raft heartbeat failures
+
 ## Need Help?
 
 - Check examples in `/examples` directory

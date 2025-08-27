@@ -27,6 +27,10 @@ type EventManager interface {
 
 	BroadcastCommand(ctx context.Context, devCmd *domain.DevCommand) error
 	RegisterCommandHandler(cmdName string, handler domain.CommandHandler) error
+
+	OnNodeJoined(handler func(event *domain.NodeJoinedEvent)) error
+	OnNodeLeft(handler func(event *domain.NodeLeftEvent)) error
+	OnLeaderChanged(handler func(event *domain.LeaderChangedEvent)) error
 }
 
 type EventHandler func(interface{})

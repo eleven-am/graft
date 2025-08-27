@@ -92,6 +92,28 @@ func (wpe *WorkflowPanicError) Error() string {
 	return "node execution panicked: " + wpe.NodeID
 }
 
+type NodeJoinedEvent struct {
+	NodeID   string                 `json:"node_id"`
+	Address  string                 `json:"address"`
+	JoinedAt time.Time              `json:"joined_at"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type NodeLeftEvent struct {
+	NodeID   string                 `json:"node_id"`
+	Address  string                 `json:"address"`
+	LeftAt   time.Time              `json:"left_at"`
+	Metadata map[string]interface{} `json:"metadata,omitempty"`
+}
+
+type LeaderChangedEvent struct {
+	NewLeaderID   string                 `json:"new_leader_id"`
+	NewLeaderAddr string                 `json:"new_leader_addr"`
+	PreviousID    string                 `json:"previous_id,omitempty"`
+	ChangedAt     time.Time              `json:"changed_at"`
+	Metadata      map[string]interface{} `json:"metadata,omitempty"`
+}
+
 func NewPanicError(workflowID, nodeID string, panicValue interface{}) *WorkflowPanicError {
 	buf := make([]byte, 4096)
 	n := runtime.Stack(buf, false)

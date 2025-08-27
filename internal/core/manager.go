@@ -64,6 +64,9 @@ type NodeCompletedEvent = domain.NodeCompletedEvent
 type NodeErrorEvent = domain.NodeErrorEvent
 type CommandHandler = domain.CommandHandler
 type DevCommand = domain.DevCommand
+type NodeJoinedEvent = domain.NodeJoinedEvent
+type NodeLeftEvent = domain.NodeLeftEvent
+type LeaderChangedEvent = domain.LeaderChangedEvent
 
 func New(nodeID, bindAddr, dataDir string, logger *slog.Logger) *Manager {
 	config := domain.NewConfigFromSimple(nodeID, bindAddr, dataDir, logger)
@@ -406,6 +409,18 @@ func (m *Manager) BroadcastCommand(ctx context.Context, devCmd *DevCommand) erro
 
 func (m *Manager) RegisterCommandHandler(cmdName string, handler CommandHandler) error {
 	return m.eventManager.RegisterCommandHandler(cmdName, handler)
+}
+
+func (m *Manager) OnNodeJoined(handler func(event *NodeJoinedEvent)) error {
+	return m.eventManager.OnNodeJoined(handler)
+}
+
+func (m *Manager) OnNodeLeft(handler func(event *NodeLeftEvent)) error {
+	return m.eventManager.OnNodeLeft(handler)
+}
+
+func (m *Manager) OnLeaderChanged(handler func(event *LeaderChangedEvent)) error {
+	return m.eventManager.OnLeaderChanged(handler)
 }
 
 func (m *Manager) SubscribeToWorkflowState(workflowID string) (<-chan *WorkflowStatus, func(), error) {

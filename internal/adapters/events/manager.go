@@ -34,6 +34,10 @@ type Manager struct {
 	nodeErrorHandlers         []func(*domain.NodeErrorEvent)
 	genericHandlers           []genericSubscription
 
+	nodeJoinedHandlers    []func(*domain.NodeJoinedEvent)
+	nodeLeftHandlers      []func(*domain.NodeLeftEvent)
+	leaderChangedHandlers []func(*domain.LeaderChangedEvent)
+
 	commandHandlers      map[string]domain.CommandHandler
 	channelSubscriptions map[string][]chan ports.StorageEvent
 }
@@ -528,7 +532,7 @@ func (m *Manager) processDevCommand(event *ports.StorageEvent, keyParts []string
 	}
 
 	cmdName := keyParts[1]
-	
+
 	data, _, exists, err := m.storage.Get(event.Key)
 	if err != nil {
 		return domain.ErrInvalidInput
@@ -559,6 +563,60 @@ func (m *Manager) processDevCommand(event *ports.StorageEvent, keyParts []string
 	})
 
 	return nil
+}
+
+func (m *Manager) OnNodeJoined(handler func(*domain.NodeJoinedEvent)) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nodeJoinedHandlers = append(m.nodeJoinedHandlers, handler)
+	return nil
+}
+
+func (m *Manager) OnNodeLeft(handler func(*domain.NodeLeftEvent)) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.nodeLeftHandlers = append(m.nodeLeftHandlers, handler)
+	return nil
+}
+
+func (m *Manager) OnLeaderChanged(handler func(*domain.LeaderChangedEvent)) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.leaderChangedHandlers = append(m.leaderChangedHandlers, handler)
+	return nil
+}
+
+func (m *Manager) NotifyNodeJoined(event *domain.NodeJoinedEvent) {
+	m.mu.RLock()
+	handlers := make([]func(*domain.NodeJoinedEvent), len(m.nodeJoinedHandlers))
+	copy(handlers, m.nodeJoinedHandlers)
+	m.mu.RUnlock()
+
+	for _, handler := range handlers {
+		go m.safeCall(func() { handler(event) })
+	}
+}
+
+func (m *Manager) NotifyNodeLeft(event *domain.NodeLeftEvent) {
+	m.mu.RLock()
+	handlers := make([]func(*domain.NodeLeftEvent), len(m.nodeLeftHandlers))
+	copy(handlers, m.nodeLeftHandlers)
+	m.mu.RUnlock()
+
+	for _, handler := range handlers {
+		go m.safeCall(func() { handler(event) })
+	}
+}
+
+func (m *Manager) NotifyLeaderChanged(event *domain.LeaderChangedEvent) {
+	m.mu.RLock()
+	handlers := make([]func(*domain.LeaderChangedEvent), len(m.leaderChangedHandlers))
+	copy(handlers, m.leaderChangedHandlers)
+	m.mu.RUnlock()
+
+	for _, handler := range handlers {
+		go m.safeCall(func() { handler(event) })
+	}
 }
 
 func (m *Manager) safeCall(fn func()) {

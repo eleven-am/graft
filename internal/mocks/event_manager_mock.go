@@ -68,6 +68,99 @@ func (_c *MockEventManager_Broadcast_Call) RunAndReturn(run func(domain.Event) e
 	return _c
 }
 
+// BroadcastCommand provides a mock function with given fields: ctx, devCmd
+func (_m *MockEventManager) BroadcastCommand(ctx context.Context, devCmd *domain.DevCommand) error {
+	ret := _m.Called(ctx, devCmd)
+
+	if len(ret) == 0 {
+		panic("no return value specified for BroadcastCommand")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, *domain.DevCommand) error); ok {
+		r0 = rf(ctx, devCmd)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockEventManager_BroadcastCommand_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'BroadcastCommand'
+type MockEventManager_BroadcastCommand_Call struct {
+	*mock.Call
+}
+
+// BroadcastCommand is a helper method to define mock.On call
+//   - ctx context.Context
+//   - devCmd *domain.DevCommand
+func (_e *MockEventManager_Expecter) BroadcastCommand(ctx interface{}, devCmd interface{}) *MockEventManager_BroadcastCommand_Call {
+	return &MockEventManager_BroadcastCommand_Call{Call: _e.mock.On("BroadcastCommand", ctx, devCmd)}
+}
+
+func (_c *MockEventManager_BroadcastCommand_Call) Run(run func(ctx context.Context, devCmd *domain.DevCommand)) *MockEventManager_BroadcastCommand_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(*domain.DevCommand))
+	})
+	return _c
+}
+
+func (_c *MockEventManager_BroadcastCommand_Call) Return(_a0 error) *MockEventManager_BroadcastCommand_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockEventManager_BroadcastCommand_Call) RunAndReturn(run func(context.Context, *domain.DevCommand) error) *MockEventManager_BroadcastCommand_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// OnLeaderChanged provides a mock function with given fields: handler
+func (_m *MockEventManager) OnLeaderChanged(handler func(*domain.LeaderChangedEvent)) error {
+	ret := _m.Called(handler)
+
+	if len(ret) == 0 {
+		panic("no return value specified for OnLeaderChanged")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(func(*domain.LeaderChangedEvent)) error); ok {
+		r0 = rf(handler)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockEventManager_OnLeaderChanged_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'OnLeaderChanged'
+type MockEventManager_OnLeaderChanged_Call struct {
+	*mock.Call
+}
+
+// OnLeaderChanged is a helper method to define mock.On call
+//   - handler func(*domain.LeaderChangedEvent)
+func (_e *MockEventManager_Expecter) OnLeaderChanged(handler interface{}) *MockEventManager_OnLeaderChanged_Call {
+	return &MockEventManager_OnLeaderChanged_Call{Call: _e.mock.On("OnLeaderChanged", handler)}
+}
+
+func (_c *MockEventManager_OnLeaderChanged_Call) Run(run func(handler func(*domain.LeaderChangedEvent))) *MockEventManager_OnLeaderChanged_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(func(*domain.LeaderChangedEvent)))
+	})
+	return _c
+}
+
+func (_c *MockEventManager_OnLeaderChanged_Call) Return(_a0 error) *MockEventManager_OnLeaderChanged_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockEventManager_OnLeaderChanged_Call) RunAndReturn(run func(func(*domain.LeaderChangedEvent)) error) *MockEventManager_OnLeaderChanged_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // OnNodeCompleted provides a mock function with given fields: handler
 func (_m *MockEventManager) OnNodeCompleted(handler func(*domain.NodeCompletedEvent)) error {
 	ret := _m.Called(handler)
@@ -156,6 +249,98 @@ func (_c *MockEventManager_OnNodeError_Call) Return(_a0 error) *MockEventManager
 }
 
 func (_c *MockEventManager_OnNodeError_Call) RunAndReturn(run func(func(*domain.NodeErrorEvent)) error) *MockEventManager_OnNodeError_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// OnNodeJoined provides a mock function with given fields: handler
+func (_m *MockEventManager) OnNodeJoined(handler func(*domain.NodeJoinedEvent)) error {
+	ret := _m.Called(handler)
+
+	if len(ret) == 0 {
+		panic("no return value specified for OnNodeJoined")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(func(*domain.NodeJoinedEvent)) error); ok {
+		r0 = rf(handler)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockEventManager_OnNodeJoined_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'OnNodeJoined'
+type MockEventManager_OnNodeJoined_Call struct {
+	*mock.Call
+}
+
+// OnNodeJoined is a helper method to define mock.On call
+//   - handler func(*domain.NodeJoinedEvent)
+func (_e *MockEventManager_Expecter) OnNodeJoined(handler interface{}) *MockEventManager_OnNodeJoined_Call {
+	return &MockEventManager_OnNodeJoined_Call{Call: _e.mock.On("OnNodeJoined", handler)}
+}
+
+func (_c *MockEventManager_OnNodeJoined_Call) Run(run func(handler func(*domain.NodeJoinedEvent))) *MockEventManager_OnNodeJoined_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(func(*domain.NodeJoinedEvent)))
+	})
+	return _c
+}
+
+func (_c *MockEventManager_OnNodeJoined_Call) Return(_a0 error) *MockEventManager_OnNodeJoined_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockEventManager_OnNodeJoined_Call) RunAndReturn(run func(func(*domain.NodeJoinedEvent)) error) *MockEventManager_OnNodeJoined_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// OnNodeLeft provides a mock function with given fields: handler
+func (_m *MockEventManager) OnNodeLeft(handler func(*domain.NodeLeftEvent)) error {
+	ret := _m.Called(handler)
+
+	if len(ret) == 0 {
+		panic("no return value specified for OnNodeLeft")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(func(*domain.NodeLeftEvent)) error); ok {
+		r0 = rf(handler)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockEventManager_OnNodeLeft_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'OnNodeLeft'
+type MockEventManager_OnNodeLeft_Call struct {
+	*mock.Call
+}
+
+// OnNodeLeft is a helper method to define mock.On call
+//   - handler func(*domain.NodeLeftEvent)
+func (_e *MockEventManager_Expecter) OnNodeLeft(handler interface{}) *MockEventManager_OnNodeLeft_Call {
+	return &MockEventManager_OnNodeLeft_Call{Call: _e.mock.On("OnNodeLeft", handler)}
+}
+
+func (_c *MockEventManager_OnNodeLeft_Call) Run(run func(handler func(*domain.NodeLeftEvent))) *MockEventManager_OnNodeLeft_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(func(*domain.NodeLeftEvent)))
+	})
+	return _c
+}
+
+func (_c *MockEventManager_OnNodeLeft_Call) Return(_a0 error) *MockEventManager_OnNodeLeft_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockEventManager_OnNodeLeft_Call) RunAndReturn(run func(func(*domain.NodeLeftEvent)) error) *MockEventManager_OnNodeLeft_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -432,6 +617,53 @@ func (_c *MockEventManager_OnWorkflowStarted_Call) Return(_a0 error) *MockEventM
 }
 
 func (_c *MockEventManager_OnWorkflowStarted_Call) RunAndReturn(run func(func(*domain.WorkflowStartedEvent)) error) *MockEventManager_OnWorkflowStarted_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// RegisterCommandHandler provides a mock function with given fields: cmdName, handler
+func (_m *MockEventManager) RegisterCommandHandler(cmdName string, handler domain.CommandHandler) error {
+	ret := _m.Called(cmdName, handler)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RegisterCommandHandler")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(string, domain.CommandHandler) error); ok {
+		r0 = rf(cmdName, handler)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockEventManager_RegisterCommandHandler_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RegisterCommandHandler'
+type MockEventManager_RegisterCommandHandler_Call struct {
+	*mock.Call
+}
+
+// RegisterCommandHandler is a helper method to define mock.On call
+//   - cmdName string
+//   - handler domain.CommandHandler
+func (_e *MockEventManager_Expecter) RegisterCommandHandler(cmdName interface{}, handler interface{}) *MockEventManager_RegisterCommandHandler_Call {
+	return &MockEventManager_RegisterCommandHandler_Call{Call: _e.mock.On("RegisterCommandHandler", cmdName, handler)}
+}
+
+func (_c *MockEventManager_RegisterCommandHandler_Call) Run(run func(cmdName string, handler domain.CommandHandler)) *MockEventManager_RegisterCommandHandler_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].(domain.CommandHandler))
+	})
+	return _c
+}
+
+func (_c *MockEventManager_RegisterCommandHandler_Call) Return(_a0 error) *MockEventManager_RegisterCommandHandler_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockEventManager_RegisterCommandHandler_Call) RunAndReturn(run func(string, domain.CommandHandler) error) *MockEventManager_RegisterCommandHandler_Call {
 	_c.Call.Return(run)
 	return _c
 }
