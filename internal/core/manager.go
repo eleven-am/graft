@@ -96,10 +96,9 @@ func NewWithConfig(config *domain.Config) *Manager {
 	eventManager := events.NewManagerWithStorage(appStorage, config.NodeID, logger)
 
 	nodeRegistryManager := node_registry.NewManager(logger)
-	nodeRegistryBridge := node_registry.NewDomainBridge(nodeRegistryManager)
 
 	queueAdapter := queue.NewQueue("main", appStorage)
-	engineAdapter := engine.NewEngine(config.Engine, nodeRegistryBridge, queueAdapter, appStorage, logger)
+	engineAdapter := engine.NewEngine(config.Engine, nodeRegistryManager, queueAdapter, appStorage, logger)
 
 	return &Manager{
 		config:       config,
@@ -229,6 +228,10 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 		return fmt.Errorf("failed to start engine: %w", err)
 	}
 
+	if err := m.eventManager.Start(m.ctx); err != nil {
+		return fmt.Errorf("failed to start event manager: %w", err)
+	}
+
 	m.transport = transport.NewGRPCTransport(m.logger)
 	m.transport.RegisterRaft(m.raftAdapter)
 
@@ -268,9 +271,9 @@ func (m *Manager) Stop() error {
 	return nil
 }
 
-func (m *Manager) RegisterNode(node Node) error {
-	internalNode := adaptNode(node)
-	return m.nodeRegistry.RegisterNode(internalNode)
+func (m *Manager) RegisterNode(node interface{}) error {
+	// Pass directly to registry which will handle validation
+	return m.nodeRegistry.RegisterNode(node)
 }
 
 func (m *Manager) UnregisterNode(nodeName string) error {
@@ -597,19 +600,6 @@ type NodeConfig struct {
 	Config interface{} `json:"config"`
 }
 
-type NextNode struct {
-	NodeName       string         `json:"node_name"`
-	Config         interface{}    `json:"config"`
-	Priority       int            `json:"priority,omitempty"`
-	Delay          *time.Duration `json:"delay,omitempty"`
-	IdempotencyKey *string        `json:"idempotency_key,omitempty"`
-}
-
-type NodeResult struct {
-	GlobalState interface{} `json:"global_state"`
-	NextNodes   []NextNode  `json:"next_nodes"`
-}
-
 type WorkflowStatus struct {
 	WorkflowID    string             `json:"workflow_id"`
 	Status        WorkflowState      `json:"status"`
@@ -639,15 +629,6 @@ const (
 	WorkflowStateFailed    WorkflowState = "failed"
 	WorkflowStatePaused    WorkflowState = "paused"
 )
-
-// Node interface for users to implement
-type Node interface {
-	GetName() string
-	CanStart(ctx context.Context, state interface{}, config interface{}) bool
-	Execute(ctx context.Context, state interface{}, config interface{}) (*NodeResult, error)
-}
-
-// Conversion functions between public and internal types
 
 func (w WorkflowTrigger) toInternal() (domain.WorkflowTrigger, error) {
 	initialState, err := marshalToRawMessage(w.InitialState)
@@ -681,37 +662,6 @@ func (n NodeConfig) toInternal() (domain.NodeConfig, error) {
 	return domain.NodeConfig{
 		Name:   n.Name,
 		Config: config,
-	}, nil
-}
-
-func (r *NodeResult) toInternal() (domain.NodeResult, error) {
-	nextNodes := make([]domain.NextNode, len(r.NextNodes))
-	for i, node := range r.NextNodes {
-		internalNode, err := node.toInternal()
-		if err != nil {
-			return domain.NodeResult{}, fmt.Errorf("failed to convert next node: %w", err)
-		}
-		nextNodes[i] = internalNode
-	}
-
-	return domain.NodeResult{
-		GlobalState: r.GlobalState,
-		NextNodes:   nextNodes,
-	}, nil
-}
-
-func (n NextNode) toInternal() (domain.NextNode, error) {
-	config, err := marshalToRawMessage(n.Config)
-	if err != nil {
-		return domain.NextNode{}, fmt.Errorf("failed to marshal config: %w", err)
-	}
-
-	return domain.NextNode{
-		NodeName:       n.NodeName,
-		Config:         config,
-		Priority:       n.Priority,
-		Delay:          n.Delay,
-		IdempotencyKey: n.IdempotencyKey,
 	}, nil
 }
 
@@ -807,63 +757,4 @@ func marshalToRawMessage(v interface{}) (json.RawMessage, error) {
 		return nil, err
 	}
 	return json.RawMessage(data), nil
-}
-
-// Node adapter - converts between public Node interface and internal domain.NodePort
-type nodeAdapter struct {
-	publicNode Node
-}
-
-func adaptNode(node Node) domain.NodePort {
-	return &nodeAdapter{publicNode: node}
-}
-
-func (a *nodeAdapter) GetName() string {
-	return a.publicNode.GetName()
-}
-
-func (a *nodeAdapter) CanStart(ctx context.Context, state []byte, config []byte) bool {
-	var stateValue interface{}
-	if len(state) > 0 && string(state) != "null" {
-		if err := json.Unmarshal(state, &stateValue); err != nil {
-			stateValue = nil
-		}
-	}
-
-	var configValue interface{}
-	if len(config) > 0 && string(config) != "null" {
-		if err := json.Unmarshal(config, &configValue); err != nil {
-			configValue = nil
-		}
-	}
-
-	return a.publicNode.CanStart(ctx, stateValue, configValue)
-}
-
-func (a *nodeAdapter) Execute(ctx context.Context, state []byte, config []byte) (*domain.NodeResult, error) {
-	var stateValue interface{}
-	if len(state) > 0 && string(state) != "null" {
-		if err := json.Unmarshal(state, &stateValue); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal state for node %s: %w", a.publicNode.GetName(), err)
-		}
-	}
-
-	var configValue interface{}
-	if len(config) > 0 && string(config) != "null" {
-		if err := json.Unmarshal(config, &configValue); err != nil {
-			return nil, fmt.Errorf("failed to unmarshal config for node %s: %w", a.publicNode.GetName(), err)
-		}
-	}
-
-	result, err := a.publicNode.Execute(ctx, stateValue, configValue)
-	if err != nil {
-		return nil, err
-	}
-
-	internalResult, err := result.toInternal()
-	if err != nil {
-		return nil, fmt.Errorf("failed to convert node result for node %s: %w", a.publicNode.GetName(), err)
-	}
-
-	return &internalResult, nil
 }

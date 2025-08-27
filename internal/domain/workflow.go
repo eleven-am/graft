@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -11,7 +10,7 @@ type WorkflowState string
 
 const (
 	WorkflowStateRunning   WorkflowState = "running"
-	WorkflowStateCompleted WorkflowState = "completed" 
+	WorkflowStateCompleted WorkflowState = "completed"
 	WorkflowStateFailed    WorkflowState = "failed"
 	WorkflowStatePaused    WorkflowState = "paused"
 )
@@ -29,8 +28,8 @@ type WorkflowInstance struct {
 }
 
 type NodeResult struct {
-	GlobalState interface{} `json:"global_state"`
-	NextNodes   []NextNode  `json:"next_nodes"`
+	GlobalState json.RawMessage `json:"global_state"`
+	NextNodes   []NextNode      `json:"next_nodes"`
 }
 
 type NextNode struct {
@@ -91,25 +90,12 @@ type WorkflowContext struct {
 	Metadata    map[string]string `json:"metadata"`
 }
 
-type NodePort interface {
-	GetName() string
-	CanStart(ctx context.Context, state []byte, config []byte) bool
-	Execute(ctx context.Context, state []byte, config []byte) (*NodeResult, error)
-}
-
-type NodeRegistryPort interface {
-	RegisterNode(node NodePort) error
-	GetNode(nodeName string) (NodePort, error)
-	ListNodes() []string
-	HasNode(nodeName string) bool
-}
-
 type WorkflowEvent struct {
-	Type        string    `json:"type"`
-	WorkflowID  string    `json:"workflow_id"`
-	NodeName    string    `json:"node_name,omitempty"`
-	Timestamp   time.Time `json:"timestamp"`
-	Data        json.RawMessage `json:"data,omitempty"`
+	Type       string          `json:"type"`
+	WorkflowID string          `json:"workflow_id"`
+	NodeName   string          `json:"node_name,omitempty"`
+	Timestamp  time.Time       `json:"timestamp"`
+	Data       json.RawMessage `json:"data,omitempty"`
 }
 
 const (

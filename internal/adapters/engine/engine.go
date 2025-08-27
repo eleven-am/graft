@@ -14,7 +14,7 @@ import (
 
 type Engine struct {
 	config       domain.EngineConfig
-	nodeRegistry domain.NodeRegistryPort
+	nodeRegistry ports.NodeRegistryPort
 	stateManager *StateManager
 	executor     *Executor
 	queue        ports.QueuePort
@@ -27,7 +27,7 @@ type Engine struct {
 	wg     sync.WaitGroup
 }
 
-func NewEngine(config domain.EngineConfig, nodeRegistry domain.NodeRegistryPort, queue ports.QueuePort, storage ports.StoragePort, logger *slog.Logger) *Engine {
+func NewEngine(config domain.EngineConfig, nodeRegistry ports.NodeRegistryPort, queue ports.QueuePort, storage ports.StoragePort, logger *slog.Logger) *Engine {
 	stateManager := NewStateManager(storage, logger)
 	metrics := domain.NewExecutionMetrics()
 	executor := NewExecutor(config, nodeRegistry, stateManager, queue, storage, logger, metrics)

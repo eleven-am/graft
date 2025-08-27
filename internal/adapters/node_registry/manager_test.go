@@ -16,6 +16,16 @@ type TestConfig struct {
 	Name string `json:"name"`
 }
 
+type TestNodeResult struct {
+	GlobalState interface{}    `json:"global_state"`
+	NextNodes   []TestNextNode `json:"next_nodes"`
+}
+
+type TestNextNode struct {
+	NodeName string          `json:"node_name"`
+	Config   json.RawMessage `json:"config"`
+}
+
 type TestNode struct {
 	name string
 }
@@ -24,14 +34,10 @@ func (n *TestNode) GetName() string {
 	return n.name
 }
 
-func (n *TestNode) Execute(ctx context.Context, state TestState, config TestConfig) (*ports.NodeResult, error) {
-	globalStateBytes, err := json.Marshal(TestState{Value: "test_state"})
-	if err != nil {
-		return nil, err
-	}
-	return &ports.NodeResult{
-		GlobalState: globalStateBytes,
-		NextNodes:   []ports.NextNode{},
+func (n *TestNode) Execute(ctx context.Context, state TestState, config TestConfig) (*TestNodeResult, error) {
+	return &TestNodeResult{
+		GlobalState: TestState{Value: "test_state"},
+		NextNodes:   []TestNextNode{},
 	}, nil
 }
 
@@ -48,14 +54,10 @@ func (n *TestNodeWithCanStart) CanStart(ctx context.Context, state TestState, co
 	return n.canStart
 }
 
-func (n *TestNodeWithCanStart) Execute(ctx context.Context, state TestState, config TestConfig) (*ports.NodeResult, error) {
-	globalStateBytes, err := json.Marshal(TestState{Value: "test_state_with_canstart"})
-	if err != nil {
-		return nil, err
-	}
-	return &ports.NodeResult{
-		GlobalState: globalStateBytes,
-		NextNodes:   []ports.NextNode{},
+func (n *TestNodeWithCanStart) Execute(ctx context.Context, state TestState, config TestConfig) (*TestNodeResult, error) {
+	return &TestNodeResult{
+		GlobalState: TestState{Value: "test_state_with_canstart"},
+		NextNodes:   []TestNextNode{},
 	}, nil
 }
 
@@ -191,14 +193,18 @@ func TestNodeRegistry_NodeExecution(t *testing.T) {
 	ctx := context.Background()
 	state := TestState{Value: "input_state"}
 	config := TestConfig{Name: "test_config"}
-	
-	result, err := retrievedNode.Execute(ctx, state, config)
+
+	stateBytes, _ := json.Marshal(state)
+	configBytes, _ := json.Marshal(config)
+
+	result, err := retrievedNode.Execute(ctx, stateBytes, configBytes)
 	if err != nil {
 		t.Fatalf("Failed to execute node: %v", err)
 	}
 
 	var resultState TestState
-	if err := json.Unmarshal(result.GlobalState, &resultState); err != nil {
+	resultBytes, _ := json.Marshal(result.GlobalState)
+	if err := json.Unmarshal(resultBytes, &resultState); err != nil {
 		t.Fatalf("Failed to unmarshal result GlobalState: %v", err)
 	}
 
@@ -221,8 +227,11 @@ func TestNodeRegistry_NodeCanStart(t *testing.T) {
 	ctx := context.Background()
 	state := TestState{Value: "input_state"}
 	config := TestConfig{Name: "test_config"}
-	
-	canStart := retrievedNode.CanStart(ctx, state, config)
+
+	stateBytes, _ := json.Marshal(state)
+	configBytes, _ := json.Marshal(config)
+
+	canStart := retrievedNode.CanStart(ctx, stateBytes, configBytes)
 	if canStart {
 		t.Error("Expected CanStart to return false")
 	}
@@ -235,7 +244,7 @@ func TestNodeRegistry_NodeCanStart(t *testing.T) {
 		t.Fatalf("Failed to get node: %v", err)
 	}
 
-	canStart2 := retrievedNode2.CanStart(ctx, state, config)
+	canStart2 := retrievedNode2.CanStart(ctx, stateBytes, configBytes)
 	if !canStart2 {
 		t.Error("Expected CanStart to return true")
 	}

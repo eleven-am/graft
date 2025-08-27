@@ -25,6 +25,7 @@ package graft
 
 import (
 	"context"
+	"github.com/eleven-am/graft/internal/ports"
 	"log/slog"
 
 	"github.com/eleven-am/graft/internal/core"
@@ -53,11 +54,11 @@ type NodeConfig = core.NodeConfig
 
 // NextNode represents a node that should be executed next in the workflow,
 // along with its configuration, priority, delay, and idempotency settings.
-type NextNode = core.NextNode
+type NextNode = ports.NextNode
 
 // NodeResult contains the output from a node execution, including any updated
 // global state and the list of next nodes to execute.
-type NodeResult = core.NodeResult
+type NodeResult = ports.NodeResult
 
 // WorkflowStatus represents the current state of a workflow execution,
 // including its status, current state, executed nodes, and any errors.
@@ -69,10 +70,6 @@ type ExecutedNodeData = core.ExecutedNodeData
 
 // WorkflowState represents the possible states of a workflow during execution.
 type WorkflowState = core.WorkflowState
-
-// Node defines the interface that all workflow nodes must implement.
-// Nodes contain the business logic that gets executed as part of workflows.
-type Node = core.Node
 
 // Event types for workflow lifecycle monitoring
 

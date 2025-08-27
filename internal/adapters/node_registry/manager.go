@@ -1,6 +1,7 @@
 package node_registry
 
 import (
+	"fmt"
 	"log/slog"
 	"sync"
 
@@ -34,7 +35,26 @@ func (r *Manager) RegisterNode(node interface{}) error {
 		}
 	}
 
-	nodeName := extractNodeName(node)
+	fmt.Printf("🔍 Registering node type: %T\n", node)
+
+	// First check if it already implements ports.NodePort
+	portNode, ok := node.(ports.NodePort)
+	if !ok {
+		fmt.Printf("🔧 Node doesn't implement ports.NodePort, creating adapter...\n")
+		// Try to create an adapter
+		adapter, err := NewNodeAdapter(node)
+		if err != nil {
+			fmt.Printf("❌ Failed to create adapter: %v\n", err)
+			return &ports.NodeRegistrationError{
+				NodeName: "<unknown>",
+				Reason:   fmt.Sprintf("failed to adapt node: %v", err),
+			}
+		}
+		portNode = adapter
+		fmt.Printf("✅ Successfully created adapter for node\n")
+	}
+
+	nodeName := portNode.GetName()
 	r.logger.Debug("attempting to register node", "node_name", nodeName)
 
 	if nodeName == "" {
@@ -56,16 +76,7 @@ func (r *Manager) RegisterNode(node interface{}) error {
 		}
 	}
 
-	wrapper, err := NewNodeWrapper(node)
-	if err != nil {
-		r.logger.Error("failed to create node wrapper", "node_name", nodeName, "error", err)
-		return &ports.NodeRegistrationError{
-			NodeName: nodeName,
-			Reason:   "failed to wrap node: " + err.Error(),
-		}
-	}
-
-	r.nodes[nodeName] = wrapper
+	r.nodes[nodeName] = portNode
 	r.logger.Debug("node registered successfully", "node_name", nodeName, "total_nodes", len(r.nodes))
 	return nil
 }
@@ -135,4 +146,3 @@ func (r *Manager) GetNodeCount() int {
 	r.logger.Debug("node count requested", "count", count)
 	return count
 }
-

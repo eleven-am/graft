@@ -150,11 +150,17 @@ func main() {
 		fmt.Printf("    Status: completed\n")
 		fmt.Printf("    Nodes Executed: %d\n", len(event.ExecutedNodes))
 
-		if finalDoc, ok := event.FinalState.(Document); ok {
-			fmt.Printf("    📄 Final Document Status: %s\n", finalDoc.Status)
-			fmt.Printf("    📊 Processing Chain: %v\n", finalDoc.ProcessedBy)
-			fmt.Printf("    📈 Word Count: %d | Language: %s | Priority: %d\n",
-				finalDoc.WordCount, finalDoc.Language, finalDoc.Priority)
+		if stateMap, ok := event.FinalState.(map[string]interface{}); ok {
+			status, _ := stateMap["status"].(string)
+			processedBy, _ := stateMap["processed_by"].([]interface{})
+			wordCount, _ := stateMap["word_count"].(float64)
+			language, _ := stateMap["language"].(string)
+			priority, _ := stateMap["priority"].(float64)
+
+			fmt.Printf("    📄 Final Document Status: %s\n", status)
+			fmt.Printf("    📊 Processing Chain: %v\n", processedBy)
+			fmt.Printf("    📈 Word Count: %.0f | Language: %s | Priority: %.0f\n",
+				wordCount, language, priority)
 		}
 
 		if completedWorkflows == len(scenarios) {
@@ -232,7 +238,7 @@ type WorkflowResult struct {
 }
 
 func registerWorkflowNodes(manager *graft.Manager) error {
-	nodes := []graft.Node{
+	nodes := []interface{}{
 		&DocumentIngestNode{},
 		&DocumentValidatorNode{},
 		&ContentAnalyzerNode{},

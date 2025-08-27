@@ -28,7 +28,7 @@ func TestFSM_ConcurrentApply(t *testing.T) {
 	db := createTestBadgerDB(t)
 	defer db.Close()
 
-	fsm := NewFSM(db, "node1", "cluster1", slog.Default())
+	fsm := NewFSM(db, "node1", "cluster1", domain.ClusterPolicyRecover, slog.Default())
 
 	const numGoroutines = 10
 	const numOperations = 100
@@ -84,7 +84,7 @@ func TestFSM_LargeSnapshot(t *testing.T) {
 	db := createTestBadgerDB(t)
 	defer db.Close()
 
-	fsm := NewFSM(db, "node1", "cluster1", slog.Default())
+	fsm := NewFSM(db, "node1", "cluster1", domain.ClusterPolicyRecover, slog.Default())
 
 	const numEntries = 1000
 	for i := 0; i < numEntries; i++ {
@@ -121,8 +121,8 @@ func TestFSM_LargeSnapshot(t *testing.T) {
 
 	newDB := createTestBadgerDB(t)
 	defer newDB.Close()
-	
-	newFSM := NewFSM(newDB, "node2", "cluster1", slog.Default())
+
+	newFSM := NewFSM(newDB, "node2", "cluster1", domain.ClusterPolicyRecover, slog.Default())
 	err = newFSM.Restore(io.NopCloser(bytes.NewReader(sink.data.Bytes())))
 	require.NoError(t, err)
 
@@ -148,7 +148,7 @@ func TestFSM_InvalidCommands(t *testing.T) {
 	db := createTestBadgerDB(t)
 	defer db.Close()
 
-	fsm := NewFSM(db, "node1", "cluster1", slog.Default())
+	fsm := NewFSM(db, "node1", "cluster1", domain.ClusterPolicyRecover, slog.Default())
 
 	tests := []struct {
 		name          string
@@ -205,7 +205,7 @@ func TestFSM_InvalidCommands(t *testing.T) {
 
 			result := fsm.Apply(log)
 			cmdResult, ok := result.(*domain.CommandResult)
-			
+
 			if tt.expectSuccess {
 				require.True(t, ok)
 				assert.True(t, cmdResult.Success)
@@ -222,7 +222,7 @@ func TestFSM_DeleteCommand(t *testing.T) {
 	db := createTestBadgerDB(t)
 	defer db.Close()
 
-	fsm := NewFSM(db, "node1", "cluster1", slog.Default())
+	fsm := NewFSM(db, "node1", "cluster1", domain.ClusterPolicyRecover, slog.Default())
 
 	putCmd := domain.Command{
 		Type:      domain.CommandPut,
@@ -231,14 +231,14 @@ func TestFSM_DeleteCommand(t *testing.T) {
 		RequestID: "put-1",
 		Timestamp: time.Now(),
 	}
-	
+
 	putBytes, err := json.Marshal(putCmd)
 	require.NoError(t, err)
-	
+
 	putLog := &raft.Log{
 		Data: putBytes,
 	}
-	
+
 	result := fsm.Apply(putLog)
 	cmdResult, ok := result.(*domain.CommandResult)
 	require.True(t, ok)
@@ -256,14 +256,14 @@ func TestFSM_DeleteCommand(t *testing.T) {
 		RequestID: "delete-1",
 		Timestamp: time.Now(),
 	}
-	
+
 	deleteBytes, err := json.Marshal(deleteCmd)
 	require.NoError(t, err)
-	
+
 	deleteLog := &raft.Log{
 		Data: deleteBytes,
 	}
-	
+
 	result = fsm.Apply(deleteLog)
 	cmdResult, ok = result.(*domain.CommandResult)
 	require.True(t, ok)
@@ -280,7 +280,7 @@ func TestFSM_BatchCommand(t *testing.T) {
 	db := createTestBadgerDB(t)
 	defer db.Close()
 
-	fsm := NewFSM(db, "node1", "cluster1", slog.Default())
+	fsm := NewFSM(db, "node1", "cluster1", domain.ClusterPolicyRecover, slog.Default())
 
 	batchOps := []domain.BatchOp{
 		{
@@ -306,14 +306,14 @@ func TestFSM_BatchCommand(t *testing.T) {
 		RequestID: "batch-1",
 		Timestamp: time.Now(),
 	}
-	
+
 	batchBytes, err := json.Marshal(batchCmd)
 	require.NoError(t, err)
-	
+
 	batchLog := &raft.Log{
 		Data: batchBytes,
 	}
-	
+
 	result := fsm.Apply(batchLog)
 	cmdResult, ok := result.(*domain.CommandResult)
 	require.True(t, ok)
@@ -322,7 +322,7 @@ func TestFSM_BatchCommand(t *testing.T) {
 	for i := 1; i <= 3; i++ {
 		key := fmt.Sprintf("batch-key-%d", i)
 		expectedValue := fmt.Sprintf("batch-value-%d", i)
-		
+
 		err := db.View(func(txn *badger.Txn) error {
 			item, err := txn.Get([]byte(key))
 			if err != nil {
