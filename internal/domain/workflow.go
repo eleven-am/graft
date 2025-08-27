@@ -85,6 +85,7 @@ const (
 type WorkflowContext struct {
 	WorkflowID  string            `json:"workflow_id"`
 	NodeName    string            `json:"node_name"`
+	NodeID      string            `json:"node_id"`
 	ExecutionID string            `json:"execution_id"`
 	StartedAt   time.Time         `json:"started_at"`
 	Metadata    map[string]string `json:"metadata"`

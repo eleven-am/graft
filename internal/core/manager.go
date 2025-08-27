@@ -345,7 +345,17 @@ func (m *Manager) GetClusterInfo() ClusterInfo {
 		Metrics:  ClusterMetrics{},
 	}
 
-	if m.discovery != nil {
+	if m.raftAdapter != nil {
+		raftInfo := m.raftAdapter.GetClusterInfo()
+		info.IsLeader = (raftInfo.Leader != nil && raftInfo.Leader.ID == m.nodeID)
+
+		for _, member := range raftInfo.Members {
+			if member.ID != m.nodeID {
+				info.Peers = append(info.Peers, member.ID)
+			}
+		}
+		info.Status = "running"
+	} else if m.discovery != nil {
 		peers := m.discovery.GetPeers()
 		peerIDs := make([]string, len(peers))
 		for i, peer := range peers {

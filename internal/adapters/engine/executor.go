@@ -73,6 +73,7 @@ func (e *Executor) ExecuteNodeWithRetry(ctx context.Context, workflowID, nodeNam
 	workflowCtx := &domain.WorkflowContext{
 		WorkflowID:  workflowID,
 		NodeName:    nodeName,
+		NodeID:      e.nodeID,
 		ExecutionID: fmt.Sprintf("%s-%s-%d", workflowID, nodeName, time.Now().UnixNano()),
 		StartedAt:   workflow.StartedAt,
 		Metadata:    workflow.Metadata,
@@ -277,6 +278,7 @@ func (e *Executor) handleExecutionFailure(ctx context.Context, workflow *domain.
 	workflowCtx := &domain.WorkflowContext{
 		WorkflowID:  workflow.ID,
 		NodeName:    executedNode.NodeName,
+		NodeID:      e.nodeID,
 		ExecutionID: fmt.Sprintf("%s-%s-%d", workflow.ID, executedNode.NodeName, time.Now().UnixNano()),
 		StartedAt:   workflow.StartedAt,
 		Metadata:    workflow.Metadata,
