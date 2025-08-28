@@ -321,7 +321,15 @@ func (e *Executor) checkWorkflowCompletion(ctx context.Context, workflowID strin
 		return nil
 	}
 
-	if !hasPendingNodes {
+	hasExecutingNodes, err := e.queue.HasClaimedItemsWithPrefix(workflowPrefix)
+	if err != nil {
+		e.logger.Error("failed to check executing workflow items",
+			"workflow_id", workflowID,
+			"error", err)
+		return nil
+	}
+
+	if !hasPendingNodes && !hasExecutingNodes {
 		e.logger.Info("workflow completed",
 			"workflow_id", workflowID)
 

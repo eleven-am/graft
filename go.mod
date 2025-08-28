@@ -1,4 +1,4 @@
-module github.com/eleven-am/graft
+ module github.com/eleven-am/graft
 
 go 1.23.0
 

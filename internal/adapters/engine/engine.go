@@ -144,6 +144,14 @@ func (e *Engine) GetWorkflowStatus(workflowID string) (*domain.WorkflowStatus, e
 		executedNodes = []domain.ExecutedNodeData{}
 	}
 
+	executingNodes, err := e.loadExecutingNodes(workflowID)
+	if err != nil {
+		e.logger.Warn("failed to load executing nodes",
+			"workflow_id", workflowID,
+			"error", err)
+		executingNodes = []domain.ExecutingNodeData{}
+	}
+
 	pendingNodes, err := e.loadPendingNodes(workflowID)
 	if err != nil {
 		e.logger.Warn("failed to load pending nodes",
@@ -153,14 +161,15 @@ func (e *Engine) GetWorkflowStatus(workflowID string) (*domain.WorkflowStatus, e
 	}
 
 	status := &domain.WorkflowStatus{
-		WorkflowID:    workflow.ID,
-		Status:        workflow.Status,
-		CurrentState:  workflow.CurrentState,
-		StartedAt:     workflow.StartedAt,
-		CompletedAt:   workflow.CompletedAt,
-		ExecutedNodes: executedNodes,
-		PendingNodes:  pendingNodes,
-		LastError:     workflow.LastError,
+		WorkflowID:     workflow.ID,
+		Status:         workflow.Status,
+		CurrentState:   workflow.CurrentState,
+		StartedAt:      workflow.StartedAt,
+		CompletedAt:    workflow.CompletedAt,
+		ExecutedNodes:  executedNodes,
+		ExecutingNodes: executingNodes,
+		PendingNodes:   pendingNodes,
+		LastError:      workflow.LastError,
 	}
 
 	return status, nil
@@ -364,6 +373,38 @@ func (e *Engine) loadPendingNodes(workflowID string) ([]domain.NodeConfig, error
 	}
 
 	return pendingNodes, nil
+}
+
+func (e *Engine) loadExecutingNodes(workflowID string) ([]domain.ExecutingNodeData, error) {
+	workflowPrefix := fmt.Sprintf(`"workflow_id":"%s"`, workflowID)
+
+	claimedItems, err := e.queue.GetClaimedItemsWithPrefix(workflowPrefix)
+	if err != nil {
+		return nil, domain.NewDiscoveryError("engine", "get_claimed_workflow_items", err)
+	}
+
+	var executingNodes []domain.ExecutingNodeData
+	for _, claimedItem := range claimedItems {
+		var workItem struct {
+			WorkflowID string          `json:"workflow_id"`
+			NodeName   string          `json:"node_name"`
+			Config     json.RawMessage `json:"config"`
+		}
+		if err := json.Unmarshal(claimedItem.Data, &workItem); err != nil {
+			e.logger.Warn("failed to unmarshal claimed work item",
+				"error", err)
+			continue
+		}
+
+		executingNodes = append(executingNodes, domain.ExecutingNodeData{
+			NodeName:  workItem.NodeName,
+			StartedAt: claimedItem.ClaimedAt,
+			ClaimID:   claimedItem.ClaimID,
+			Config:    workItem.Config,
+		})
+	}
+
+	return executingNodes, nil
 }
 
 func (e *Engine) GetDeadLetterItems(limit int) ([]ports.DeadLetterItem, error) {

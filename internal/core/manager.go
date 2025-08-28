@@ -636,14 +636,15 @@ type NodeConfig struct {
 }
 
 type WorkflowStatus struct {
-	WorkflowID    string             `json:"workflow_id"`
-	Status        WorkflowState      `json:"status"`
-	CurrentState  interface{}        `json:"current_state"`
-	StartedAt     time.Time          `json:"started_at"`
-	CompletedAt   *time.Time         `json:"completed_at,omitempty"`
-	ExecutedNodes []ExecutedNodeData `json:"executed_nodes"`
-	PendingNodes  []NodeConfig       `json:"pending_nodes"`
-	LastError     *string            `json:"last_error,omitempty"`
+	WorkflowID     string              `json:"workflow_id"`
+	Status         WorkflowState       `json:"status"`
+	CurrentState   interface{}         `json:"current_state"`
+	StartedAt      time.Time           `json:"started_at"`
+	CompletedAt    *time.Time          `json:"completed_at,omitempty"`
+	ExecutedNodes  []ExecutedNodeData  `json:"executed_nodes"`
+	ExecutingNodes []ExecutingNodeData `json:"executing_nodes"`
+	PendingNodes   []NodeConfig        `json:"pending_nodes"`
+	LastError      *string             `json:"last_error,omitempty"`
 }
 
 type ExecutedNodeData struct {
@@ -654,6 +655,13 @@ type ExecutedNodeData struct {
 	Config     interface{}   `json:"config"`
 	Results    interface{}   `json:"results"`
 	Error      *string       `json:"error,omitempty"`
+}
+
+type ExecutingNodeData struct {
+	NodeName  string      `json:"node_name"`
+	StartedAt time.Time   `json:"started_at"`
+	ClaimID   string      `json:"claim_id"`
+	Config    interface{} `json:"config,omitempty"`
 }
 
 type WorkflowState string
@@ -717,6 +725,15 @@ func workflowStatusFromInternal(w domain.WorkflowStatus) (WorkflowStatus, error)
 		executedNodes[i] = publicNode
 	}
 
+	executingNodes := make([]ExecutingNodeData, len(w.ExecutingNodes))
+	for i, node := range w.ExecutingNodes {
+		publicNode, err := executingNodeDataFromInternal(node)
+		if err != nil {
+			return WorkflowStatus{}, fmt.Errorf("failed to convert executing node: %w", err)
+		}
+		executingNodes[i] = publicNode
+	}
+
 	pendingNodes := make([]NodeConfig, len(w.PendingNodes))
 	for i, node := range w.PendingNodes {
 		publicNode, err := nodeConfigFromInternal(node)
@@ -727,14 +744,15 @@ func workflowStatusFromInternal(w domain.WorkflowStatus) (WorkflowStatus, error)
 	}
 
 	return WorkflowStatus{
-		WorkflowID:    w.WorkflowID,
-		Status:        WorkflowState(w.Status),
-		CurrentState:  currentState,
-		StartedAt:     w.StartedAt,
-		CompletedAt:   w.CompletedAt,
-		ExecutedNodes: executedNodes,
-		PendingNodes:  pendingNodes,
-		LastError:     w.LastError,
+		WorkflowID:     w.WorkflowID,
+		Status:         WorkflowState(w.Status),
+		CurrentState:   currentState,
+		StartedAt:      w.StartedAt,
+		CompletedAt:    w.CompletedAt,
+		ExecutedNodes:  executedNodes,
+		ExecutingNodes: executingNodes,
+		PendingNodes:   pendingNodes,
+		LastError:      w.LastError,
 	}, nil
 }
 
@@ -761,6 +779,22 @@ func executedNodeDataFromInternal(e domain.ExecutedNodeData) (ExecutedNodeData, 
 		Config:     config,
 		Results:    results,
 		Error:      e.Error,
+	}, nil
+}
+
+func executingNodeDataFromInternal(e domain.ExecutingNodeData) (ExecutingNodeData, error) {
+	var config interface{}
+	if len(e.Config) > 0 {
+		if err := json.Unmarshal(e.Config, &config); err != nil {
+			return ExecutingNodeData{}, fmt.Errorf("failed to unmarshal config: %w", err)
+		}
+	}
+
+	return ExecutingNodeData{
+		NodeName:  e.NodeName,
+		StartedAt: e.StartedAt,
+		ClaimID:   e.ClaimID,
+		Config:    config,
 	}, nil
 }
 

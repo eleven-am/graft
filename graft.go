@@ -68,6 +68,10 @@ type WorkflowStatus = core.WorkflowStatus
 // including its execution time, duration, status, configuration, and results.
 type ExecutedNodeData = core.ExecutedNodeData
 
+// ExecutingNodeData contains information about a node that is currently being executed,
+// including its start time, claim ID, and configuration.
+type ExecutingNodeData = core.ExecutingNodeData
+
 // WorkflowState represents the possible states of a workflow during execution.
 type WorkflowState = core.WorkflowState
 

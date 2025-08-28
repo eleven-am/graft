@@ -262,6 +262,76 @@ func (q *Queue) HasItemsWithPrefix(dataPrefix string) (bool, error) {
 	return false, nil
 }
 
+func (q *Queue) HasClaimedItemsWithPrefix(dataPrefix string) (bool, error) {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
+	if q.closed {
+		return false, &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
+	}
+
+	prefix := fmt.Sprintf("queue:%s:claimed:", q.name)
+	items, err := q.storage.ListByPrefix(prefix)
+	if err != nil {
+		return false, err
+	}
+
+	for _, item := range items {
+		claimedItem, err := domain.ClaimedItemFromBytes(item.Value)
+		if err != nil {
+			continue
+		}
+
+		if len(claimedItem.Data) > 0 {
+			dataStr := string(claimedItem.Data)
+			if len(dataStr) >= len(dataPrefix) &&
+				strings.Contains(dataStr, dataPrefix) {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
+func (q *Queue) GetClaimedItemsWithPrefix(dataPrefix string) ([]ports.ClaimedItem, error) {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
+	if q.closed {
+		return nil, &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
+	}
+
+	prefix := fmt.Sprintf("queue:%s:claimed:", q.name)
+	items, err := q.storage.ListByPrefix(prefix)
+	if err != nil {
+		return nil, err
+	}
+
+	var claimedItems []ports.ClaimedItem
+	for _, item := range items {
+		claimedItem, err := domain.ClaimedItemFromBytes(item.Value)
+		if err != nil {
+			continue
+		}
+
+		if len(claimedItem.Data) > 0 {
+			dataStr := string(claimedItem.Data)
+			if len(dataStr) >= len(dataPrefix) &&
+				strings.Contains(dataStr, dataPrefix) {
+				claimedItems = append(claimedItems, ports.ClaimedItem{
+					Data:      claimedItem.Data,
+					ClaimID:   claimedItem.ClaimID,
+					ClaimedAt: claimedItem.ClaimedAt,
+					Sequence:  claimedItem.Sequence,
+				})
+			}
+		}
+	}
+
+	return claimedItems, nil
+}
+
 func (q *Queue) GetItemsWithPrefix(dataPrefix string) ([][]byte, error) {
 	q.mu.RLock()
 	defer q.mu.RUnlock()

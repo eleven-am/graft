@@ -62,15 +62,23 @@ type ExecutedNodeData struct {
 	Error      *string         `json:"error,omitempty"`
 }
 
+type ExecutingNodeData struct {
+	NodeName  string          `json:"node_name"`
+	StartedAt time.Time       `json:"started_at"`
+	ClaimID   string          `json:"claim_id"`
+	Config    json.RawMessage `json:"config,omitempty"`
+}
+
 type WorkflowStatus struct {
-	WorkflowID    string             `json:"workflow_id"`
-	Status        WorkflowState      `json:"status"`
-	CurrentState  json.RawMessage    `json:"current_state"`
-	StartedAt     time.Time          `json:"started_at"`
-	CompletedAt   *time.Time         `json:"completed_at,omitempty"`
-	ExecutedNodes []ExecutedNodeData `json:"executed_nodes"`
-	PendingNodes  []NodeConfig       `json:"pending_nodes"`
-	LastError     *string            `json:"last_error,omitempty"`
+	WorkflowID     string              `json:"workflow_id"`
+	Status         WorkflowState       `json:"status"`
+	CurrentState   json.RawMessage     `json:"current_state"`
+	StartedAt      time.Time           `json:"started_at"`
+	CompletedAt    *time.Time          `json:"completed_at,omitempty"`
+	ExecutedNodes  []ExecutedNodeData  `json:"executed_nodes"`
+	ExecutingNodes []ExecutingNodeData `json:"executing_nodes"`
+	PendingNodes   []NodeConfig        `json:"pending_nodes"`
+	LastError      *string             `json:"last_error,omitempty"`
 }
 
 type NodeExecutionStatus string
