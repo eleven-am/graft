@@ -124,6 +124,7 @@ func (r *Node) Start(ctx context.Context, existingPeers []ports.Peer) error {
 	raftConfig.SnapshotInterval = r.config.SnapshotInterval
 	raftConfig.SnapshotThreshold = r.config.SnapshotThreshold
 	raftConfig.LeaderLeaseTimeout = r.config.LeaderLeaseTimeout
+	raftConfig.Logger = slogToHcLogger(r.logger)
 
 	addr, err := net.ResolveTCPAddr("tcp", r.config.BindAddr)
 	if err != nil {
@@ -643,46 +644,74 @@ type slogAdapter struct {
 	implied []interface{}
 }
 
+func (s *slogAdapter) isEnabled(level slog.Level) bool {
+	return s.logger.Enabled(context.Background(), level)
+}
+
 func (s *slogAdapter) Log(level hclog.Level, msg string, args ...interface{}) {
 	switch level {
-	case hclog.Trace, hclog.Debug:
-		s.logger.Debug(msg, args...)
+	case hclog.Trace:
+		if s.IsTrace() {
+			s.logger.Debug(msg, args...)
+		}
+	case hclog.Debug:
+		if s.IsDebug() {
+			s.logger.Debug(msg, args...)
+		}
 	case hclog.Info:
-		s.logger.Info(msg, args...)
+		if s.IsInfo() {
+			s.logger.Info(msg, args...)
+		}
 	case hclog.Warn:
-		s.logger.Warn(msg, args...)
+		if s.IsWarn() {
+			s.logger.Warn(msg, args...)
+		}
 	case hclog.Error:
-		s.logger.Error(msg, args...)
+		if s.IsError() {
+			s.logger.Error(msg, args...)
+		}
 	default:
-		s.logger.Info(msg, args...)
+		if s.IsInfo() {
+			s.logger.Info(msg, args...)
+		}
 	}
 }
 
 func (s *slogAdapter) Trace(msg string, args ...interface{}) {
-	s.logger.Debug(msg, args...)
+	if s.IsTrace() {
+		s.logger.Debug(msg, args...)
+	}
 }
 
 func (s *slogAdapter) Debug(msg string, args ...interface{}) {
-	s.logger.Debug(msg, args...)
+	if s.IsDebug() {
+		s.logger.Debug(msg, args...)
+	}
 }
 
 func (s *slogAdapter) Info(msg string, args ...interface{}) {
-	s.logger.Info(msg, args...)
+	if s.IsInfo() {
+		s.logger.Info(msg, args...)
+	}
 }
 
 func (s *slogAdapter) Warn(msg string, args ...interface{}) {
-	s.logger.Warn(msg, args...)
+	if s.IsWarn() {
+		s.logger.Warn(msg, args...)
+	}
 }
 
 func (s *slogAdapter) Error(msg string, args ...interface{}) {
-	s.logger.Error(msg, args...)
+	if s.IsError() {
+		s.logger.Error(msg, args...)
+	}
 }
 
-func (s *slogAdapter) IsTrace() bool { return false }
-func (s *slogAdapter) IsDebug() bool { return true }
-func (s *slogAdapter) IsInfo() bool  { return true }
-func (s *slogAdapter) IsWarn() bool  { return true }
-func (s *slogAdapter) IsError() bool { return true }
+func (s *slogAdapter) IsTrace() bool { return s.isEnabled(slog.LevelDebug - 4) }
+func (s *slogAdapter) IsDebug() bool { return s.isEnabled(slog.LevelDebug) }
+func (s *slogAdapter) IsInfo() bool  { return s.isEnabled(slog.LevelInfo) }
+func (s *slogAdapter) IsWarn() bool  { return s.isEnabled(slog.LevelWarn) }
+func (s *slogAdapter) IsError() bool { return s.isEnabled(slog.LevelError) }
 
 func (s *slogAdapter) ImpliedArgs() []interface{} {
 	return s.implied
@@ -716,7 +745,22 @@ func (s *slogAdapter) ResetNamed(name string) hclog.Logger {
 func (s *slogAdapter) SetLevel(level hclog.Level) {}
 
 func (s *slogAdapter) GetLevel() hclog.Level {
-	return hclog.Debug
+	if s.isEnabled(slog.LevelDebug - 4) {
+		return hclog.Trace
+	}
+	if s.isEnabled(slog.LevelDebug) {
+		return hclog.Debug
+	}
+	if s.isEnabled(slog.LevelInfo) {
+		return hclog.Info
+	}
+	if s.isEnabled(slog.LevelWarn) {
+		return hclog.Warn
+	}
+	if s.isEnabled(slog.LevelError) {
+		return hclog.Error
+	}
+	return hclog.Off
 }
 
 func (s *slogAdapter) StandardLogger(opts *hclog.StandardLoggerOptions) *log.Logger {
