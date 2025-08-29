@@ -21,6 +21,7 @@ type Engine struct {
 	queue        ports.QueuePort
 	storage      ports.StoragePort
 	eventManager ports.EventManager
+	loadBalancer ports.LoadBalancer
 	logger       *slog.Logger
 	metrics      *domain.ExecutionMetrics
 
@@ -29,10 +30,10 @@ type Engine struct {
 	wg     sync.WaitGroup
 }
 
-func NewEngine(config domain.EngineConfig, nodeID string, nodeRegistry ports.NodeRegistryPort, queue ports.QueuePort, storage ports.StoragePort, eventManager ports.EventManager, logger *slog.Logger) *Engine {
+func NewEngine(config domain.EngineConfig, nodeID string, nodeRegistry ports.NodeRegistryPort, queue ports.QueuePort, storage ports.StoragePort, eventManager ports.EventManager, loadBalancer ports.LoadBalancer, logger *slog.Logger) *Engine {
 	stateManager := NewStateManager(storage, logger)
 	metrics := domain.NewExecutionMetrics()
-	executor := NewExecutor(config, nodeID, nodeRegistry, stateManager, queue, storage, eventManager, logger, metrics)
+	executor := NewExecutor(config, nodeID, nodeRegistry, stateManager, queue, storage, eventManager, loadBalancer, logger, metrics)
 
 	return &Engine{
 		config:       config,
@@ -43,6 +44,7 @@ func NewEngine(config domain.EngineConfig, nodeID string, nodeRegistry ports.Nod
 		queue:        queue,
 		storage:      storage,
 		eventManager: eventManager,
+		loadBalancer: loadBalancer,
 		logger:       logger.With("component", "engine"),
 		metrics:      metrics,
 	}
@@ -268,10 +270,10 @@ func (e *Engine) processNextItem() (bool, error) {
 	default:
 	}
 
-	item, claimID, exists, err := e.queue.Claim()
+	item, exists, err := e.queue.Peek()
 	if err != nil {
-		e.logger.Error("Failed to claim item", "error", err)
-		return false, domain.NewDiscoveryError("engine", "claim_work_item", err)
+		e.logger.Error("Failed to peek item", "error", err)
+		return false, domain.NewDiscoveryError("engine", "peek_work_item", err)
 	}
 
 	if !exists {
@@ -280,8 +282,28 @@ func (e *Engine) processNextItem() (bool, error) {
 
 	var workItem WorkItem
 	if err := json.Unmarshal(item, &workItem); err != nil {
-		e.queue.Complete(claimID)
-		return false, domain.NewDiscoveryError("engine", "unmarshal_work_item", err)
+		e.logger.Error("Failed to unmarshal peeked work item", "error", err)
+		return false, domain.NewDiscoveryError("engine", "unmarshal_peeked_work_item", err)
+	}
+
+	shouldExecute, err := e.loadBalancer.ShouldExecuteNode(e.nodeID, workItem.WorkflowID, workItem.NodeName)
+	if err != nil {
+		e.logger.Error("Failed to check load balancer decision", "error", err)
+		return false, domain.NewDiscoveryError("engine", "load_balancer_decision", err)
+	}
+
+	if !shouldExecute {
+		return false, nil
+	}
+
+	_, claimID, exists, err := e.queue.Claim()
+	if err != nil {
+		e.logger.Error("Failed to claim item", "error", err)
+		return false, domain.NewDiscoveryError("engine", "claim_work_item", err)
+	}
+
+	if !exists {
+		return false, nil
 	}
 
 	e.metrics.IncrementItemsProcessed()

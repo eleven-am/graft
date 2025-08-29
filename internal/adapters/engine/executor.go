@@ -20,11 +20,12 @@ type Executor struct {
 	queue        ports.QueuePort
 	storage      ports.StoragePort
 	eventManager ports.EventManager
+	loadBalancer ports.LoadBalancer
 	logger       *slog.Logger
 	metrics      *domain.ExecutionMetrics
 }
 
-func NewExecutor(config domain.EngineConfig, nodeID string, nodeRegistry ports.NodeRegistryPort, stateManager *StateManager, queue ports.QueuePort, storage ports.StoragePort, eventManager ports.EventManager, logger *slog.Logger, metrics *domain.ExecutionMetrics) *Executor {
+func NewExecutor(config domain.EngineConfig, nodeID string, nodeRegistry ports.NodeRegistryPort, stateManager *StateManager, queue ports.QueuePort, storage ports.StoragePort, eventManager ports.EventManager, loadBalancer ports.LoadBalancer, logger *slog.Logger, metrics *domain.ExecutionMetrics) *Executor {
 	return &Executor{
 		config:       config,
 		nodeID:       nodeID,
@@ -33,6 +34,7 @@ func NewExecutor(config domain.EngineConfig, nodeID string, nodeRegistry ports.N
 		queue:        queue,
 		storage:      storage,
 		eventManager: eventManager,
+		loadBalancer: loadBalancer,
 		logger:       logger.With("component", "executor"),
 		metrics:      metrics,
 	}

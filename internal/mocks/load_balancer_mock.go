@@ -5,6 +5,7 @@ package mocks
 import (
 	context "context"
 
+	ports "github.com/eleven-am/graft/internal/ports"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -22,23 +23,23 @@ func (_m *MockLoadBalancer) EXPECT() *MockLoadBalancer_Expecter {
 }
 
 // GetClusterLoad provides a mock function with no fields
-func (_m *MockLoadBalancer) GetClusterLoad() (map[string]int, error) {
+func (_m *MockLoadBalancer) GetClusterLoad() (map[string]*ports.NodeLoad, error) {
 	ret := _m.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetClusterLoad")
 	}
 
-	var r0 map[string]int
+	var r0 map[string]*ports.NodeLoad
 	var r1 error
-	if rf, ok := ret.Get(0).(func() (map[string]int, error)); ok {
+	if rf, ok := ret.Get(0).(func() (map[string]*ports.NodeLoad, error)); ok {
 		return rf()
 	}
-	if rf, ok := ret.Get(0).(func() map[string]int); ok {
+	if rf, ok := ret.Get(0).(func() map[string]*ports.NodeLoad); ok {
 		r0 = rf()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(map[string]int)
+			r0 = ret.Get(0).(map[string]*ports.NodeLoad)
 		}
 	}
 
@@ -68,33 +69,35 @@ func (_c *MockLoadBalancer_GetClusterLoad_Call) Run(run func()) *MockLoadBalance
 	return _c
 }
 
-func (_c *MockLoadBalancer_GetClusterLoad_Call) Return(_a0 map[string]int, _a1 error) *MockLoadBalancer_GetClusterLoad_Call {
+func (_c *MockLoadBalancer_GetClusterLoad_Call) Return(_a0 map[string]*ports.NodeLoad, _a1 error) *MockLoadBalancer_GetClusterLoad_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockLoadBalancer_GetClusterLoad_Call) RunAndReturn(run func() (map[string]int, error)) *MockLoadBalancer_GetClusterLoad_Call {
+func (_c *MockLoadBalancer_GetClusterLoad_Call) RunAndReturn(run func() (map[string]*ports.NodeLoad, error)) *MockLoadBalancer_GetClusterLoad_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GetNodeLoad provides a mock function with given fields: nodeID
-func (_m *MockLoadBalancer) GetNodeLoad(nodeID string) (int, error) {
+func (_m *MockLoadBalancer) GetNodeLoad(nodeID string) (*ports.NodeLoad, error) {
 	ret := _m.Called(nodeID)
 
 	if len(ret) == 0 {
 		panic("no return value specified for GetNodeLoad")
 	}
 
-	var r0 int
+	var r0 *ports.NodeLoad
 	var r1 error
-	if rf, ok := ret.Get(0).(func(string) (int, error)); ok {
+	if rf, ok := ret.Get(0).(func(string) (*ports.NodeLoad, error)); ok {
 		return rf(nodeID)
 	}
-	if rf, ok := ret.Get(0).(func(string) int); ok {
+	if rf, ok := ret.Get(0).(func(string) *ports.NodeLoad); ok {
 		r0 = rf(nodeID)
 	} else {
-		r0 = ret.Get(0).(int)
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*ports.NodeLoad)
+		}
 	}
 
 	if rf, ok := ret.Get(1).(func(string) error); ok {
@@ -124,12 +127,57 @@ func (_c *MockLoadBalancer_GetNodeLoad_Call) Run(run func(nodeID string)) *MockL
 	return _c
 }
 
-func (_c *MockLoadBalancer_GetNodeLoad_Call) Return(_a0 int, _a1 error) *MockLoadBalancer_GetNodeLoad_Call {
+func (_c *MockLoadBalancer_GetNodeLoad_Call) Return(_a0 *ports.NodeLoad, _a1 error) *MockLoadBalancer_GetNodeLoad_Call {
 	_c.Call.Return(_a0, _a1)
 	return _c
 }
 
-func (_c *MockLoadBalancer_GetNodeLoad_Call) RunAndReturn(run func(string) (int, error)) *MockLoadBalancer_GetNodeLoad_Call {
+func (_c *MockLoadBalancer_GetNodeLoad_Call) RunAndReturn(run func(string) (*ports.NodeLoad, error)) *MockLoadBalancer_GetNodeLoad_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// IsDraining provides a mock function with no fields
+func (_m *MockLoadBalancer) IsDraining() bool {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for IsDraining")
+	}
+
+	var r0 bool
+	if rf, ok := ret.Get(0).(func() bool); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	return r0
+}
+
+// MockLoadBalancer_IsDraining_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'IsDraining'
+type MockLoadBalancer_IsDraining_Call struct {
+	*mock.Call
+}
+
+// IsDraining is a helper method to define mock.On call
+func (_e *MockLoadBalancer_Expecter) IsDraining() *MockLoadBalancer_IsDraining_Call {
+	return &MockLoadBalancer_IsDraining_Call{Call: _e.mock.On("IsDraining")}
+}
+
+func (_c *MockLoadBalancer_IsDraining_Call) Run(run func()) *MockLoadBalancer_IsDraining_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockLoadBalancer_IsDraining_Call) Return(_a0 bool) *MockLoadBalancer_IsDraining_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockLoadBalancer_IsDraining_Call) RunAndReturn(run func() bool) *MockLoadBalancer_IsDraining_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -238,6 +286,51 @@ func (_c *MockLoadBalancer_Start_Call) RunAndReturn(run func(context.Context) er
 	return _c
 }
 
+// StartDraining provides a mock function with no fields
+func (_m *MockLoadBalancer) StartDraining() error {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for StartDraining")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func() error); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockLoadBalancer_StartDraining_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'StartDraining'
+type MockLoadBalancer_StartDraining_Call struct {
+	*mock.Call
+}
+
+// StartDraining is a helper method to define mock.On call
+func (_e *MockLoadBalancer_Expecter) StartDraining() *MockLoadBalancer_StartDraining_Call {
+	return &MockLoadBalancer_StartDraining_Call{Call: _e.mock.On("StartDraining")}
+}
+
+func (_c *MockLoadBalancer_StartDraining_Call) Run(run func()) *MockLoadBalancer_StartDraining_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockLoadBalancer_StartDraining_Call) Return(_a0 error) *MockLoadBalancer_StartDraining_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockLoadBalancer_StartDraining_Call) RunAndReturn(run func() error) *MockLoadBalancer_StartDraining_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Stop provides a mock function with no fields
 func (_m *MockLoadBalancer) Stop() error {
 	ret := _m.Called()
@@ -279,6 +372,97 @@ func (_c *MockLoadBalancer_Stop_Call) Return(_a0 error) *MockLoadBalancer_Stop_C
 }
 
 func (_c *MockLoadBalancer_Stop_Call) RunAndReturn(run func() error) *MockLoadBalancer_Stop_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// StopDraining provides a mock function with no fields
+func (_m *MockLoadBalancer) StopDraining() error {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for StopDraining")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func() error); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockLoadBalancer_StopDraining_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'StopDraining'
+type MockLoadBalancer_StopDraining_Call struct {
+	*mock.Call
+}
+
+// StopDraining is a helper method to define mock.On call
+func (_e *MockLoadBalancer_Expecter) StopDraining() *MockLoadBalancer_StopDraining_Call {
+	return &MockLoadBalancer_StopDraining_Call{Call: _e.mock.On("StopDraining")}
+}
+
+func (_c *MockLoadBalancer_StopDraining_Call) Run(run func()) *MockLoadBalancer_StopDraining_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockLoadBalancer_StopDraining_Call) Return(_a0 error) *MockLoadBalancer_StopDraining_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockLoadBalancer_StopDraining_Call) RunAndReturn(run func() error) *MockLoadBalancer_StopDraining_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// WaitForDraining provides a mock function with given fields: ctx
+func (_m *MockLoadBalancer) WaitForDraining(ctx context.Context) error {
+	ret := _m.Called(ctx)
+
+	if len(ret) == 0 {
+		panic("no return value specified for WaitForDraining")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context) error); ok {
+		r0 = rf(ctx)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockLoadBalancer_WaitForDraining_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'WaitForDraining'
+type MockLoadBalancer_WaitForDraining_Call struct {
+	*mock.Call
+}
+
+// WaitForDraining is a helper method to define mock.On call
+//   - ctx context.Context
+func (_e *MockLoadBalancer_Expecter) WaitForDraining(ctx interface{}) *MockLoadBalancer_WaitForDraining_Call {
+	return &MockLoadBalancer_WaitForDraining_Call{Call: _e.mock.On("WaitForDraining", ctx)}
+}
+
+func (_c *MockLoadBalancer_WaitForDraining_Call) Run(run func(ctx context.Context)) *MockLoadBalancer_WaitForDraining_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context))
+	})
+	return _c
+}
+
+func (_c *MockLoadBalancer_WaitForDraining_Call) Return(_a0 error) *MockLoadBalancer_WaitForDraining_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockLoadBalancer_WaitForDraining_Call) RunAndReturn(run func(context.Context) error) *MockLoadBalancer_WaitForDraining_Call {
 	_c.Call.Return(run)
 	return _c
 }

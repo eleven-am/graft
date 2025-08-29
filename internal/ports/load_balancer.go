@@ -7,12 +7,20 @@ type LoadBalancer interface {
 	Stop() error
 
 	ShouldExecuteNode(nodeID string, workflowID string, nodeName string) (bool, error)
-	GetClusterLoad() (map[string]int, error)
-	GetNodeLoad(nodeID string) (int, error)
+	GetClusterLoad() (map[string]*NodeLoad, error)
+	GetNodeLoad(nodeID string) (*NodeLoad, error)
+
+	StartDraining() error
+	StopDraining() error
+	IsDraining() bool
+	WaitForDraining(ctx context.Context) error
 }
 
 type NodeLoad struct {
-	NodeID          string `json:"node_id"`
-	ActiveWorkflows int    `json:"active_workflows"`
-	LastUpdated     int64  `json:"last_updated"`
+	NodeID          string             `json:"node_id"`
+	TotalWeight     float64            `json:"total_weight"`
+	ExecutionUnits  map[string]float64 `json:"execution_units"`
+	RecentLatencyMs float64            `json:"recent_latency_ms"`
+	RecentErrorRate float64            `json:"recent_error_rate"`
+	LastUpdated     int64              `json:"last_updated"`
 }

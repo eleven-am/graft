@@ -211,12 +211,15 @@ func setupAggressiveEngine(t *testing.T) (*Engine, *TestNodeRegistry, func()) {
 	testQueue := queue.NewQueue("aggressive-test-queue", appStorage, mockEventManager, logger)
 	nodeRegistry := NewTestNodeRegistry()
 
+	mockLoadBalancer := mocks.NewMockLoadBalancer(t)
+	mockLoadBalancer.On("ShouldExecuteNode", mock.AnythingOfType("string"), mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return(true, nil).Maybe()
+
 	config := domain.DefaultEngineConfig()
 	config.NodeExecutionTimeout = 100 * time.Millisecond // Very short timeout
 	config.RetryAttempts = 1                             // Lower for easier DLQ testing
 	config.WorkerCount = 1                               // Single worker to avoid race conditions
 
-	engine := NewEngine(config, "test-node", nodeRegistry, testQueue, appStorage, mockEventManager, logger)
+	engine := NewEngine(config, "test-node", nodeRegistry, testQueue, appStorage, mockEventManager, mockLoadBalancer, logger)
 
 	ctx := context.Background()
 	err = engine.Start(ctx)
@@ -543,8 +546,11 @@ func TestEngine_RapidStartStop(t *testing.T) {
 		testQueue := queue.NewQueue(fmt.Sprintf("rapid-test-%d", i), appStorage, mockEventManager, logger)
 		nodeRegistry := NewTestNodeRegistry()
 
+		mockLoadBalancer := mocks.NewMockLoadBalancer(t)
+		mockLoadBalancer.On("ShouldExecuteNode", mock.AnythingOfType("string"), mock.AnythingOfType("string"), mock.AnythingOfType("string")).Return(true, nil).Maybe()
+
 		config := domain.DefaultEngineConfig()
-		engine := NewEngine(config, fmt.Sprintf("test-node-%d", i), nodeRegistry, testQueue, appStorage, mockEventManager, logger)
+		engine := NewEngine(config, fmt.Sprintf("test-node-%d", i), nodeRegistry, testQueue, appStorage, mockEventManager, mockLoadBalancer, logger)
 
 		ctx := context.Background()
 

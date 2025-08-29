@@ -8,9 +8,11 @@ import (
 	"sort"
 	"time"
 
+	"github.com/eleven-am/graft/internal/adapters/cluster"
 	"github.com/eleven-am/graft/internal/adapters/discovery"
 	"github.com/eleven-am/graft/internal/adapters/engine"
 	"github.com/eleven-am/graft/internal/adapters/events"
+	"github.com/eleven-am/graft/internal/adapters/load_balancer"
 	"github.com/eleven-am/graft/internal/adapters/node_registry"
 	"github.com/eleven-am/graft/internal/adapters/queue"
 	"github.com/eleven-am/graft/internal/adapters/raft"
@@ -21,14 +23,16 @@ import (
 )
 
 type Manager struct {
-	engine       ports.EnginePort
-	storage      ports.StoragePort
-	queue        ports.QueuePort
-	nodeRegistry ports.NodeRegistryPort
-	transport    ports.TransportPort
-	discovery    ports.DiscoveryManager
-	raftAdapter  ports.RaftNode
-	eventManager ports.EventManager
+	engine         ports.EnginePort
+	storage        ports.StoragePort
+	queue          ports.QueuePort
+	nodeRegistry   ports.NodeRegistryPort
+	transport      ports.TransportPort
+	discovery      ports.DiscoveryManager
+	raftAdapter    ports.RaftNode
+	eventManager   ports.EventManager
+	loadBalancer   ports.LoadBalancer
+	clusterManager ports.ClusterManager
 
 	config *domain.Config
 	logger *slog.Logger
@@ -104,20 +108,26 @@ func NewWithConfig(config *domain.Config) *Manager {
 
 	nodeRegistryManager := node_registry.NewManager(logger)
 
+	clusterManager := cluster.NewRaftClusterManager(raftAdapter, 1, logger)
+	
+	loadBalancerManager := load_balancer.NewManager(appStorage, eventManager, config.NodeID, clusterManager, logger)
+
 	queueAdapter := queue.NewQueue("main", appStorage, eventManager, logger)
-	engineAdapter := engine.NewEngine(config.Engine, config.NodeID, nodeRegistryManager, queueAdapter, appStorage, eventManager, logger)
+	engineAdapter := engine.NewEngine(config.Engine, config.NodeID, nodeRegistryManager, queueAdapter, appStorage, eventManager, loadBalancerManager, logger)
 
 	return &Manager{
-		config:       config,
-		logger:       logger,
-		nodeID:       config.NodeID,
-		discovery:    discoveryManager,
-		raftAdapter:  raftAdapter,
-		storage:      appStorage,
-		eventManager: eventManager,
-		nodeRegistry: nodeRegistryManager,
-		queue:        queueAdapter,
-		engine:       engineAdapter,
+		config:         config,
+		logger:         logger,
+		nodeID:         config.NodeID,
+		discovery:      discoveryManager,
+		raftAdapter:    raftAdapter,
+		storage:        appStorage,
+		eventManager:   eventManager,
+		nodeRegistry:   nodeRegistryManager,
+		queue:          queueAdapter,
+		engine:         engineAdapter,
+		loadBalancer:   loadBalancerManager,
+		clusterManager: clusterManager,
 	}
 }
 
@@ -230,7 +240,10 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 		return fmt.Errorf("failed to start raft node: %w", err)
 	}
 
-	// Start the workflow engine after Raft is ready
+	if err := m.loadBalancer.Start(m.ctx); err != nil {
+		return fmt.Errorf("failed to start load balancer: %w", err)
+	}
+
 	if err := m.engine.Start(m.ctx); err != nil {
 		return fmt.Errorf("failed to start engine: %w", err)
 	}
@@ -261,6 +274,10 @@ func (m *Manager) Stop() error {
 
 	if m.engine != nil {
 		m.engine.Stop()
+	}
+
+	if m.loadBalancer != nil {
+		m.loadBalancer.Stop()
 	}
 
 	if m.queue != nil {
