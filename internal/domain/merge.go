@@ -1,8 +1,8 @@
 package domain
 
 import (
-	json "github.com/goccy/go-json"
 	"dario.cat/mergo"
+	"github.com/goccy/go-json"
 )
 
 func MergeStates(current, results json.RawMessage) (json.RawMessage, error) {
