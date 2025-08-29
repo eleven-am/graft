@@ -24,7 +24,6 @@ func NewStateManager(storage ports.StoragePort, logger *slog.Logger) *StateManag
 }
 
 func (sm *StateManager) SaveWorkflowState(ctx context.Context, workflow *domain.WorkflowInstance) error {
-
 	key := fmt.Sprintf("workflow:state:%s", workflow.ID)
 
 	workflowBytes, err := json.Marshal(workflow)
@@ -40,7 +39,6 @@ func (sm *StateManager) SaveWorkflowState(ctx context.Context, workflow *domain.
 }
 
 func (sm *StateManager) LoadWorkflowState(ctx context.Context, workflowID string) (*domain.WorkflowInstance, error) {
-
 	key := fmt.Sprintf("workflow:state:%s", workflowID)
 
 	data, _, exists, err := sm.storage.Get(key)
@@ -60,7 +58,6 @@ func (sm *StateManager) LoadWorkflowState(ctx context.Context, workflowID string
 }
 
 func (sm *StateManager) UpdateWorkflowState(ctx context.Context, workflowID string, updateFn func(*domain.WorkflowInstance) error) error {
-
 	key := fmt.Sprintf("workflow:state:%s", workflowID)
 
 	for retries := 0; retries < 10; retries++ {

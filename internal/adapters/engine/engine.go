@@ -54,7 +54,6 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.logger.Info("starting workflow engine", "worker_count", e.config.WorkerCount)
 
 	e.ctx, e.cancel = context.WithCancel(ctx)
-
 	for i := 0; i < e.config.WorkerCount; i++ {
 		e.wg.Add(1)
 		go e.processWork()
@@ -64,13 +63,11 @@ func (e *Engine) Start(ctx context.Context) error {
 }
 
 func (e *Engine) Stop() error {
-
 	if e.cancel != nil {
 		e.cancel()
 	}
 
 	e.wg.Wait()
-
 	if err := e.queue.Close(); err != nil {
 		e.logger.Error("failed to close queue", "error", err)
 		return err
@@ -97,7 +94,6 @@ func (e *Engine) ProcessTrigger(trigger domain.WorkflowTrigger) error {
 	}
 
 	e.metrics.IncrementWorkflowsStarted()
-
 	var initialNodeNames []string
 	for _, node := range trigger.InitialNodes {
 		initialNodeNames = append(initialNodeNames, node.Name)
@@ -132,7 +128,6 @@ func (e *Engine) ProcessTrigger(trigger domain.WorkflowTrigger) error {
 }
 
 func (e *Engine) GetWorkflowStatus(workflowID string) (*domain.WorkflowStatus, error) {
-
 	workflow, err := e.stateManager.LoadWorkflowState(e.ctx, workflowID)
 	if err != nil {
 		return nil, domain.NewDiscoveryError("engine", "load_workflow", err)
@@ -178,7 +173,6 @@ func (e *Engine) GetWorkflowStatus(workflowID string) (*domain.WorkflowStatus, e
 }
 
 func (e *Engine) PauseWorkflow(ctx context.Context, workflowID string) error {
-
 	err := e.stateManager.UpdateWorkflowState(ctx, workflowID, func(wf *domain.WorkflowInstance) error {
 		if wf.Status != domain.WorkflowStateRunning {
 			return domain.ErrInvalidInput
@@ -195,7 +189,6 @@ func (e *Engine) PauseWorkflow(ctx context.Context, workflowID string) error {
 }
 
 func (e *Engine) ResumeWorkflow(ctx context.Context, workflowID string) error {
-
 	err := e.stateManager.UpdateWorkflowState(ctx, workflowID, func(wf *domain.WorkflowInstance) error {
 		if wf.Status != domain.WorkflowStatePaused {
 			return domain.ErrInvalidInput
@@ -212,7 +205,6 @@ func (e *Engine) ResumeWorkflow(ctx context.Context, workflowID string) error {
 }
 
 func (e *Engine) StopWorkflow(ctx context.Context, workflowID string) error {
-
 	err := e.stateManager.UpdateWorkflowState(ctx, workflowID, func(wf *domain.WorkflowInstance) error {
 		wf.Status = domain.WorkflowStateFailed
 		now := time.Now()
@@ -430,7 +422,6 @@ func (e *Engine) loadExecutingNodes(workflowID string) ([]domain.ExecutingNodeDa
 }
 
 func (e *Engine) GetDeadLetterItems(limit int) ([]ports.DeadLetterItem, error) {
-
 	items, err := e.queue.GetDeadLetterItems(limit)
 	if err != nil {
 		return nil, domain.NewDiscoveryError("engine", "get_dead_letter_items", err)
@@ -440,7 +431,6 @@ func (e *Engine) GetDeadLetterItems(limit int) ([]ports.DeadLetterItem, error) {
 }
 
 func (e *Engine) GetDeadLetterSize() (int, error) {
-
 	size, err := e.queue.GetDeadLetterSize()
 	if err != nil {
 		return 0, domain.NewDiscoveryError("engine", "get_dead_letter_size", err)
@@ -450,7 +440,6 @@ func (e *Engine) GetDeadLetterSize() (int, error) {
 }
 
 func (e *Engine) RetryFromDeadLetter(itemID string) error {
-
 	if err := e.queue.RetryFromDeadLetter(itemID); err != nil {
 		return domain.NewDiscoveryError("engine", "retry_from_dead_letter", err)
 	}
