@@ -28,6 +28,7 @@ Graft automatically manages a distributed cluster where:
 - State is replicated for fault tolerance
 - Leader election happens automatically
 - Nodes can join/leave dynamically
+- Work is automatically distributed across nodes for optimal performance
 
 ## Quick Start
 
