@@ -95,7 +95,7 @@ func NewStorage(dataDir string, logger *slog.Logger) (*Storage, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	
+
 	if err := os.MkdirAll(dataDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create data directory %s: %w", dataDir, err)
 	}
@@ -141,28 +141,6 @@ func NewStorage(dataDir string, logger *slog.Logger) (*Storage, error) {
 	}, nil
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 func (s *Storage) Close() error {
 	if s.db != nil {
 		if err := s.db.Close(); err != nil {
@@ -179,7 +157,6 @@ func (s *Storage) Close() error {
 	return nil
 }
 
-
 func (s *Storage) LogStore() raft.LogStore {
 	return s.logStore
 }
@@ -195,7 +172,6 @@ func (s *Storage) SnapshotStore() raft.SnapshotStore {
 func (s *Storage) StateDB() *badger.DB {
 	return s.db
 }
-
 
 type badgerLogger struct {
 	logger *slog.Logger
