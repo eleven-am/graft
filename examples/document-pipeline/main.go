@@ -52,7 +52,6 @@ func main() {
 	fmt.Println("\n🔥 Running Document Processing Scenarios")
 	fmt.Println(strings.Repeat("=", 60))
 
-	// Track workflow completions
 	completedWorkflows := 0
 
 	scenarios := []DocumentScenario{
@@ -72,78 +71,11 @@ func main() {
 				ProcessorName: nodeID,
 			},
 		},
-		// {
-		// 	Name: "High Priority Urgent Document",
-		// 	Doc: Document{
-		// 		ID:      "doc-002",
-		// 		Content: "URGENT: This is a high-priority document that requires immediate attention and processing. Please handle with care and ensure quality processing.",
-		// 		Type:    "document",
-		// 	},
-		// 	Config: ProcessingConfig{
-		// 		MaxRetries:    5,
-		// 		Timeout:       60 * time.Second,
-		// 		EnableOCR:     false,
-		// 		EnableNLP:     true,
-		// 		QualityGate:   0.8,
-		// 		ProcessorName: nodeID,
-		// 	},
-		// },
-		// {
-		// 	Name: "Image Document with OCR",
-		// 	Doc: Document{
-		// 		ID:      "doc-003",
-		// 		Content: "IMAGE_DATA: This represents image content that needs OCR processing to extract text.",
-		// 		Type:    "image",
-		// 	},
-		// 	Config: ProcessingConfig{
-		// 		MaxRetries:    3,
-		// 		Timeout:       45 * time.Second,
-		// 		EnableOCR:     true,
-		// 		EnableNLP:     true,
-		// 		QualityGate:   0.6,
-		// 		ProcessorName: nodeID,
-		// 	},
-		// },
-		// {
-		// 	Name: "Corrupted Document (Error Recovery)",
-		// 	Doc: Document{
-		// 		ID:      "doc-004",
-		// 		Content: "ERROR: This document has been corrupted and needs repair before processing can continue.",
-		// 		Type:    "corrupted",
-		// 	},
-		// 	Config: ProcessingConfig{
-		// 		MaxRetries:    3,
-		// 		Timeout:       30 * time.Second,
-		// 		EnableOCR:     false,
-		// 		EnableNLP:     false,
-		// 		QualityGate:   0.5,
-		// 		ProcessorName: nodeID,
-		// 	},
-		// },
-		// {
-		// 	Name: "Multilingual Document",
-		// 	Doc: Document{
-		// 		ID:      "doc-005",
-		// 		Content: "Hola mundo! Este es un documento en español que necesita ser procesado y traducido. Gracias por su atención.",
-		// 		Type:    "text",
-		// 	},
-		// 	Config: ProcessingConfig{
-		// 		MaxRetries:    3,
-		// 		Timeout:       30 * time.Second,
-		// 		EnableOCR:     false,
-		// 		EnableNLP:     true,
-		// 		QualityGate:   0.7,
-		// 		ProcessorName: nodeID,
-		// 	},
-		// },
 	}
 
-	// APPROACH 2: Event-driven approach (non-blocking, reactive)
-	// Register completion handler for immediate shutdown when all workflows done
 	manager.OnWorkflowCompleted(func(event *graft.WorkflowCompletedEvent) {
 		completedWorkflows++
 
-		// Use the event data
 		fmt.Printf("\n[%d/%d] ✅ Scenario-%d\n", completedWorkflows, len(scenarios), completedWorkflows)
 		fmt.Printf("    Workflow ID: %s\n", event.WorkflowID)
 		fmt.Printf("    Duration: %v\n", event.Duration.Round(time.Millisecond))
@@ -166,9 +98,8 @@ func main() {
 		if completedWorkflows == len(scenarios) {
 			fmt.Println("\n🎉 All workflows completed! Shutting down...")
 
-			// Shutdown in a goroutine to avoid blocking the completion handler
 			go func() {
-				time.Sleep(100 * time.Millisecond) // Brief delay to let logs flush
+				time.Sleep(100 * time.Millisecond)
 				fmt.Println("\n📊 Final Cluster Statistics")
 				fmt.Println(strings.Repeat("=", 40))
 				fmt.Println(formatClusterInfo(manager.GetClusterInfo()))
@@ -185,7 +116,6 @@ func main() {
 		}
 	})
 
-	// Start all workflows (completion will be handled by OnComplete callback)
 	for i, scenario := range scenarios {
 		fmt.Printf("\n🔄 [%d] Processing: %s\n", i+1, scenario.Name)
 
@@ -208,18 +138,12 @@ func main() {
 
 		fmt.Printf("✅ Started workflow: %s\n", workflowID)
 
-		// APPROACH 1: Synchronous monitoring (blocks until completion)
-		// Uncomment to use blocking workflow monitoring instead of event-driven approach:
-		// result := monitorWorkflow(manager, workflowID, scenario.Name, 30*time.Second)
-		// printWorkflowResult(result, i+1, len(scenarios))
-
 		time.Sleep(500 * time.Millisecond)
 	}
 
 	fmt.Println("\n⏳ Workflows started. Completion will be handled automatically...")
 	fmt.Printf("🔄 Processing %d workflow(s). Waiting for completion callbacks...\n", len(scenarios))
 
-	// Keep the main goroutine alive - completion callback will handle shutdown
 	select {}
 }
 
@@ -267,10 +191,9 @@ func registerWorkflowNodes(manager *graft.Manager) error {
 func monitorWorkflow(manager *graft.Manager, workflowID, scenarioName string, timeout time.Duration) WorkflowResult {
 	start := time.Now()
 
-	// Subscribe to real-time workflow state changes
 	statusChan, unsubscribe, err := manager.SubscribeToWorkflowState(workflowID)
 	if err != nil {
-		// Fallback to polling if subscription fails
+
 		return monitorWorkflowPolling(manager, workflowID, scenarioName, timeout)
 	}
 	defer unsubscribe()
@@ -281,7 +204,7 @@ func monitorWorkflow(manager *graft.Manager, workflowID, scenarioName string, ti
 		select {
 		case status := <-statusChan:
 			if status == nil {
-				// Channel closed, workflow might have been cleaned up
+
 				continue
 			}
 

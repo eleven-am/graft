@@ -3,6 +3,7 @@ package load_balancer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -13,12 +14,22 @@ import (
 	"github.com/eleven-am/graft/internal/ports"
 )
 
+type Config struct {
+	ScoreCacheTTL   time.Duration                     `json:"score_cache_ttl"`
+	FailurePolicy   string                            `json:"failure_policy"` // "fail-open" or "fail-closed"
+	DefaultCapacity float64                           `json:"default_capacity"`
+	Algorithm       domain.LoadBalancingAlgorithm     `json:"algorithm"`
+	WeightedConfig  domain.WeightedRoundRobinConfig   `json:"weighted_config"`
+	AdaptiveConfig  domain.AdaptiveLoadBalancerConfig `json:"adaptive_config"`
+}
+
 type Manager struct {
 	storage        ports.StoragePort
 	events         ports.EventManager
 	nodeID         string
 	logger         *slog.Logger
 	clusterManager ports.ClusterManager
+	config         *Config
 
 	mu       sync.RWMutex
 	running  bool
@@ -34,6 +45,10 @@ type Manager struct {
 
 	scoreCache    map[string]scoreCacheEntry
 	scoreCacheTTL time.Duration
+
+	// Advanced load balancing
+	strategy    LoadBalancingStrategy
+	nodeMetrics map[string]NodeMetrics
 }
 
 type scoreCacheEntry struct {
@@ -41,23 +56,70 @@ type scoreCacheEntry struct {
 	timestamp int64
 }
 
-func NewManager(storage ports.StoragePort, events ports.EventManager, nodeID string, clusterManager ports.ClusterManager, logger *slog.Logger) *Manager {
+func NewManager(storage ports.StoragePort, events ports.EventManager, nodeID string, clusterManager ports.ClusterManager, config *Config, logger *slog.Logger) *Manager {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	return &Manager{
+	if config == nil {
+		config = &Config{
+			ScoreCacheTTL:   1 * time.Second,
+			FailurePolicy:   "fail-open",
+			DefaultCapacity: 10.0,
+		}
+	}
+
+	if config.FailurePolicy != "fail-open" && config.FailurePolicy != "fail-closed" {
+		config.FailurePolicy = "fail-open"
+	}
+
+	manager := &Manager{
 		storage:        storage,
 		events:         events,
 		nodeID:         nodeID,
 		clusterManager: clusterManager,
+		config:         config,
 		logger:         logger.With("component", "load-balancer"),
 		executionUnits: make(map[string]float64),
 		errorWindow:    NewRollingWindow(100),
 		nodeCapacities: make(map[string]float64),
 		scoreCache:     make(map[string]scoreCacheEntry),
-		scoreCacheTTL:  1 * time.Second,
+		scoreCacheTTL:  config.ScoreCacheTTL,
+		nodeMetrics:    make(map[string]NodeMetrics),
 	}
+
+	manager.initializeStrategy()
+
+	return manager
+}
+
+func (m *Manager) initializeStrategy() {
+	switch m.config.Algorithm {
+	case domain.AlgorithmRoundRobin:
+		m.strategy = NewRoundRobinStrategy(m.logger)
+	case domain.AlgorithmWeightedRoundRobin:
+		m.strategy = NewWeightedRoundRobinStrategy(m.config.WeightedConfig, m.logger)
+	case domain.AlgorithmLeastConnections:
+		m.strategy = NewLeastConnectionsStrategy(m.logger)
+	case domain.AlgorithmLeastResponseTime:
+
+		adaptiveConfig := m.config.AdaptiveConfig
+		adaptiveConfig.ResponseTimeWeight = 0.8
+		adaptiveConfig.CpuUsageWeight = 0.05
+		adaptiveConfig.MemoryUsageWeight = 0.05
+		adaptiveConfig.ConnectionCountWeight = 0.05
+		adaptiveConfig.ErrorRateWeight = 0.05
+		m.strategy = NewAdaptiveStrategy(adaptiveConfig, m.logger)
+	case domain.AlgorithmAdaptive:
+		m.strategy = NewAdaptiveStrategy(m.config.AdaptiveConfig, m.logger)
+	case domain.AlgorithmConsistentHash:
+		m.strategy = NewConsistentHashStrategy(m.logger)
+	default:
+		m.logger.Warn("unknown load balancing algorithm, using adaptive", "algorithm", m.config.Algorithm)
+		m.strategy = NewAdaptiveStrategy(m.config.AdaptiveConfig, m.logger)
+	}
+
+	m.logger.Info("initialized load balancing strategy", "algorithm", m.config.Algorithm)
 }
 
 func (m *Manager) Start(ctx context.Context) error {
@@ -178,7 +240,11 @@ func (m *Manager) initializeNodeLoad() error {
 		LastUpdated:     time.Now().Unix(),
 	}
 
-	return m.updateNodeLoad(load)
+	err := m.updateNodeLoad(load)
+	if err != nil && errors.Is(err, domain.ErrNotFound) {
+		return nil
+	}
+	return err
 }
 
 func (m *Manager) onNodeStarted(event *domain.NodeStartedEvent) {
@@ -312,50 +378,125 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 				"cluster_viable", health.IsMinimumViable)
 
 			if !health.IsMinimumViable {
-				m.logger.Error("cluster below minimum viable nodes, defaulting to execute",
+				m.logger.Error("cluster below minimum viable nodes",
 					"healthy_nodes", health.HealthyNodes,
 					"minimum_nodes", health.MinimumNodes)
-				return true, nil
+				return m.handleFailurePolicy("cluster below minimum viable nodes", nil), nil
 			}
 		}
 
 		if !m.clusterManager.IsNodeActive(m.nodeID) {
-			m.logger.Warn("current node not active in cluster, defaulting to execute", "node_id", m.nodeID)
-			return true, nil
+			m.logger.Info("current node not active in cluster", "node_id", m.nodeID)
+			return m.handleFailurePolicy("current node not active in cluster", nil), nil
 		}
 	}
 
 	clusterLoad, err := m.GetClusterLoad()
 	if err != nil {
-		m.logger.Warn("failed to get cluster load, defaulting to execute", "error", err)
-		return true, nil
+		return m.handleFailurePolicy("failed to get cluster load", err), nil
 	}
 
 	if len(clusterLoad) == 0 {
-		m.logger.Warn("no valid cluster load data found, defaulting to execute",
-			"reason", "empty_cluster_load")
-		return true, nil
+		return m.handleFailurePolicy("no valid cluster load data found", nil), nil
 	}
 
 	filteredLoad := m.filterActiveNodes(clusterLoad)
 	if len(filteredLoad) == 0 {
-		m.logger.Warn("no active nodes in cluster load data, defaulting to execute",
-			"total_nodes", len(clusterLoad))
-		return true, nil
+		return m.handleFailurePolicy(fmt.Sprintf("no active nodes in cluster load data (total_nodes: %d)", len(clusterLoad)), nil), nil
 	}
 
-	capacities := m.getNodeCapacities()
-	scorer := DefaultScorer
-	bestNode, bestScore := scorer.SelectBestNode(filteredLoad, capacities)
+	nodeMetrics := m.convertToNodeMetrics(filteredLoad)
 
-	if bestNode == "" {
-		m.logger.Warn("no best node selected, defaulting to execute",
-			"reason", "empty_best_node", "score", bestScore)
-		return true, nil
+	selectedNode, err := m.strategy.SelectNode(context.Background(), nodeMetrics, workflowID)
+	if err != nil {
+		return m.handleFailurePolicy(fmt.Sprintf("failed to select node: %v", err), err), nil
 	}
 
-	shouldExecute := bestNode == m.nodeID
+	if selectedNode == "" {
+		return m.handleFailurePolicy("no node selected by strategy", nil), nil
+	}
+
+	shouldExecute := selectedNode == m.nodeID
+
+	m.logger.Debug("node selection result",
+		"selected_node", selectedNode,
+		"current_node", m.nodeID,
+		"workflow_id", workflowID,
+		"should_execute", shouldExecute,
+		"algorithm", m.config.Algorithm)
+
 	return shouldExecute, nil
+}
+
+func (m *Manager) convertToNodeMetrics(clusterLoad map[string]*ports.NodeLoad) []NodeMetrics {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	metrics := make([]NodeMetrics, 0, len(clusterLoad))
+	now := time.Now()
+
+	for nodeID, load := range clusterLoad {
+		if load == nil {
+			continue
+		}
+
+		responseTime := load.RecentLatencyMs
+		if responseTime == 0 {
+			responseTime = 100.0
+		}
+
+		errorRate := load.RecentErrorRate
+
+		capacity := m.config.DefaultCapacity
+		if nodeCapacity, exists := m.nodeCapacities[nodeID]; exists {
+			capacity = nodeCapacity
+		}
+
+		cpuUsage := (load.TotalWeight / capacity) * 100
+		if cpuUsage > 100 {
+			cpuUsage = 100
+		}
+
+		memoryUsage := cpuUsage * 0.8
+
+		connectionCount := len(load.ExecutionUnits)
+
+		nodeMetric := NodeMetrics{
+			NodeID:          nodeID,
+			ResponseTime:    responseTime,
+			CpuUsage:        cpuUsage,
+			MemoryUsage:     memoryUsage,
+			ConnectionCount: connectionCount,
+			ErrorRate:       errorRate,
+			Capacity:        capacity,
+			ActiveWorkflows: connectionCount,
+			LastUpdated:     now,
+			Available:       time.Now().Unix()-load.LastUpdated < 30,
+		}
+
+		metrics = append(metrics, nodeMetric)
+
+		if m.strategy != nil {
+			m.strategy.UpdateMetrics(nodeID, nodeMetric)
+		}
+
+		m.nodeMetrics[nodeID] = nodeMetric
+	}
+
+	return metrics
+}
+
+func (m *Manager) handleFailurePolicy(reason string, err error) bool {
+	switch m.config.FailurePolicy {
+	case "fail-closed":
+		m.logger.Warn("load balancer failing closed", "reason", reason, "error", err)
+		return false
+	case "fail-open":
+		fallthrough
+	default:
+		m.logger.Warn("load balancer failing open", "reason", reason, "error", err)
+		return true
+	}
 }
 
 func (m *Manager) StartDraining() error {
@@ -561,4 +702,48 @@ func (m *Manager) GetNodeLoad(nodeID string) (*ports.NodeLoad, error) {
 	}
 
 	return &load, nil
+}
+
+func (m *Manager) GetLoadBalancingMetrics() map[string]interface{} {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	metrics := map[string]interface{}{
+		"algorithm":        string(m.config.Algorithm),
+		"failure_policy":   m.config.FailurePolicy,
+		"default_capacity": m.config.DefaultCapacity,
+		"running":          m.running,
+		"draining":         m.draining,
+	}
+
+	if m.strategy != nil {
+		strategyMetrics := m.strategy.GetAlgorithmMetrics()
+		for k, v := range strategyMetrics {
+			metrics[k] = v
+		}
+	}
+
+	if len(m.nodeMetrics) > 0 {
+		nodeCount := len(m.nodeMetrics)
+		availableNodes := 0
+		totalResponseTime := 0.0
+		totalErrorRate := 0.0
+
+		for _, node := range m.nodeMetrics {
+			if node.Available {
+				availableNodes++
+			}
+			totalResponseTime += node.ResponseTime
+			totalErrorRate += node.ErrorRate
+		}
+
+		metrics["node_summary"] = map[string]interface{}{
+			"total_nodes":       nodeCount,
+			"available_nodes":   availableNodes,
+			"avg_response_time": totalResponseTime / float64(nodeCount),
+			"avg_error_rate":    totalErrorRate / float64(nodeCount),
+		}
+	}
+
+	return metrics
 }

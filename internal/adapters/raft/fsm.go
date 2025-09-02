@@ -2,17 +2,17 @@ package raft
 
 import (
 	"bytes"
-	"encoding/json"
+	stdjson "encoding/json"
 	"fmt"
+	"github.com/dgraph-io/badger/v3"
+	"github.com/eleven-am/graft/internal/domain"
+	"github.com/eleven-am/graft/internal/ports"
+	json "github.com/eleven-am/graft/internal/xjson"
+	"github.com/hashicorp/raft"
 	"io"
 	"log/slog"
 	"sync"
 	"time"
-
-	"github.com/dgraph-io/badger/v3"
-	"github.com/eleven-am/graft/internal/domain"
-	"github.com/eleven-am/graft/internal/ports"
-	"github.com/hashicorp/raft"
 )
 
 type FSM struct {
@@ -143,10 +143,6 @@ func (f *FSM) applyPut(cmd domain.Command) *domain.CommandResult {
 		RequestID: cmd.RequestID,
 	}
 
-	if f.eventManager != nil {
-		f.eventManager.Broadcast(event)
-	}
-
 	return &domain.CommandResult{
 		Success: true,
 		Version: newVersion,
@@ -181,10 +177,6 @@ func (f *FSM) applyDelete(cmd domain.Command) *domain.CommandResult {
 		NodeID:    f.nodeID,
 		Timestamp: time.Now(),
 		RequestID: cmd.RequestID,
-	}
-
-	if f.eventManager != nil {
-		f.eventManager.Broadcast(event)
 	}
 
 	return &domain.CommandResult{
@@ -280,10 +272,6 @@ func (f *FSM) applyCAS(cmd domain.Command) *domain.CommandResult {
 		NodeID:    f.nodeID,
 		Timestamp: time.Now(),
 		RequestID: cmd.RequestID,
-	}
-
-	if f.eventManager != nil {
-		f.eventManager.Broadcast(event)
 	}
 
 	return &domain.CommandResult{
@@ -514,12 +502,6 @@ func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 		}
 	}
 
-	if f.eventManager != nil {
-		for _, event := range events {
-			f.eventManager.Broadcast(event)
-		}
-	}
-
 	return &domain.CommandResult{
 		Success:      true,
 		BatchResults: results,
@@ -573,7 +555,7 @@ func (f *FSM) Restore(rc io.ReadCloser) error {
 	defer rc.Close()
 
 	var snapshot fsmSnapshot
-	if err := json.NewDecoder(rc).Decode(&snapshot); err != nil {
+	if err := stdjson.NewDecoder(rc).Decode(&snapshot); err != nil {
 		f.logger.Error("failed to decode snapshot", "error", err)
 		return err
 	}

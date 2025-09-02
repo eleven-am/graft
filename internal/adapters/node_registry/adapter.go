@@ -166,6 +166,41 @@ func (a *NodeAdapter) Execute(ctx context.Context, state json.RawMessage, config
 	if field := resultVal.FieldByName("NextNodes"); field.IsValid() {
 		if nodes, ok := field.Interface().([]ports.NextNode); ok {
 			portResult.NextNodes = nodes
+		} else if field.Kind() == reflect.Slice {
+			ln := field.Len()
+			if ln > 0 {
+				if field.Index(0).Kind() == reflect.String {
+					converted := make([]ports.NextNode, 0, ln)
+					for i := 0; i < ln; i++ {
+						converted = append(converted, ports.NextNode{NodeName: field.Index(i).String()})
+					}
+					portResult.NextNodes = converted
+				} else {
+					converted := make([]ports.NextNode, 0, ln)
+					for i := 0; i < ln; i++ {
+						elem := field.Index(i)
+						if elem.Kind() == reflect.Ptr {
+							elem = elem.Elem()
+						}
+						if elem.Kind() != reflect.Struct {
+							continue
+						}
+						nodeNameField := elem.FieldByName("NodeName")
+						configField := elem.FieldByName("Config")
+						if nodeNameField.IsValid() && nodeNameField.Kind() == reflect.String {
+							nn := nodeNameField.String()
+							var cfg interface{}
+							if configField.IsValid() {
+								cfg = configField.Interface()
+							}
+							converted = append(converted, ports.NextNode{NodeName: nn, Config: cfg})
+						}
+					}
+					if len(converted) > 0 {
+						portResult.NextNodes = converted
+					}
+				}
+			}
 		}
 	}
 

@@ -2,6 +2,7 @@ package domain
 
 import (
 	"runtime"
+	"strconv"
 	"time"
 )
 
@@ -123,7 +124,7 @@ func NewPanicError(workflowID, nodeID string, panicValue interface{}) *WorkflowP
 	if ok {
 		fn := runtime.FuncForPC(pc)
 		if fn != nil {
-			recoveredAt = fn.Name() + " at " + file + ":" + string(rune(line))
+			recoveredAt = fn.Name() + " at " + file + ":" + strconv.Itoa(line)
 		}
 	}
 

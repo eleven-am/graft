@@ -12,6 +12,8 @@ type EventManager interface {
 
 	Broadcast(event domain.Event) error
 
+	SubscribeToChannel(prefix string) (<-chan StorageEvent, func(), error)
+
 	OnWorkflowStarted(handler func(event *domain.WorkflowStartedEvent)) error
 	OnWorkflowCompleted(handler func(event *domain.WorkflowCompletedEvent)) error
 	OnWorkflowFailed(handler func(event *domain.WorkflowErrorEvent)) error

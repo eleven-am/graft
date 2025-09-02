@@ -1,13 +1,16 @@
 package raft
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
 	"sort"
 	"sync"
@@ -19,6 +22,16 @@ import (
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/raft"
 )
+
+type JoinRequest struct {
+	NodeID  string `json:"node_id"`
+	Address string `json:"address"`
+}
+
+type JoinResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+}
 
 type Config struct {
 	NodeID             string
@@ -179,14 +192,6 @@ func (r *Node) Start(ctx context.Context, existingPeers []ports.Peer) error {
 	r.raft.RegisterObserver(r.observer)
 	go r.processObservations(ctx)
 
-	if len(existingPeers) > 0 {
-		peerStrings := make([]string, len(existingPeers))
-		for i, peer := range existingPeers {
-			peerStrings[i] = peer.Address
-		}
-		go r.joinClusterWithBackoff(peerStrings)
-	}
-
 	r.started = true
 	return nil
 }
@@ -254,12 +259,25 @@ func (r *Node) Join(peers []ports.Peer) error {
 			continue
 		}
 
-		r.logger.Info("joining existing cluster", "node_id", peer.ID, "address", fmt.Sprintf("%s:%d", peer.Address, peer.Port))
-		if err := r.join(peer.ID, fmt.Sprintf("%s:%d", peer.Address, peer.Port)); err != nil {
-			r.logger.Error("failed to join cluster via peer", "peer_id", peer.ID, "address", fmt.Sprintf("%s:%d", peer.Address, peer.Port), "error", err)
+		addr := peer.Address
+		if peer.Port > 0 {
+
+			if _, _, err := net.SplitHostPort(peer.Address); err != nil {
+				addr = fmt.Sprintf("%s:%d", peer.Address, peer.Port)
+			}
+		}
+
+		if peer.ID == "" {
+			r.logger.Warn("skipping join via peer with empty ID", "address", addr)
+			continue
+		}
+
+		r.logger.Info("joining existing cluster", "node_id", peer.ID, "address", addr)
+		if err := r.join(peer.ID, addr); err != nil {
+			r.logger.Error("failed to join cluster via peer", "peer_id", peer.ID, "address", addr, "error", err)
 			continue
 		} else {
-			r.logger.Info("successfully joined cluster via peer", "peer_id", peer.ID, "address", fmt.Sprintf("%s:%d", peer.Address, peer.Port))
+			r.logger.Info("successfully joined cluster via peer", "peer_id", peer.ID, "address", addr)
 			return nil
 		}
 	}
@@ -429,40 +447,6 @@ func (r *Node) GetMetrics() ports.RaftMetrics {
 	return metrics
 }
 
-func (r *Node) joinClusterWithBackoff(peers []string) {
-	backoffDuration := 2 * time.Second
-	maxBackoff := 30 * time.Second
-
-	for attempt := 1; attempt <= r.config.MaxJoinAttempts; attempt++ {
-		r.logger.Info("attempting to join existing cluster", "attempt", attempt, "max_attempts", r.config.MaxJoinAttempts)
-
-		selectedPeer := r.selectBestPeer(peers)
-		if selectedPeer == "" {
-			r.logger.Error("no suitable peer found for joining")
-			continue
-		}
-
-		err := r.JoinPeer(selectedPeer)
-		if err == nil {
-			r.logger.Info("successfully joined existing cluster", "peer", selectedPeer)
-			return
-		}
-
-		r.logger.Error("failed to join cluster via peer", "error", err, "peer", selectedPeer, "attempt", attempt)
-
-		if attempt < r.config.MaxJoinAttempts {
-			r.logger.Info("backing off before retry", "backoff_duration", backoffDuration)
-			time.Sleep(backoffDuration)
-			backoffDuration = backoffDuration * 2
-			if backoffDuration > maxBackoff {
-				backoffDuration = maxBackoff
-			}
-		}
-	}
-
-	r.logger.Error("exceeded maximum join attempts, continuing as standalone node")
-}
-
 func (r *Node) selectBestPeer(peers []string) string {
 	if len(peers) == 0 {
 		return ""
@@ -470,16 +454,6 @@ func (r *Node) selectBestPeer(peers []string) string {
 
 	sort.Strings(peers)
 	return peers[0]
-}
-
-func (r *Node) JoinPeer(peer string) error {
-	peers := []ports.Peer{
-		{
-			ID:      "",
-			Address: peer,
-		},
-	}
-	return r.Join(peers)
 }
 
 func (r *Node) Stop() error {
@@ -850,4 +824,87 @@ func makeAdvertiseAddr(bindAddr string) (string, error) {
 	}
 
 	return bindAddr, nil
+}
+
+func (r *Node) RequestJoin(leaderURL string, request JoinRequest) (*JoinResponse, error) {
+	joinURL := leaderURL + "/join"
+	reqBytes, err := json.Marshal(request)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal join request: %w", err)
+	}
+
+	resp, err := http.Post(joinURL, "application/json", bytes.NewReader(reqBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to send join request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("join request failed with status %d", resp.StatusCode)
+	}
+
+	var joinResp JoinResponse
+	if err := json.NewDecoder(resp.Body).Decode(&joinResp); err != nil {
+		return nil, fmt.Errorf("failed to decode join response: %w", err)
+	}
+
+	return &joinResp, nil
+}
+
+func (r *Node) JoinViaRPC(leaderAddr, nodeID, joinAddr string) error {
+	if !r.IsLeader() {
+		request := JoinRequest{
+			NodeID:  nodeID,
+			Address: joinAddr,
+		}
+
+		leaderURL := fmt.Sprintf("http://%s", leaderAddr)
+		resp, err := r.RequestJoin(leaderURL, request)
+		if err != nil {
+			return fmt.Errorf("failed to request join via RPC: %w", err)
+		}
+
+		if !resp.Success {
+			return fmt.Errorf("join request rejected: %s", resp.Message)
+		}
+
+		return nil
+	}
+
+	return r.join(nodeID, joinAddr)
+}
+
+func (r *Node) HandleJoinRequest(w http.ResponseWriter, req *http.Request) {
+	if req.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var joinReq JoinRequest
+	if err := json.NewDecoder(req.Body).Decode(&joinReq); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if !r.IsLeader() {
+		resp := JoinResponse{
+			Success: false,
+			Message: "Not the cluster leader",
+		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(resp)
+		return
+	}
+
+	err := r.join(joinReq.NodeID, joinReq.Address)
+	resp := JoinResponse{
+		Success: err == nil,
+		Message: "Node added successfully",
+	}
+	if err != nil {
+		resp.Message = err.Error()
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }

@@ -3,16 +3,20 @@ package transport
 import (
 	"context"
 	"fmt"
+	"github.com/eleven-am/graft/internal/domain"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 	"log/slog"
 	"net"
 	"strconv"
 	"time"
 
-	"github.com/eleven-am/graft/internal/domain"
+	"crypto/tls"
+	"crypto/x509"
 	"github.com/eleven-am/graft/internal/ports"
 	pb "github.com/eleven-am/graft/internal/proto"
 	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"os"
 )
 
 type GRPCTransport struct {
@@ -24,16 +28,18 @@ type GRPCTransport struct {
 
 	address string
 	port    int
+
+	cfg domain.TransportConfig
 }
 
-func NewGRPCTransport(logger *slog.Logger) *GRPCTransport {
+func NewGRPCTransport(logger *slog.Logger, cfg domain.TransportConfig) *GRPCTransport {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	return &GRPCTransport{
 		logger: logger.With("component", "transport", "adapter", "grpc"),
-		server: grpc.NewServer(),
+		cfg:    cfg,
 	}
 }
 
@@ -52,6 +58,31 @@ func (t *GRPCTransport) Start(ctx context.Context, bindAddr string, port int) er
 		return fmt.Errorf("failed to listen on %s: %w", addr, err)
 	}
 
+	serverOpts := []grpc.ServerOption{}
+	if t.cfg.MaxMessageSizeMB > 0 {
+		bytes := t.cfg.MaxMessageSizeMB * 1024 * 1024
+		serverOpts = append(serverOpts, grpc.MaxRecvMsgSize(bytes), grpc.MaxSendMsgSize(bytes))
+	}
+	if t.cfg.EnableTLS && t.cfg.TLSCertFile != "" && t.cfg.TLSKeyFile != "" {
+		cert, err := tls.LoadX509KeyPair(t.cfg.TLSCertFile, t.cfg.TLSKeyFile)
+		if err != nil {
+			return fmt.Errorf("failed to load tls certs: %w", err)
+		}
+		tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
+		if t.cfg.TLSCAFile != "" {
+			caPem, err := os.ReadFile(t.cfg.TLSCAFile)
+			if err == nil {
+				pool := x509.NewCertPool()
+				if pool.AppendCertsFromPEM(caPem) {
+					tlsCfg.ClientCAs = pool
+					tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
+				}
+			}
+		}
+		serverOpts = append(serverOpts, grpc.Creds(credentials.NewTLS(tlsCfg)))
+	}
+
+	t.server = grpc.NewServer(serverOpts...)
 	pb.RegisterGraftNodeServer(t.server, t)
 
 	t.logger.Info("starting gRPC transport", "address", addr)
@@ -254,13 +285,29 @@ func (t *GRPCTransport) SendJoinRequest(ctx context.Context, nodeAddr string, re
 }
 
 func (t *GRPCTransport) getConnection(ctx context.Context, nodeAddr string) (*grpc.ClientConn, error) {
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	timeout := 5 * time.Second
+	if t.cfg.ConnectionTimeout > 0 {
+		timeout = t.cfg.ConnectionTimeout
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	conn, err := grpc.DialContext(ctx, nodeAddr,
-		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
-	)
+	dialOpts := []grpc.DialOption{grpc.WithBlock()}
+	if t.cfg.EnableTLS {
+		if t.cfg.TLSCAFile != "" {
+			creds, err := credentials.NewClientTLSFromFile(t.cfg.TLSCAFile, "")
+			if err != nil {
+				return nil, err
+			}
+			dialOpts = append(dialOpts, grpc.WithTransportCredentials(creds))
+		} else {
+			dialOpts = append(dialOpts, grpc.WithTransportCredentials(credentials.NewTLS(&tls.Config{InsecureSkipVerify: true})))
+		}
+	} else {
+		dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	}
+
+	conn, err := grpc.DialContext(ctx, nodeAddr, dialOpts...)
 	if err != nil {
 		return nil, err
 	}

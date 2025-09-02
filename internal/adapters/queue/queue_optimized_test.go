@@ -26,7 +26,7 @@ func TestQueue_OptimizedOperations(t *testing.T) {
 				return map[string]interface{}{"data": data, "exists": exists}, err
 			},
 			setupMocks: func(mockStorage *mocks.MockStoragePort) {
-				// Create a queue item
+
 				queueItem := domain.NewQueueItem([]byte("test-data"), 1)
 				itemBytes, _ := queueItem.ToBytes()
 
@@ -60,7 +60,7 @@ func TestQueue_OptimizedOperations(t *testing.T) {
 				}, err
 			},
 			setupMocks: func(mockStorage *mocks.MockStoragePort) {
-				// Create a queue item
+
 				queueItem := domain.NewQueueItem([]byte("test-data"), 1)
 				itemBytes, _ := queueItem.ToBytes()
 
@@ -68,7 +68,6 @@ func TestQueue_OptimizedOperations(t *testing.T) {
 					Return("queue:test:pending:00000000000000000001", itemBytes, true, nil).
 					Once()
 
-				// Mock the BatchWrite operation for claim
 				mockStorage.On("BatchWrite", mock.MatchedBy(func(ops []ports.WriteOp) bool {
 					return len(ops) == 2 &&
 						ops[0].Type == ports.OpDelete &&
@@ -110,12 +109,11 @@ func TestQueue_OptimizedOperations(t *testing.T) {
 				return nil, err
 			},
 			setupMocks: func(mockStorage *mocks.MockStoragePort) {
-				// Mock AtomicIncrement for sequence generation
+
 				mockStorage.On("AtomicIncrement", "queue:test:sequence").
 					Return(int64(1), nil).
 					Once()
 
-				// Mock Put for storing the queue item
 				mockStorage.On("Put", "queue:test:pending:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).
 					Return(nil).
 					Once()
@@ -152,7 +150,6 @@ func TestQueue_SequenceGenerationOptimized(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
 	queue := NewQueue("test", mockStorage, nil, nil)
 
-	// Test that getNextSequence uses AtomicIncrement instead of get-increment-put
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").
 		Return(int64(42), nil).
 		Once()
@@ -169,7 +166,6 @@ func TestQueue_DeadLetterSequenceOptimized(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
 	queue := NewQueue("test", mockStorage, nil, nil)
 
-	// Test that getNextDeadLetterSequence uses AtomicIncrement
 	mockStorage.On("AtomicIncrement", "queue:test:deadletter:sequence").
 		Return(int64(123), nil).
 		Once()
@@ -187,11 +183,9 @@ func BenchmarkQueue_OptimizedPeek(b *testing.B) {
 	mockStorage := mocks.NewMockStoragePort(b)
 	queue := NewQueue("test", mockStorage, nil, nil)
 
-	// Create a queue item
 	queueItem := domain.NewQueueItem([]byte("test-data"), 1)
 	itemBytes, _ := queueItem.ToBytes()
 
-	// Setup mock to return the same item every time
 	mockStorage.On("GetNext", "queue:test:pending:").
 		Return("queue:test:pending:00000000000000000001", itemBytes, true, nil).
 		Times(b.N)
@@ -210,7 +204,6 @@ func BenchmarkQueue_OptimizedSize(b *testing.B) {
 	mockStorage := mocks.NewMockStoragePort(b)
 	queue := NewQueue("test", mockStorage, nil, nil)
 
-	// Setup mock to return count
 	mockStorage.On("CountPrefix", "queue:test:pending:").
 		Return(1000, nil).
 		Times(b.N)
@@ -230,12 +223,11 @@ func TestQueue_PerformanceCharacteristics(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
 	queue := NewQueue("test", mockStorage, nil, nil)
 
-	// Test that operations complete quickly regardless of queue size
 	sizes := []int{10, 100, 1000, 10000}
 
 	for _, size := range sizes {
 		t.Run(fmt.Sprintf("Size_%d", size), func(t *testing.T) {
-			// Mock GetNext operation
+
 			queueItem := domain.NewQueueItem([]byte("test-data"), 1)
 			itemBytes, _ := queueItem.ToBytes()
 
@@ -249,7 +241,6 @@ func TestQueue_PerformanceCharacteristics(t *testing.T) {
 
 			assert.NoError(t, err)
 
-			// Operation should complete in under 1ms regardless of queue size
 			assert.Less(t, duration, time.Millisecond,
 				"Peek operation took too long for queue size %d: %v", size, duration)
 		})

@@ -4,8 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	json "github.com/goccy/go-json"
+	json "github.com/eleven-am/graft/internal/xjson"
 	"log/slog"
+	"math/rand"
 	"time"
 
 	"github.com/eleven-am/graft/internal/domain"
@@ -16,7 +17,7 @@ type Executor struct {
 	config       domain.EngineConfig
 	nodeID       string
 	nodeRegistry ports.NodeRegistryPort
-	stateManager *StateManager
+	stateManager StateManagerInterface
 	queue        ports.QueuePort
 	storage      ports.StoragePort
 	eventManager ports.EventManager
@@ -25,7 +26,7 @@ type Executor struct {
 	metrics      *domain.ExecutionMetrics
 }
 
-func NewExecutor(config domain.EngineConfig, nodeID string, nodeRegistry ports.NodeRegistryPort, stateManager *StateManager, queue ports.QueuePort, storage ports.StoragePort, eventManager ports.EventManager, loadBalancer ports.LoadBalancer, logger *slog.Logger, metrics *domain.ExecutionMetrics) *Executor {
+func NewExecutor(config domain.EngineConfig, nodeID string, nodeRegistry ports.NodeRegistryPort, stateManager StateManagerInterface, queue ports.QueuePort, storage ports.StoragePort, eventManager ports.EventManager, loadBalancer ports.LoadBalancer, logger *slog.Logger, metrics *domain.ExecutionMetrics) *Executor {
 	return &Executor{
 		config:       config,
 		nodeID:       nodeID,
@@ -47,6 +48,7 @@ type WorkItem struct {
 	EnqueuedAt   time.Time       `json:"enqueued_at"`
 	ProcessAfter time.Time       `json:"process_after"`
 	RetryCount   int             `json:"retry_count"`
+	Deferrals    int             `json:"deferrals,omitempty"`
 }
 
 func (e *Executor) ExecuteNode(ctx context.Context, workflowID, nodeName string, config json.RawMessage) error {
@@ -226,12 +228,17 @@ func (e *Executor) ExecuteNodeWithRetry(ctx context.Context, workflowID, nodeNam
 func (e *Executor) enqueueNextNode(ctx context.Context, workflowID string, nextNode domain.NextNode) error {
 
 	now := time.Now()
+	processAfter := now
+	if nextNode.Delay != nil {
+		processAfter = now.Add(*nextNode.Delay)
+	}
+
 	workItem := WorkItem{
 		WorkflowID:   workflowID,
 		NodeName:     nextNode.NodeName,
 		Config:       nextNode.Config,
 		EnqueuedAt:   now,
-		ProcessAfter: now,
+		ProcessAfter: processAfter,
 	}
 
 	itemBytes, err := json.Marshal(workItem)
@@ -412,9 +419,18 @@ func (e *Executor) requeueNodeWithBackoff(ctx context.Context, workflowID, nodeN
 
 	baseDelay := 1 * time.Second
 	maxDelay := 5 * time.Minute
-	delay := time.Duration(int64(baseDelay) * (1 << uint(retryCount)))
+	if retryCount > 20 {
+		retryCount = 20
+	}
+	delay := baseDelay * time.Duration(1<<uint(retryCount))
 	if delay > maxDelay {
 		delay = maxDelay
+	}
+	jitter := time.Duration(rand.Float64() * 0.5 * float64(delay))
+	if rand.Float64() < 0.5 {
+		delay -= jitter
+	} else {
+		delay += jitter
 	}
 
 	now := time.Now()
@@ -564,13 +580,7 @@ func (e *Executor) emitNodeStartedEvent(workflowCtx *domain.WorkflowContext, con
 		return fmt.Errorf("failed to store node started event: %w", err)
 	}
 
-	domainEvent := domain.Event{
-		Type:      domain.EventPut,
-		Key:       eventKey,
-		Timestamp: time.Now(),
-	}
-
-	return e.eventManager.Broadcast(domainEvent)
+	return nil
 }
 
 func (e *Executor) emitNodeCompletedEvent(workflowCtx *domain.WorkflowContext, result *ports.NodeResult, duration time.Duration) error {
@@ -599,13 +609,7 @@ func (e *Executor) emitNodeCompletedEvent(workflowCtx *domain.WorkflowContext, r
 		return fmt.Errorf("failed to store node completed event: %w", err)
 	}
 
-	domainEvent := domain.Event{
-		Type:      domain.EventPut,
-		Key:       eventKey,
-		Timestamp: time.Now(),
-	}
-
-	return e.eventManager.Broadcast(domainEvent)
+	return nil
 }
 
 func (e *Executor) emitNodeErrorEvent(workflowCtx *domain.WorkflowContext, currentState interface{}, err error, duration time.Duration, config json.RawMessage) error {
@@ -631,11 +635,5 @@ func (e *Executor) emitNodeErrorEvent(workflowCtx *domain.WorkflowContext, curre
 		return fmt.Errorf("failed to store node error event: %w", err)
 	}
 
-	domainEvent := domain.Event{
-		Type:      domain.EventPut,
-		Key:       eventKey,
-		Timestamp: time.Now(),
-	}
-
-	return e.eventManager.Broadcast(domainEvent)
+	return nil
 }

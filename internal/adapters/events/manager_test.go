@@ -15,6 +15,7 @@ func TestEventManager_BasicLifecycle(t *testing.T) {
 	unsubscribe := func() {}
 	storage.On("Subscribe", "workflow:").Return((<-chan ports.StorageEvent)(eventsChan), unsubscribe, nil)
 	storage.On("Subscribe", "node:").Return((<-chan ports.StorageEvent)(eventsChan), unsubscribe, nil)
+	storage.On("Subscribe", "dev-cmd:").Return((<-chan ports.StorageEvent)(eventsChan), unsubscribe, nil)
 
 	manager := NewManagerWithStorage(storage, "test-node", slog.Default())
 

@@ -20,6 +20,7 @@ func TestQueue_Enqueue(t *testing.T) {
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
 	mockStorage.On("Put", "queue:test:pending:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
+	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Once()
 
 	err := queue.Enqueue([]byte("test data"))
 	assert.NoError(t, err)
@@ -34,9 +35,11 @@ func TestQueue_EnqueueMultiple(t *testing.T) {
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
 	mockStorage.On("Put", "queue:test:pending:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
+	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Once()
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(2), nil).Once()
 	mockStorage.On("Put", "queue:test:pending:00000000000000000002", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
+	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Once()
 
 	err := queue.Enqueue([]byte("data 1"))
 	assert.NoError(t, err)
@@ -89,7 +92,6 @@ func TestQueue_PeekOrdering(t *testing.T) {
 	item1 := domain.NewQueueItem([]byte("first"), 1)
 	item1Bytes, _ := item1.ToBytes()
 
-	// GetNext returns the lexicographically first key, which would be sequence 1
 	mockStorage.On("GetNext", "queue:test:pending:").Return(
 		"queue:test:pending:00000000000000000001", item1Bytes, true, nil).Once()
 
@@ -153,7 +155,6 @@ func TestQueue_ClaimOrdering(t *testing.T) {
 	item1 := domain.NewQueueItem([]byte("first"), 1)
 	item1Bytes, _ := item1.ToBytes()
 
-	// GetNext returns lexicographically first key, which is sequence 1
 	mockStorage.On("GetNext", "queue:test:pending:").Return(
 		"queue:test:pending:00000000000000000001", item1Bytes, true, nil).Once()
 	mockStorage.On("BatchWrite", mock.MatchedBy(func(ops []ports.WriteOp) bool {
@@ -215,10 +216,7 @@ func TestQueue_SizeEmpty(t *testing.T) {
 
 func TestQueue_WaitForItem(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
-	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
-
-	mockEventManager.On("Subscribe", "queue:test:pending:", mock.AnythingOfType("func(string, interface {})")).Return(nil).Once()
+	queue := NewQueue("test", mockStorage, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -230,16 +228,11 @@ func TestQueue_WaitForItem(t *testing.T) {
 		t.Fatal("Should timeout since no events sent")
 	case <-time.After(50 * time.Millisecond):
 	}
-
-	mockEventManager.AssertExpectations(t)
 }
 
 func TestQueue_WaitForItemIgnoreDelete(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
-	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
-
-	mockEventManager.On("Subscribe", "queue:test:pending:", mock.AnythingOfType("func(string, interface {})")).Return(nil).Once()
+	queue := NewQueue("test", mockStorage, nil, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -251,8 +244,6 @@ func TestQueue_WaitForItemIgnoreDelete(t *testing.T) {
 		t.Fatal("Should timeout since no events sent")
 	case <-time.After(50 * time.Millisecond):
 	}
-
-	mockEventManager.AssertExpectations(t)
 }
 
 func TestQueue_Close(t *testing.T) {
@@ -295,11 +286,11 @@ func TestQueue_ConcurrentEnqueue(t *testing.T) {
 	mockEventManager := &mocks.MockEventManager{}
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
-	// Use AtomicIncrement for concurrent sequence generation
 	for i := 1; i <= 10; i++ {
 		mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(i), nil).Once()
 	}
 	mockStorage.On("Put", mock.AnythingOfType("string"), mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Times(10)
+	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Times(10)
 
 	done := make(chan bool, 10)
 
@@ -331,6 +322,7 @@ func TestQueue_EnqueueClaimComplete(t *testing.T) {
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
 	mockStorage.On("Put", "queue:test:pending:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
+	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Once()
 
 	mockStorage.On("GetNext", "queue:test:pending:").Return(
 		"queue:test:pending:00000000000000000001", itemBytes, true, nil).Once()

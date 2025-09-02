@@ -10,7 +10,7 @@ import (
 
 func TestWeightedScoring(t *testing.T) {
 	scorer := DefaultScorer
-	
+
 	tests := []struct {
 		name     string
 		load     ports.NodeLoad
@@ -55,7 +55,7 @@ func TestWeightedScoring(t *testing.T) {
 			delta:    0.01,
 		},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			score := scorer.CalculateScore(&tt.load, tt.capacity)
@@ -66,30 +66,30 @@ func TestWeightedScoring(t *testing.T) {
 
 func TestEWMA(t *testing.T) {
 	var ewma float64
-	
+
 	ewma = UpdateEWMA(ewma, 100, 0.2)
 	assert.Equal(t, 100.0, ewma)
-	
+
 	ewma = UpdateEWMA(ewma, 200, 0.2)
 	assert.InDelta(t, 120.0, ewma, 0.01)
-	
+
 	ewma = UpdateEWMA(ewma, 50, 0.2)
 	assert.InDelta(t, 106.0, ewma, 0.01)
 }
 
 func TestRollingWindow(t *testing.T) {
 	window := NewRollingWindow(10)
-	
+
 	for i := 0; i < 10; i++ {
 		window.Record(true)
 	}
 	assert.Equal(t, 0.0, window.GetErrorRate())
-	
+
 	for i := 0; i < 5; i++ {
 		window.Record(false)
 	}
 	assert.Equal(t, 0.5, window.GetErrorRate())
-	
+
 	for i := 0; i < 10; i++ {
 		window.Record(true)
 	}
@@ -98,7 +98,7 @@ func TestRollingWindow(t *testing.T) {
 
 func TestNodeSelection(t *testing.T) {
 	scorer := DefaultScorer
-	
+
 	clusterLoad := map[string]*ports.NodeLoad{
 		"node-1": {
 			NodeID:          "node-1",
@@ -108,7 +108,7 @@ func TestNodeSelection(t *testing.T) {
 			LastUpdated:     time.Now().Unix(),
 		},
 		"node-2": {
-			NodeID:          "node-2", 
+			NodeID:          "node-2",
 			TotalWeight:     2.0,
 			RecentLatencyMs: 40,
 			RecentErrorRate: 0.01,
@@ -122,15 +122,15 @@ func TestNodeSelection(t *testing.T) {
 			LastUpdated:     time.Now().Unix(),
 		},
 	}
-	
+
 	capacities := map[string]float64{
 		"node-1": 10.0,
 		"node-2": 10.0,
 		"node-3": 10.0,
 	}
-	
+
 	bestNode, bestScore := scorer.SelectBestNode(clusterLoad, capacities)
-	
+
 	assert.Equal(t, "node-2", bestNode)
 	assert.Less(t, bestScore, 1.0)
 }
@@ -145,7 +145,7 @@ func TestNodeWeights(t *testing.T) {
 		{"ocr-processor-node", 6.0},
 		{"unknown-node", 1.0},
 	}
-	
+
 	for _, tt := range tests {
 		t.Run(tt.nodeName, func(t *testing.T) {
 			weight := ports.GetNodeWeight(nil, tt.nodeName)

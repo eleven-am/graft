@@ -3,8 +3,9 @@ package engine
 import (
 	"context"
 	"fmt"
-	json "github.com/goccy/go-json"
+	json "github.com/eleven-am/graft/internal/xjson"
 	"log/slog"
+	"math/rand"
 	"sync"
 	"time"
 
@@ -16,7 +17,7 @@ type Engine struct {
 	config       domain.EngineConfig
 	nodeID       string
 	nodeRegistry ports.NodeRegistryPort
-	stateManager *StateManager
+	stateManager StateManagerInterface
 	executor     *Executor
 	queue        ports.QueuePort
 	storage      ports.StoragePort
@@ -30,8 +31,51 @@ type Engine struct {
 	wg     sync.WaitGroup
 }
 
+type ExponentialBackoff struct {
+	baseDelay time.Duration
+	maxDelay  time.Duration
+	factor    float64
+	current   time.Duration
+}
+
+func NewExponentialBackoff(baseDelay, maxDelay time.Duration, factor float64) *ExponentialBackoff {
+	return &ExponentialBackoff{
+		baseDelay: baseDelay,
+		maxDelay:  maxDelay,
+		factor:    factor,
+	}
+}
+
+func (b *ExponentialBackoff) NextDelay() time.Duration {
+	if b.current == 0 {
+		b.current = b.baseDelay
+	} else {
+		b.current = time.Duration(float64(b.current) * b.factor)
+		if b.current > b.maxDelay {
+			b.current = b.maxDelay
+		}
+	}
+
+	jitter := time.Duration(rand.Float64() * 0.5 * float64(b.current))
+	if rand.Float64() < 0.5 {
+		return b.current - jitter
+	}
+	return b.current + jitter
+}
+
+func (b *ExponentialBackoff) Reset() {
+	b.current = 0
+}
+
 func NewEngine(config domain.EngineConfig, nodeID string, nodeRegistry ports.NodeRegistryPort, queue ports.QueuePort, storage ports.StoragePort, eventManager ports.EventManager, loadBalancer ports.LoadBalancer, logger *slog.Logger) *Engine {
-	stateManager := NewStateManager(storage, logger)
+	var stateManager StateManagerInterface
+
+	if config.StateOptimization.Strategy != "" {
+		stateManager = NewOptimizedStateManager(storage, config.StateOptimization, logger)
+	} else {
+		stateManager = NewStateManager(storage, logger)
+	}
+
 	metrics := domain.NewExecutionMetrics()
 	executor := NewExecutor(config, nodeID, nodeRegistry, stateManager, queue, storage, eventManager, loadBalancer, logger, metrics)
 
@@ -54,6 +98,9 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.logger.Info("starting workflow engine", "worker_count", e.config.WorkerCount)
 
 	e.ctx, e.cancel = context.WithCancel(ctx)
+	if starter, ok := e.queue.(interface{ Start(context.Context) error }); ok {
+		_ = starter.Start(e.ctx)
+	}
 	for i := 0; i < e.config.WorkerCount; i++ {
 		e.wg.Add(1)
 		go e.processWork()
@@ -68,6 +115,13 @@ func (e *Engine) Stop() error {
 	}
 
 	e.wg.Wait()
+
+	if osm, ok := e.stateManager.(*OptimizedStateManager); ok {
+		if err := osm.Stop(); err != nil {
+			e.logger.Error("failed to stop optimized state manager", "error", err)
+		}
+	}
+
 	if err := e.queue.Close(); err != nil {
 		e.logger.Error("failed to close queue", "error", err)
 		return err
@@ -183,6 +237,10 @@ func (e *Engine) PauseWorkflow(ctx context.Context, workflowID string) error {
 
 	if err == nil {
 		e.metrics.IncrementWorkflowsPaused()
+
+		if emitErr := e.emitWorkflowLifecycleEvent(workflowID, "paused", nil); emitErr != nil {
+			e.logger.Error("failed to emit workflow paused event", "workflow_id", workflowID, "error", emitErr)
+		}
 	}
 
 	return err
@@ -199,6 +257,10 @@ func (e *Engine) ResumeWorkflow(ctx context.Context, workflowID string) error {
 
 	if err == nil {
 		e.metrics.IncrementWorkflowsResumed()
+
+		if emitErr := e.emitWorkflowLifecycleEvent(workflowID, "resumed", nil); emitErr != nil {
+			e.logger.Error("failed to emit workflow resumed event", "workflow_id", workflowID, "error", emitErr)
+		}
 	}
 
 	return err
@@ -216,6 +278,10 @@ func (e *Engine) StopWorkflow(ctx context.Context, workflowID string) error {
 
 	if err == nil {
 		e.metrics.IncrementWorkflowsFailed()
+
+		if emitErr := e.emitWorkflowLifecycleEvent(workflowID, "failed", fmt.Errorf("workflow stopped by request")); emitErr != nil {
+			e.logger.Error("failed to emit workflow failed event", "workflow_id", workflowID, "error", emitErr)
+		}
 	}
 
 	return err
@@ -223,6 +289,7 @@ func (e *Engine) StopWorkflow(ctx context.Context, workflowID string) error {
 
 func (e *Engine) processWork() {
 	defer e.wg.Done()
+	backoff := NewExponentialBackoff(50*time.Millisecond, 5*time.Second, 2.0)
 
 	for {
 		select {
@@ -232,20 +299,36 @@ func (e *Engine) processWork() {
 			for {
 				processed, err := e.processNextItem()
 				if err != nil {
-					e.logger.Error("failed to process work item", "error", err)
-					time.Sleep(100 * time.Millisecond)
+					delay := backoff.NextDelay()
+					e.logger.Debug("processWork error, backing off", "error", err, "delay", delay)
+
+					select {
+					case <-time.After(delay):
+					case <-e.ctx.Done():
+						return
+					}
+				} else {
+					backoff.Reset()
 				}
 				if !processed {
 					break
 				}
 			}
 		case <-time.After(1 * time.Second):
-			// Periodic check for delayed items that are now ready
+
 			for {
 				processed, err := e.processNextItem()
 				if err != nil {
-					e.logger.Error("failed to process work item", "error", err)
-					time.Sleep(100 * time.Millisecond)
+					delay := backoff.NextDelay()
+					e.logger.Debug("processWork periodic error, backing off", "error", err, "delay", delay)
+
+					select {
+					case <-time.After(delay):
+					case <-e.ctx.Done():
+						return
+					}
+				} else {
+					backoff.Reset()
 				}
 				if !processed {
 					break
@@ -262,10 +345,10 @@ func (e *Engine) processNextItem() (bool, error) {
 	default:
 	}
 
-	item, exists, err := e.queue.Peek()
+	item, claimID, exists, err := e.queue.Claim()
 	if err != nil {
-		e.logger.Error("Failed to peek item", "error", err)
-		return false, domain.NewDiscoveryError("engine", "peek_work_item", err)
+		e.logger.Error("Failed to claim item", "error", err)
+		return false, domain.NewDiscoveryError("engine", "claim_work_item", err)
 	}
 
 	if !exists {
@@ -274,28 +357,27 @@ func (e *Engine) processNextItem() (bool, error) {
 
 	var workItem WorkItem
 	if err := json.Unmarshal(item, &workItem); err != nil {
-		e.logger.Error("Failed to unmarshal peeked work item", "error", err)
-		return false, domain.NewDiscoveryError("engine", "unmarshal_peeked_work_item", err)
+		e.logger.Error("Failed to unmarshal claimed work item", "error", err)
+		if compErr := e.queue.Complete(claimID); compErr != nil {
+			e.logger.Error("failed to complete malformed work item", "claim_id", claimID, "error", compErr)
+		}
+		return true, domain.NewDiscoveryError("engine", "unmarshal_claimed_work_item", err)
 	}
 
 	shouldExecute, err := e.loadBalancer.ShouldExecuteNode(e.nodeID, workItem.WorkflowID, workItem.NodeName)
 	if err != nil {
 		e.logger.Error("Failed to check load balancer decision", "error", err)
-		return false, domain.NewDiscoveryError("engine", "load_balancer_decision", err)
+		time.Sleep(50*time.Millisecond + time.Duration(rand.Intn(150))*time.Millisecond)
+		_ = e.queue.Release(claimID)
+		return true, domain.NewDiscoveryError("engine", "load_balancer_decision", err)
 	}
 
 	if !shouldExecute {
-		return false, nil
-	}
-
-	_, claimID, exists, err := e.queue.Claim()
-	if err != nil {
-		e.logger.Error("Failed to claim item", "error", err)
-		return false, domain.NewDiscoveryError("engine", "claim_work_item", err)
-	}
-
-	if !exists {
-		return false, nil
+		time.Sleep(50*time.Millisecond + time.Duration(rand.Intn(150))*time.Millisecond)
+		if relErr := e.queue.Release(claimID); relErr != nil {
+			e.logger.Error("failed to release unassigned claim", "claim_id", claimID, "error", relErr)
+		}
+		return true, nil
 	}
 
 	e.metrics.IncrementItemsProcessed()
@@ -464,13 +546,31 @@ func (e *Engine) emitWorkflowStartedEvent(event domain.WorkflowStartedEvent) err
 		return fmt.Errorf("failed to store workflow started event: %w", err)
 	}
 
-	domainEvent := domain.Event{
-		Type:      domain.EventPut,
-		Key:       eventKey,
-		Timestamp: time.Now(),
+	return nil
+}
+
+func (e *Engine) emitWorkflowLifecycleEvent(workflowID, eventType string, reason error) error {
+	eventData := map[string]interface{}{
+		"workflow_id": workflowID,
+		"timestamp":   time.Now().Unix(),
+		"node_id":     e.nodeID,
 	}
 
-	return e.eventManager.Broadcast(domainEvent)
+	if reason != nil {
+		eventData["error"] = reason.Error()
+	}
+
+	eventBytes, err := json.Marshal(eventData)
+	if err != nil {
+		return fmt.Errorf("failed to marshal workflow %s event: %w", eventType, err)
+	}
+
+	eventKey := fmt.Sprintf("workflow:%s:%s", workflowID, eventType)
+	if err := e.storage.Put(eventKey, eventBytes, 1); err != nil {
+		return fmt.Errorf("failed to store workflow %s event: %w", eventType, err)
+	}
+
+	return nil
 }
 
 func convertMetadata(metadata map[string]string) map[string]interface{} {

@@ -35,6 +35,8 @@ type StoragePort interface {
 
 	RunInTransaction(fn func(tx Transaction) error) error
 
+	Subscribe(prefix string) (<-chan StorageEvent, func(), error)
+
 	CreateSnapshot() (io.ReadCloser, error)
 	CreateCompressedSnapshot() (io.ReadCloser, error)
 	RestoreSnapshot(snapshot io.Reader) error

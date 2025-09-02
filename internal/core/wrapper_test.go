@@ -178,13 +178,13 @@ func TestWrapHandler_EmptyParams(t *testing.T) {
 }
 
 func containsString(str, substr string) bool {
-	return len(str) >= len(substr) && 
-		   len(substr) > 0 && 
-		   str[len(str)-len(substr):] == substr ||
-		   len(str) > len(substr) && 
-		   str[:len(substr)] == substr ||
-		   len(str) > len(substr) && 
-		   findInString(str, substr)
+	return len(str) >= len(substr) &&
+		len(substr) > 0 &&
+		str[len(str)-len(substr):] == substr ||
+		len(str) > len(substr) &&
+			str[:len(substr)] == substr ||
+		len(str) > len(substr) &&
+			findInString(str, substr)
 }
 
 func findInString(str, substr string) bool {

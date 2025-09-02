@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/eleven-am/graft/internal/domain"
+	json "github.com/eleven-am/graft/internal/xjson"
 )
 
 type EnginePort interface {
@@ -16,6 +17,8 @@ type EnginePort interface {
 	PauseWorkflow(ctx context.Context, workflowID string) error
 	ResumeWorkflow(ctx context.Context, workflowID string) error
 	StopWorkflow(ctx context.Context, workflowID string) error
+
+	GetMetrics() domain.ExecutionMetrics
 }
 
 type StateManagerPort interface {
@@ -25,5 +28,5 @@ type StateManagerPort interface {
 }
 
 type ExecutorPort interface {
-	ExecuteNode(ctx context.Context, workflowID, nodeName string, config interface{}) error
+	ExecuteNode(ctx context.Context, workflowID, nodeName string, config json.RawMessage) error
 }

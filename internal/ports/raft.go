@@ -36,6 +36,25 @@ type HealthStatus struct {
 	Details map[string]interface{} `json:"details,omitempty"`
 }
 
+type HealthCheckProvider interface {
+	GetHealth() HealthStatus
+}
+
+type SystemMetrics struct {
+	Engine         interface{} `json:"engine,omitempty"`
+	Cluster        interface{} `json:"cluster,omitempty"`
+	Raft           interface{} `json:"raft,omitempty"`
+	Queue          interface{} `json:"queue,omitempty"`
+	Storage        interface{} `json:"storage,omitempty"`
+	CircuitBreaker interface{} `json:"circuit_breaker,omitempty"`
+	RateLimiter    interface{} `json:"rate_limiter,omitempty"`
+	Tracing        interface{} `json:"tracing,omitempty"`
+}
+
+type MetricsProvider interface {
+	GetMetrics() SystemMetrics
+}
+
 type RaftMetrics struct {
 	NodeID        string `json:"node_id"`
 	State         string `json:"state"`
@@ -69,4 +88,32 @@ type RaftNode interface {
 	Stop() error
 	GetLocalAddress() string
 	WaitForLeader(ctx context.Context) error
+}
+
+type Span interface {
+	SetTag(key string, value interface{})
+	SetError(err error)
+	AddEvent(name string, attributes map[string]interface{})
+	Finish()
+	Context() SpanContext
+}
+
+type SpanContext interface {
+	TraceID() string
+	SpanID() string
+	TraceFlags() byte
+	TraceState() string
+}
+
+type Tracer interface {
+	StartSpan(operationName string) Span
+	StartSpanWithParent(operationName string, parent SpanContext) Span
+	InjectContext(ctx context.Context, span SpanContext) context.Context
+	ExtractContext(ctx context.Context) (SpanContext, bool)
+}
+
+type TracingProvider interface {
+	GetTracer(name string) Tracer
+	Shutdown(ctx context.Context) error
+	ForceFlush(ctx context.Context) error
 }

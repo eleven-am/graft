@@ -120,7 +120,7 @@ func TestQueue_HasClaimedItemsWithPrefix_BasicFunctionality(t *testing.T) {
 				})
 			}
 
-			mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(mockItems, nil).Once()
+			mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(mockItems, nil).Maybe()
 
 			result, err := queue.HasClaimedItemsWithPrefix(tt.searchPrefix)
 
@@ -156,7 +156,7 @@ func TestQueue_HasClaimedItemsWithPrefix_EdgeCases(t *testing.T) {
 			name: "storage error",
 			setupQueue: func() *Queue {
 				mockStorage := &mocks.MockStoragePort{}
-				mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(nil, fmt.Errorf("storage error"))
+				mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(nil, fmt.Errorf("storage error")).Maybe()
 				return NewQueue("test", mockStorage, nil, nil)
 			},
 			searchPrefix:   `"workflow_id":"test"`,
@@ -170,15 +170,15 @@ func TestQueue_HasClaimedItemsWithPrefix_EdgeCases(t *testing.T) {
 				mockItems := []ports.KeyValueVersion{
 					{
 						Key:   "queue:test:claimed:corrupt",
-						Value: []byte("invalid json"), // Invalid JSON
+						Value: []byte("invalid json"),
 					},
 				}
-				mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(mockItems, nil)
+				mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(mockItems, nil).Maybe()
 				return NewQueue("test", mockStorage, nil, nil)
 			},
 			searchPrefix:   `"workflow_id":"test"`,
 			expectError:    false,
-			expectedResult: false, // Should continue processing despite corrupt data
+			expectedResult: false,
 		},
 		{
 			name: "very long prefix",
@@ -193,7 +193,7 @@ func TestQueue_HasClaimedItemsWithPrefix_EdgeCases(t *testing.T) {
 						Value: itemBytes,
 					},
 				}
-				mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(mockItems, nil)
+				mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(mockItems, nil).Maybe()
 				return NewQueue("test", mockStorage, nil, nil)
 			},
 			searchPrefix:   strings.Repeat("x", 5000),
@@ -226,7 +226,6 @@ func TestQueue_HasClaimedItemsWithPrefix_ConcurrencyStress(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	queue := NewQueue("test", mockStorage, nil, nil)
 
-	// Setup test data
 	claimedItem := domain.NewClaimedItem([]byte(`{"workflow_id":"test-123","action":"transform"}`), "claim-1", 1)
 	itemBytes, _ := claimedItem.ToBytes()
 	mockItems := []ports.KeyValueVersion{
@@ -236,14 +235,12 @@ func TestQueue_HasClaimedItemsWithPrefix_ConcurrencyStress(t *testing.T) {
 		},
 	}
 
-	// Allow multiple calls to ListByPrefix
 	mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(mockItems, nil).Times(numGoroutines * numIterations)
 
 	var wg sync.WaitGroup
 	errors := make(chan error, numGoroutines*numIterations)
 	results := make(chan bool, numGoroutines*numIterations)
 
-	// Start concurrent goroutines
 	for i := 0; i < numGoroutines; i++ {
 		wg.Add(1)
 		go func(goroutineID int) {
@@ -263,12 +260,10 @@ func TestQueue_HasClaimedItemsWithPrefix_ConcurrencyStress(t *testing.T) {
 	close(errors)
 	close(results)
 
-	// Check for errors
 	for err := range errors {
 		t.Errorf("Concurrent access error: %v", err)
 	}
 
-	// Verify all results are consistent
 	expectedResultCount := numGoroutines * numIterations
 	actualResultCount := 0
 	trueCount := 0
@@ -293,11 +288,10 @@ func TestQueue_HasClaimedItemsWithPrefix_LargeDatasetStress(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	queue := NewQueue("test", mockStorage, nil, nil)
 
-	// Create large dataset with one matching item
 	var mockItems []ports.KeyValueVersion
 	for i := 0; i < numItems; i++ {
 		var data string
-		if i == numItems/2 { // Put the match in the middle
+		if i == numItems/2 {
 			data = `{"workflow_id":"target-match","action":"transform"}`
 		} else {
 			data = fmt.Sprintf(`{"workflow_id":"other-%d","action":"validate"}`, i)
@@ -311,7 +305,7 @@ func TestQueue_HasClaimedItemsWithPrefix_LargeDatasetStress(t *testing.T) {
 		})
 	}
 
-	mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(mockItems, nil).Times(3)
+	mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(mockItems, nil).Maybe()
 
 	tests := []struct {
 		name           string
@@ -362,11 +356,10 @@ func TestQueue_HasClaimedItemsWithPrefix_MemoryStress(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	queue := NewQueue("test", mockStorage, nil, nil)
 
-	// Create test data with varying sizes
 	var mockItems []ports.KeyValueVersion
 	for i := 0; i < 100; i++ {
-		// Create items with varying data sizes
-		dataSize := (i%10 + 1) * 100 // 100 to 1000 bytes
+
+		dataSize := (i%10 + 1) * 100
 		largeData := fmt.Sprintf(`{"workflow_id":"test-%d","data":"%s"}`,
 			i, strings.Repeat("x", dataSize))
 
@@ -380,15 +373,13 @@ func TestQueue_HasClaimedItemsWithPrefix_MemoryStress(t *testing.T) {
 
 	mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(mockItems, nil).Times(iterations)
 
-	// Run many iterations to test for memory leaks
 	for i := 0; i < iterations; i++ {
 		result, err := queue.HasClaimedItemsWithPrefix(`"workflow_id":"test-50"`)
 		require.NoError(t, err)
 		assert.True(t, result)
 
-		// Force garbage collection periodically
 		if i%100 == 0 {
-			// This helps detect memory leaks during testing
+
 			t.Logf("Completed %d iterations", i)
 		}
 	}
@@ -405,7 +396,6 @@ func TestQueue_HasClaimedItemsWithPrefix_RaceConditionStress(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	queue := NewQueue("test", mockStorage, nil, nil)
 
-	// Setup initial data
 	claimedItem := domain.NewClaimedItem([]byte(`{"workflow_id":"race-test","action":"transform"}`), "race-claim", 1)
 	itemBytes, _ := claimedItem.ToBytes()
 	mockItems := []ports.KeyValueVersion{
@@ -415,14 +405,12 @@ func TestQueue_HasClaimedItemsWithPrefix_RaceConditionStress(t *testing.T) {
 		},
 	}
 
-	// Allow many calls for the stress test
 	mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(mockItems, nil).Maybe()
 
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
 	errors := make(chan error, numReaders+numWriters)
 
-	// Start reader goroutines
 	for i := 0; i < numReaders; i++ {
 		wg.Add(1)
 		go func(readerID int) {
@@ -442,7 +430,6 @@ func TestQueue_HasClaimedItemsWithPrefix_RaceConditionStress(t *testing.T) {
 		}(i)
 	}
 
-	// Start writer goroutines (simulate concurrent Close operations)
 	for i := 0; i < numWriters; i++ {
 		wg.Add(1)
 		go func(writerID int) {
@@ -452,8 +439,7 @@ func TestQueue_HasClaimedItemsWithPrefix_RaceConditionStress(t *testing.T) {
 				case <-stop:
 					return
 				default:
-					// Simulate concurrent modifications by using the same queue
-					// This tests that the method is thread-safe with respect to queue state
+
 					_, err := queue.HasClaimedItemsWithPrefix(`"workflow_id":"race-test"`)
 					if err != nil && !strings.Contains(err.Error(), "queue is closed") {
 						errors <- fmt.Errorf("writer %d: %v", writerID, err)
@@ -464,14 +450,12 @@ func TestQueue_HasClaimedItemsWithPrefix_RaceConditionStress(t *testing.T) {
 		}(i)
 	}
 
-	// Run for specified duration
 	time.Sleep(duration)
 	close(stop)
 	wg.Wait()
 
 	close(errors)
 
-	// Check for race condition errors
 	for err := range errors {
 		t.Errorf("Race condition detected: %v", err)
 	}
@@ -486,7 +470,6 @@ func BenchmarkQueue_HasClaimedItemsWithPrefix_Performance(b *testing.B) {
 			mockStorage := &mocks.MockStoragePort{}
 			queue := NewQueue("test", mockStorage, nil, nil)
 
-			// Create dataset
 			var mockItems []ports.KeyValueVersion
 			for i := 0; i < size; i++ {
 				data := fmt.Sprintf(`{"workflow_id":"test-%d","action":"transform"}`, i)

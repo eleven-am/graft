@@ -15,10 +15,10 @@ import (
 // Test bootstrap race conditions with multiple nodes starting simultaneously
 func TestBootstrapRaceCondition_MultipleNodes(t *testing.T) {
 	tests := []struct {
-		name          string
-		nodeConfigs   []nodeConfig
+		name           string
+		nodeConfigs    []nodeConfig
 		expectedLeader string
-		expectError   bool
+		expectError    bool
 	}{
 		{
 			name: "three_nodes_same_expected_list",
@@ -27,16 +27,16 @@ func TestBootstrapRaceCondition_MultipleNodes(t *testing.T) {
 				{nodeID: "node-a", expectedNodes: []string{"node-a", "node-b", "node-c"}},
 				{nodeID: "node-b", expectedNodes: []string{"node-a", "node-b", "node-c"}},
 			},
-			expectedLeader: "node-a", // Lexicographically first
+			expectedLeader: "node-a",
 		},
 		{
 			name: "different_expected_lists_should_fail_validation",
 			nodeConfigs: []nodeConfig{
-				{nodeID: "node-a", expectedNodes: []string{"node-a", "node-b"}},    // Valid
-				{nodeID: "node-b", expectedNodes: []string{"node-b", "node-c"}},    // Valid  
-				{nodeID: "node-c", expectedNodes: []string{"node-a", "node-b"}},    // INVALID - node-c not in its list
+				{nodeID: "node-a", expectedNodes: []string{"node-a", "node-b"}},
+				{nodeID: "node-b", expectedNodes: []string{"node-b", "node-c"}},
+				{nodeID: "node-c", expectedNodes: []string{"node-a", "node-b"}},
 			},
-			expectError: true, // Should fail due to configuration validation
+			expectError: true,
 		},
 		{
 			name: "empty_expected_nodes_all_bootstrap",
@@ -45,10 +45,9 @@ func TestBootstrapRaceCondition_MultipleNodes(t *testing.T) {
 				{nodeID: "node-b", expectedNodes: []string{}},
 				{nodeID: "node-c", expectedNodes: []string{}},
 			},
-			// Empty ExpectedNodes is valid for single-node clusters, but causes split-brain with multiple nodes
-			// This is a deployment issue - multiple nodes shouldn't all have empty ExpectedNodes
-			expectError: false, // Config validation passes, but bootstrap behavior is problematic
-			expectedLeader: "", // All nodes will bootstrap - split brain condition
+
+			expectError:    false,
+			expectedLeader: "",
 		},
 	}
 
@@ -56,14 +55,12 @@ func TestBootstrapRaceCondition_MultipleNodes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			var wg sync.WaitGroup
 			results := make([]bootstrapResult, len(tt.nodeConfigs))
-			
-			// Start all nodes simultaneously
+
 			for i, config := range tt.nodeConfigs {
 				wg.Add(1)
 				go func(idx int, nodeConf nodeConfig) {
 					defer wg.Done()
-					
-					// Create full config and validate it first
+
 					fullConfig := &domain.Config{
 						NodeID:    nodeConf.nodeID,
 						ClusterID: "test-cluster",
@@ -80,11 +77,10 @@ func TestBootstrapRaceCondition_MultipleNodes(t *testing.T) {
 							MaxConcurrentWorkflows: 5,
 						},
 					}
-					
-					// Test configuration validation
+
 					configErr := fullConfig.Validate()
 					if configErr != nil {
-						// Config validation failed - record this as a bootstrap failure
+
 						results[idx] = bootstrapResult{
 							nodeID:          nodeConf.nodeID,
 							shouldBootstrap: false,
@@ -92,12 +88,12 @@ func TestBootstrapRaceCondition_MultipleNodes(t *testing.T) {
 						}
 						return
 					}
-					
+
 					manager := createTestManager(nodeConf.nodeID, nodeConf.expectedNodes)
 					raftConfig := &domain.RaftConfig{
 						ExpectedNodes: nodeConf.expectedNodes,
 					}
-					
+
 					shouldBootstrap := manager.shouldBootstrap([]ports.Peer{}, raftConfig)
 					results[idx] = bootstrapResult{
 						nodeID:          nodeConf.nodeID,
@@ -105,15 +101,14 @@ func TestBootstrapRaceCondition_MultipleNodes(t *testing.T) {
 					}
 				}(i, config)
 			}
-			
+
 			wg.Wait()
-			
-			// Analyze results
+
 			bootstrapCount := 0
 			configErrorCount := 0
 			var leaders []string
 			var configErrors []string
-			
+
 			for _, result := range results {
 				if result.configError != nil {
 					configErrorCount++
@@ -123,18 +118,18 @@ func TestBootstrapRaceCondition_MultipleNodes(t *testing.T) {
 					leaders = append(leaders, result.nodeID)
 				}
 			}
-			
+
 			if tt.expectError {
-				// Expect configuration validation failures
+
 				assert.Greater(t, configErrorCount, 0, "Expected configuration validation errors, got none. Errors: %v", configErrors)
 				t.Logf("Configuration validation correctly caught %d errors: %v", configErrorCount, configErrors)
 			} else if tt.expectedLeader == "" {
-				// Special case: expect split brain (multiple bootstraps)
+
 				assert.Equal(t, 0, configErrorCount, "Expected no configuration errors, got: %v", configErrors)
 				assert.Greater(t, bootstrapCount, 1, "Expected multiple bootstraps (split brain), got %d leaders: %v", bootstrapCount, leaders)
 				t.Logf("WARNING: Split brain detected with %d leaders: %v - this is a deployment configuration issue", bootstrapCount, leaders)
 			} else {
-				// Should have exactly one bootstrap and no config errors
+
 				assert.Equal(t, 0, configErrorCount, "Expected no configuration errors, got: %v", configErrors)
 				assert.Equal(t, 1, bootstrapCount, "Should have exactly one bootstrap, got %d leaders: %v", bootstrapCount, leaders)
 				if len(leaders) == 1 {
@@ -148,52 +143,52 @@ func TestBootstrapRaceCondition_MultipleNodes(t *testing.T) {
 // Test edge cases in bootstrap logic that could cause failures
 func TestBootstrapLogic_EdgeCases(t *testing.T) {
 	tests := []struct {
-		name           string
-		nodeID         string
-		expectedNodes  []string
-		existingPeers  []ports.Peer
-		forceBootstrap bool
+		name            string
+		nodeID          string
+		expectedNodes   []string
+		existingPeers   []ports.Peer
+		forceBootstrap  bool
 		shouldBootstrap bool
 		expectPanic     bool
 	}{
 		{
-			name:           "node_not_in_expected_list",
-			nodeID:         "outsider",
-			expectedNodes:  []string{"node-a", "node-b"},
+			name:            "node_not_in_expected_list",
+			nodeID:          "outsider",
+			expectedNodes:   []string{"node-a", "node-b"},
 			shouldBootstrap: false,
 		},
 		{
-			name:           "empty_expected_with_self_only", 
-			nodeID:         "node-a",
-			expectedNodes:  []string{},
-			shouldBootstrap: true, // Falls back to single node
-		},
-		{
-			name:           "nil_expected_nodes",
-			nodeID:         "node-a", 
-			expectedNodes:  nil,
-			shouldBootstrap: true, // Should handle nil gracefully
-		},
-		{
-			name:           "duplicate_nodes_in_expected",
-			nodeID:         "node-a",
-			expectedNodes:  []string{"node-a", "node-b", "node-a", "node-c", "node-b"},
-			shouldBootstrap: true, // Still first after dedup
-		},
-		{
-			name:          "force_bootstrap_overrides_everything",
-			nodeID:        "node-z",
-			expectedNodes: []string{"node-a"},
-			existingPeers: []ports.Peer{{ID: "peer1", Address: "addr1"}},
-			forceBootstrap: true,
+			name:            "empty_expected_with_self_only",
+			nodeID:          "node-a",
+			expectedNodes:   []string{},
 			shouldBootstrap: true,
 		},
 		{
-			name:           "existing_peers_override_expected",
-			nodeID:         "node-a",
-			expectedNodes:  []string{"node-a"},
-			existingPeers:  []ports.Peer{{ID: "peer1", Address: "addr1"}},
-			shouldBootstrap: false, // Should join, not bootstrap
+			name:            "nil_expected_nodes",
+			nodeID:          "node-a",
+			expectedNodes:   nil,
+			shouldBootstrap: true,
+		},
+		{
+			name:            "duplicate_nodes_in_expected",
+			nodeID:          "node-a",
+			expectedNodes:   []string{"node-a", "node-b", "node-a", "node-c", "node-b"},
+			shouldBootstrap: true,
+		},
+		{
+			name:            "force_bootstrap_overrides_everything",
+			nodeID:          "node-z",
+			expectedNodes:   []string{"node-a"},
+			existingPeers:   []ports.Peer{{ID: "peer1", Address: "addr1"}},
+			forceBootstrap:  true,
+			shouldBootstrap: true,
+		},
+		{
+			name:            "existing_peers_override_expected",
+			nodeID:          "node-a",
+			expectedNodes:   []string{"node-a"},
+			existingPeers:   []ports.Peer{{ID: "peer1", Address: "addr1"}},
+			shouldBootstrap: false,
 		},
 	}
 
@@ -216,7 +211,7 @@ func TestBootstrapLogic_EdgeCases(t *testing.T) {
 				ExpectedNodes:  tt.expectedNodes,
 				ForceBootstrap: tt.forceBootstrap,
 			}
-			
+
 			result := manager.shouldBootstrap(tt.existingPeers, raftConfig)
 			assert.Equal(t, tt.shouldBootstrap, result, "Bootstrap decision mismatch for %s", tt.name)
 		})
@@ -227,41 +222,37 @@ func TestBootstrapLogic_EdgeCases(t *testing.T) {
 func TestBootstrapDecision_ConcurrentTiming(t *testing.T) {
 	const numNodes = 10
 	const iterations = 100
-	
+
 	for iteration := 0; iteration < iterations; iteration++ {
 		var wg sync.WaitGroup
 		results := make([]bool, numNodes)
-		
-		// Create identical expected nodes list
+
 		expectedNodes := make([]string, numNodes)
 		for i := 0; i < numNodes; i++ {
 			expectedNodes[i] = fmt.Sprintf("node-%02d", i)
 		}
-		
-		// All nodes make bootstrap decision simultaneously with slight timing variations
+
 		for i := 0; i < numNodes; i++ {
 			wg.Add(1)
 			go func(nodeIndex int) {
 				defer wg.Done()
-				
-				// Add random microsecond delays to simulate real timing
+
 				if nodeIndex%3 == 0 {
 					time.Sleep(time.Microsecond * time.Duration(nodeIndex))
 				}
-				
+
 				nodeID := fmt.Sprintf("node-%02d", nodeIndex)
 				manager := createTestManager(nodeID, expectedNodes)
 				raftConfig := &domain.RaftConfig{
 					ExpectedNodes: expectedNodes,
 				}
-				
+
 				results[nodeIndex] = manager.shouldBootstrap([]ports.Peer{}, raftConfig)
 			}(i)
 		}
-		
+
 		wg.Wait()
-		
-		// Count bootstraps
+
 		bootstrapCount := 0
 		leaderIndex := -1
 		for i, shouldBootstrap := range results {
@@ -270,8 +261,7 @@ func TestBootstrapDecision_ConcurrentTiming(t *testing.T) {
 				leaderIndex = i
 			}
 		}
-		
-		// Should always have exactly one bootstrap (node-00)
+
 		if bootstrapCount != 1 || leaderIndex != 0 {
 			t.Fatalf("Iteration %d: Expected exactly 1 bootstrap at index 0, got %d bootstraps with leader at index %d",
 				iteration, bootstrapCount, leaderIndex)
@@ -308,7 +298,7 @@ func TestExpectedNodesValidation_PreventsSplitBrain(t *testing.T) {
 			expectError:   false,
 		},
 		{
-			name:          "single_node_in_list_valid", 
+			name:          "single_node_in_list_valid",
 			nodeID:        "node-a",
 			expectedNodes: []string{"node-a"},
 			expectError:   false,
@@ -360,7 +350,7 @@ func TestConfigValidation_EdgeCases(t *testing.T) {
 			name: "empty_cluster_id",
 			config: &domain.Config{
 				NodeID:    "test-node",
-				ClusterID: "", // Empty cluster ID
+				ClusterID: "",
 				BindAddr:  "127.0.0.1:7000",
 				DataDir:   "/tmp/test",
 				Logger:    slog.Default(),
@@ -371,9 +361,9 @@ func TestConfigValidation_EdgeCases(t *testing.T) {
 		{
 			name: "missing_node_id_with_cluster_id",
 			config: &domain.Config{
-				NodeID:    "", // Empty node ID
+				NodeID:    "",
 				ClusterID: "test-cluster",
-				BindAddr:  "127.0.0.1:7000", 
+				BindAddr:  "127.0.0.1:7000",
 				DataDir:   "/tmp/test",
 				Logger:    slog.Default(),
 			},
@@ -402,7 +392,7 @@ func TestConfigValidation_EdgeCases(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			err := tt.config.Validate()
-			
+
 			if tt.expectError {
 				assert.Error(t, err, "Expected validation error")
 				if tt.errorMessage != "" {
@@ -433,7 +423,7 @@ func createTestManager(nodeID string, expectedNodes []string) *Manager {
 		ClusterID: "test-cluster",
 		Logger:    slog.Default(),
 	}
-	
+
 	return &Manager{
 		config: config,
 		logger: slog.Default(),

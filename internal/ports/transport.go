@@ -9,10 +9,10 @@ import (
 type TransportPort interface {
 	Start(ctx context.Context, address string, port int) error
 	Stop() error
-	
+
 	RegisterEngine(engine EnginePort)
 	RegisterRaft(raft RaftNode)
-	
+
 	SendTrigger(ctx context.Context, nodeAddr string, trigger domain.WorkflowTrigger) error
 	SendJoinRequest(ctx context.Context, nodeAddr string, request *JoinRequest) (*JoinResponse, error)
 }

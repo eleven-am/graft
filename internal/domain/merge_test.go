@@ -38,7 +38,7 @@ func TestMergeStates_ObjectMerging(t *testing.T) {
 			if err != nil {
 				t.Fatalf("MergeStates failed: %v", err)
 			}
-			
+
 			if string(merged) != tt.expected {
 				t.Errorf("Expected %s, got %s", tt.expected, string(merged))
 			}
@@ -85,7 +85,7 @@ func TestMergeStates_ArrayMerging(t *testing.T) {
 			if err != nil {
 				t.Fatalf("MergeStates failed: %v", err)
 			}
-			
+
 			if string(merged) != tt.expected {
 				t.Errorf("Expected %s, got %s", tt.expected, string(merged))
 			}
@@ -132,7 +132,7 @@ func TestMergeStates_PrimitiveOverride(t *testing.T) {
 			if err != nil {
 				t.Fatalf("MergeStates failed: %v", err)
 			}
-			
+
 			if string(merged) != tt.expected {
 				t.Errorf("Expected %s, got %s", tt.expected, string(merged))
 			}
@@ -179,7 +179,7 @@ func TestMergeStates_TypeMismatch(t *testing.T) {
 			if err != nil {
 				t.Fatalf("MergeStates failed: %v", err)
 			}
-			
+
 			if string(merged) != tt.expected {
 				t.Errorf("Expected %s, got %s", tt.expected, string(merged))
 			}
@@ -232,7 +232,7 @@ func TestMergeStates_EmptyInputs(t *testing.T) {
 			if err != nil {
 				t.Fatalf("MergeStates failed: %v", err)
 			}
-			
+
 			if string(merged) != tt.expected {
 				t.Errorf("Expected %s, got %s", tt.expected, string(merged))
 			}
@@ -248,15 +248,15 @@ func TestMergeStates_ComplexWorkflowScenarios(t *testing.T) {
 		expected string
 	}{
 		{
-			name:    "workflow state merge",
-			current: json.RawMessage(`{"step": 1, "user": {"id": 123, "name": "John"}, "data": [1, 2]}`),
-			results: json.RawMessage(`{"step": 2, "user": {"email": "john@example.com"}, "data": [3, 4], "status": "processing"}`),
+			name:     "workflow state merge",
+			current:  json.RawMessage(`{"step": 1, "user": {"id": 123, "name": "John"}, "data": [1, 2]}`),
+			results:  json.RawMessage(`{"step": 2, "user": {"email": "john@example.com"}, "data": [3, 4], "status": "processing"}`),
 			expected: `{"data":[1,2,3,4],"status":"processing","step":2,"user":{"email":"john@example.com","id":123,"name":"John"}}`,
 		},
 		{
-			name:    "nested arrays in objects",
-			current: json.RawMessage(`{"config": {"items": [{"id": 1}]}, "metadata": {"tags": ["a", "b"]}}`),
-			results: json.RawMessage(`{"config": {"items": [{"id": 2}]}, "metadata": {"tags": ["c"], "version": "1.0"}}`),
+			name:     "nested arrays in objects",
+			current:  json.RawMessage(`{"config": {"items": [{"id": 1}]}, "metadata": {"tags": ["a", "b"]}}`),
+			results:  json.RawMessage(`{"config": {"items": [{"id": 2}]}, "metadata": {"tags": ["c"], "version": "1.0"}}`),
 			expected: `{"config":{"items":[{"id":1},{"id":2}]},"metadata":{"tags":["a","b","c"],"version":"1.0"}}`,
 		},
 	}
@@ -267,7 +267,7 @@ func TestMergeStates_ComplexWorkflowScenarios(t *testing.T) {
 			if err != nil {
 				t.Fatalf("MergeStates failed: %v", err)
 			}
-			
+
 			if string(merged) != tt.expected {
 				t.Errorf("Expected %s, got %s", tt.expected, string(merged))
 			}
@@ -312,7 +312,7 @@ func TestMergeStates_ErrorHandling(t *testing.T) {
 func BenchmarkMergeStates_SimpleObject(b *testing.B) {
 	current := json.RawMessage(`{"name": "John", "age": 30}`)
 	results := json.RawMessage(`{"age": 31, "city": "NYC"}`)
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := MergeStates(current, results)
@@ -325,7 +325,7 @@ func BenchmarkMergeStates_SimpleObject(b *testing.B) {
 func BenchmarkMergeStates_ComplexObject(b *testing.B) {
 	current := json.RawMessage(`{"step": 1, "user": {"id": 123, "name": "John", "preferences": {"theme": "dark", "lang": "en"}}, "data": [1, 2, 3], "metadata": {"created": "2023-01-01", "tags": ["workflow", "test"]}}`)
 	results := json.RawMessage(`{"step": 2, "user": {"email": "john@example.com", "preferences": {"notifications": true}}, "data": [4, 5], "status": "processing", "metadata": {"updated": "2023-01-02", "tags": ["updated"]}}`)
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := MergeStates(current, results)
@@ -338,7 +338,7 @@ func BenchmarkMergeStates_ComplexObject(b *testing.B) {
 func BenchmarkMergeStates_ArrayConcatenation(b *testing.B) {
 	current := json.RawMessage(`[1, 2, 3, 4, 5, 6, 7, 8, 9, 10]`)
 	results := json.RawMessage(`[11, 12, 13, 14, 15, 16, 17, 18, 19, 20]`)
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := MergeStates(current, results)
@@ -351,7 +351,7 @@ func BenchmarkMergeStates_ArrayConcatenation(b *testing.B) {
 func BenchmarkMergeStates_EmptyFastPath(b *testing.B) {
 	current := json.RawMessage(``)
 	results := json.RawMessage(`{"key": "value"}`)
-	
+
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		_, err := MergeStates(current, results)

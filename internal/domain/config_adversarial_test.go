@@ -25,7 +25,7 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 					ClusterID: "test-cluster",
 					BindAddr:  "127.0.0.1:7000",
 					DataDir:   "/tmp/test",
-					Logger:    nil, // Nil logger
+					Logger:    nil,
 				}
 			},
 			expectedError: "logger",
@@ -34,21 +34,21 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 			name: "empty_strings_all_required_fields",
 			setupConfig: func() *Config {
 				return &Config{
-					NodeID:    "", // Empty
-					ClusterID: "", // Empty
-					BindAddr:  "", // Empty
-					DataDir:   "", // Empty
+					NodeID:    "",
+					ClusterID: "",
+					BindAddr:  "",
+					DataDir:   "",
 					Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 				}
 			},
-			expectedError: "node_id", // Should fail on first validation
+			expectedError: "node_id",
 		},
 		{
 			name: "cluster_id_only_whitespace",
 			setupConfig: func() *Config {
 				return &Config{
 					NodeID:    "test-node",
-					ClusterID: "   ", // Only whitespace
+					ClusterID: "   ",
 					BindAddr:  "127.0.0.1:7000",
 					DataDir:   "/tmp/test",
 					Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -60,13 +60,13 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 					},
 				}
 			},
-			// This might pass validation but cause issues later
+
 			expectedError: "",
 		},
 		{
 			name: "extremely_long_cluster_id",
 			setupConfig: func() *Config {
-				longID := make([]byte, 10000) // 10KB cluster ID
+				longID := make([]byte, 10000)
 				for i := range longID {
 					longID[i] = 'a'
 				}
@@ -84,7 +84,7 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 					},
 				}
 			},
-			// Should pass validation but might cause memory/network issues
+
 			expectedError: "",
 		},
 		{
@@ -104,7 +104,7 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 					},
 				}
 			},
-			// Might pass validation but cause issues in networking/storage
+
 			expectedError: "",
 		},
 		{
@@ -113,7 +113,7 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 				return &Config{
 					NodeID:    "test-node",
 					ClusterID: "test-cluster",
-					BindAddr:  "not-a-valid-address:port:extra", // Invalid format
+					BindAddr:  "not-a-valid-address:port:extra",
 					DataDir:   "/tmp/test",
 					Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 					Resources: ResourceConfig{
@@ -124,8 +124,7 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 					},
 				}
 			},
-			// Config validation doesn't check address format - potential bug!
-			expectedError: "",
+			expectedError: "bind_addr",
 		},
 		{
 			name: "negative_timeout_values",
@@ -137,12 +136,11 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 				config.DataDir = "/tmp/test"
 				config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
-				// Set negative timeouts
 				config.Raft.DiscoveryTimeout = -1 * time.Second
 				config.Raft.JoinTimeout = -1 * time.Second
 				return config
 			},
-			// Negative timeouts should be caught but probably aren't
+
 			expectedError: "",
 		},
 		{
@@ -155,9 +153,8 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 				config.DataDir = "/tmp/test"
 				config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
-				// Zero limits
-				config.Resources.MaxConcurrentTotal = 0  // This should fail validation
-				config.Engine.MaxConcurrentWorkflows = 0 // This should fail validation
+				config.Resources.MaxConcurrentTotal = 0
+				config.Engine.MaxConcurrentWorkflows = 0
 				return config
 			},
 			expectedError: "resources.max_concurrent_total",
@@ -200,12 +197,12 @@ func TestConfig_BuilderMethods_EdgeCases(t *testing.T) {
 				return NewConfigFromSimple("node", "addr", "dir", slog.Default()).
 					WithMDNS("", "", "")
 			},
-			expectPanic: false, // Should use defaults
+			expectPanic: false,
 		},
 		{
 			name: "with_kubernetes_nil_values",
 			buildConfig: func() *Config {
-				// This might cause issues if not handled properly
+
 				config := NewConfigFromSimple("node", "addr", "dir", slog.Default())
 				return config.WithKubernetes("", "")
 			},
@@ -217,7 +214,7 @@ func TestConfig_BuilderMethods_EdgeCases(t *testing.T) {
 				return NewConfigFromSimple("node", "addr", "dir", slog.Default()).
 					WithStaticPeers()
 			},
-			expectPanic: false, // Should handle empty slice
+			expectPanic: false,
 		},
 		{
 			name: "with_tls_empty_file_paths",
@@ -225,7 +222,7 @@ func TestConfig_BuilderMethods_EdgeCases(t *testing.T) {
 				return NewConfigFromSimple("node", "addr", "dir", slog.Default()).
 					WithTLS("", "", "")
 			},
-			expectPanic: false, // Might cause runtime errors later
+			expectPanic: false,
 		},
 		{
 			name: "with_resource_limits_negative_values",
@@ -237,7 +234,7 @@ func TestConfig_BuilderMethods_EdgeCases(t *testing.T) {
 				return NewConfigFromSimple("node", "addr", "dir", slog.Default()).
 					WithResourceLimits(-1, -1, overrides)
 			},
-			expectPanic: false, // Should be caught in validation
+			expectPanic: false,
 		},
 		{
 			name: "with_engine_settings_zero_timeouts",
@@ -245,7 +242,7 @@ func TestConfig_BuilderMethods_EdgeCases(t *testing.T) {
 				return NewConfigFromSimple("node", "addr", "dir", slog.Default()).
 					WithEngineSettings(0, 0, 0)
 			},
-			expectPanic: false, // Should be caught in validation
+			expectPanic: false,
 		},
 	}
 
@@ -261,7 +258,6 @@ func TestConfig_BuilderMethods_EdgeCases(t *testing.T) {
 			config := tt.buildConfig()
 			assert.NotNil(t, config, "Config should not be nil")
 
-			// Try to validate - might reveal issues
 			err := config.Validate()
 			t.Logf("Validation result for %s: %v", tt.name, err)
 		})
@@ -290,7 +286,7 @@ func TestNewConfigFromSimple_EdgeCases(t *testing.T) {
 			nodeID:   "node",
 			bindAddr: "addr",
 			dataDir:  "dir",
-			logger:   nil, // Should create default logger
+			logger:   nil,
 		},
 		{
 			name:     "all_empty_strings",
@@ -322,7 +318,6 @@ func TestNewConfigFromSimple_EdgeCases(t *testing.T) {
 func TestDefaultConfig_SanityChecks(t *testing.T) {
 	config := DefaultConfig()
 
-	// Check that defaults are reasonable
 	assert.NotNil(t, config, "Default config should not be nil")
 	assert.Empty(t, config.NodeID, "Default NodeID should be empty")
 	assert.Empty(t, config.ClusterID, "Default ClusterID should be empty")
@@ -330,18 +325,15 @@ func TestDefaultConfig_SanityChecks(t *testing.T) {
 	assert.Empty(t, config.DataDir, "Default DataDir should be empty")
 	assert.Nil(t, config.Logger, "Default Logger should be nil")
 
-	// Check Raft defaults
 	assert.Greater(t, config.Raft.DiscoveryTimeout, time.Duration(0), "DiscoveryTimeout should be positive")
 	assert.Greater(t, config.Raft.JoinTimeout, time.Duration(0), "JoinTimeout should be positive")
 	assert.GreaterOrEqual(t, config.Raft.BootstrapExpected, 0, "BootstrapExpected should be non-negative")
 	assert.NotNil(t, config.Raft.ExpectedNodes, "ExpectedNodes should not be nil")
 
-	// Check Resource defaults
 	assert.Greater(t, config.Resources.MaxConcurrentTotal, 0, "MaxConcurrentTotal should be positive")
 	assert.Greater(t, config.Resources.DefaultPerTypeLimit, 0, "DefaultPerTypeLimit should be positive")
 	assert.NotNil(t, config.Resources.MaxConcurrentPerType, "MaxConcurrentPerType should not be nil")
 
-	// Check Engine defaults
 	assert.Greater(t, config.Engine.MaxConcurrentWorkflows, 0, "MaxConcurrentWorkflows should be positive")
 	assert.Greater(t, config.Engine.NodeExecutionTimeout, time.Duration(0), "NodeExecutionTimeout should be positive")
 }
@@ -356,7 +348,7 @@ func TestConfig_MaliciousInputs(t *testing.T) {
 		{
 			name: "extremely_long_node_id",
 			setupConfig: func() *Config {
-				longID := make([]byte, 1000000) // 1MB node ID
+				longID := make([]byte, 1000000)
 				for i := range longID {
 					longID[i] = 'x'
 				}
@@ -417,7 +409,6 @@ func TestConfig_MaliciousInputs(t *testing.T) {
 
 			config := tt.setupConfig()
 
-			// Should not panic on creation or validation
 			assert.NotPanics(t, func() {
 				err := config.Validate()
 				if err != nil {
@@ -435,31 +426,24 @@ func TestConfig_ConcurrentAccess(t *testing.T) {
 	const numGoroutines = 100
 	done := make(chan bool, numGoroutines)
 
-	// Multiple goroutines accessing config simultaneously
 	for i := 0; i < numGoroutines; i++ {
 		go func() {
 			defer func() { done <- true }()
 
-			// Read operations
 			_ = config.NodeID
 			_ = config.ClusterID
 			_ = config.Raft.ExpectedNodes
 
-			// Validation (should be safe for concurrent access)
 			config.Validate()
 
-			// Builder methods (these modify config - potential race!)
-			// This could reveal race conditions
 			config.WithMDNS("service", "domain", "host")
 		}()
 	}
 
-	// Wait for all goroutines
 	for i := 0; i < numGoroutines; i++ {
 		<-done
 	}
 
-	// Config should still be valid
 	err := config.Validate()
 	assert.NoError(t, err, "Config should remain valid after concurrent access")
 }

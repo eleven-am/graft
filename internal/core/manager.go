@@ -5,34 +5,46 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"sort"
+	"strconv"
 	"time"
 
+	"github.com/eleven-am/graft/internal/adapters/circuit_breaker"
 	"github.com/eleven-am/graft/internal/adapters/cluster"
 	"github.com/eleven-am/graft/internal/adapters/discovery"
 	"github.com/eleven-am/graft/internal/adapters/engine"
 	"github.com/eleven-am/graft/internal/adapters/events"
 	"github.com/eleven-am/graft/internal/adapters/load_balancer"
 	"github.com/eleven-am/graft/internal/adapters/node_registry"
+	"github.com/eleven-am/graft/internal/adapters/observability"
 	"github.com/eleven-am/graft/internal/adapters/queue"
 	"github.com/eleven-am/graft/internal/adapters/raft"
+	"github.com/eleven-am/graft/internal/adapters/rate_limiter"
 	"github.com/eleven-am/graft/internal/adapters/storage"
+	"github.com/eleven-am/graft/internal/adapters/tracing"
 	"github.com/eleven-am/graft/internal/adapters/transport"
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/ports"
+
+	badger "github.com/dgraph-io/badger/v3"
 )
 
 type Manager struct {
-	engine         ports.EnginePort
-	storage        ports.StoragePort
-	queue          ports.QueuePort
-	nodeRegistry   ports.NodeRegistryPort
-	transport      ports.TransportPort
-	discovery      ports.DiscoveryManager
-	raftAdapter    ports.RaftNode
-	eventManager   ports.EventManager
-	loadBalancer   ports.LoadBalancer
-	clusterManager ports.ClusterManager
+	engine          ports.EnginePort
+	storage         ports.StoragePort
+	queue           ports.QueuePort
+	nodeRegistry    ports.NodeRegistryPort
+	transport       ports.TransportPort
+	discovery       ports.DiscoveryManager
+	raftAdapter     ports.RaftNode
+	eventManager    ports.EventManager
+	loadBalancer    ports.LoadBalancer
+	clusterManager  ports.ClusterManager
+	observability   *observability.Server
+	circuitBreakers ports.CircuitBreakerProvider
+	rateLimiters    ports.RateLimiterProvider
+	tracing         ports.TracingProvider
 
 	config *domain.Config
 	logger *slog.Logger
@@ -40,6 +52,48 @@ type Manager struct {
 
 	ctx    context.Context
 	cancel context.CancelFunc
+}
+
+type managerProviders struct {
+	newEventManager   func(*slog.Logger) ports.EventManager
+	newRaftStorage    func(dataDir string, logger *slog.Logger) (*raft.Storage, error)
+	newRaftNode       func(cfg *raft.Config, storage *raft.Storage, events ports.EventManager, logger *slog.Logger) (ports.RaftNode, error)
+	newAppStorage     func(raft ports.RaftNode, db *badger.DB, logger *slog.Logger) ports.StoragePort
+	newNodeRegistry   func(*slog.Logger) ports.NodeRegistryPort
+	newClusterManager func(ports.RaftNode, int, *slog.Logger) ports.ClusterManager
+	newLoadBalancer   func(ports.StoragePort, ports.EventManager, string, ports.ClusterManager, *load_balancer.Config, *slog.Logger) ports.LoadBalancer
+	newQueue          func(name string, storage ports.StoragePort, events ports.EventManager, logger *slog.Logger) ports.QueuePort
+	newEngine         func(domain.EngineConfig, string, ports.NodeRegistryPort, ports.QueuePort, ports.StoragePort, ports.EventManager, ports.LoadBalancer, *slog.Logger) ports.EnginePort
+	newTransport      func(*slog.Logger, domain.TransportConfig) ports.TransportPort
+}
+
+func defaultProviders() managerProviders {
+	return managerProviders{
+		newEventManager: func(l *slog.Logger) ports.EventManager { return events.NewManager(l) },
+		newRaftStorage:  func(dataDir string, l *slog.Logger) (*raft.Storage, error) { return raft.NewStorage(dataDir, l) },
+		newRaftNode: func(cfg *raft.Config, st *raft.Storage, ev ports.EventManager, l *slog.Logger) (ports.RaftNode, error) {
+			return raft.NewNode(cfg, st, ev, l)
+		},
+		newAppStorage: func(r ports.RaftNode, db *badger.DB, l *slog.Logger) ports.StoragePort {
+			return storage.NewAppStorage(r, db, l)
+		},
+		newNodeRegistry: func(l *slog.Logger) ports.NodeRegistryPort { return node_registry.NewManager(l) },
+		newClusterManager: func(r ports.RaftNode, min int, l *slog.Logger) ports.ClusterManager {
+			return cluster.NewRaftClusterManager(r, min, l)
+		},
+		newLoadBalancer: func(s ports.StoragePort, ev ports.EventManager, nodeID string, cm ports.ClusterManager, cfg *load_balancer.Config, l *slog.Logger) ports.LoadBalancer {
+			return load_balancer.NewManager(s, ev, nodeID, cm, cfg, l)
+		},
+		newQueue: func(name string, s ports.StoragePort, ev ports.EventManager, l *slog.Logger) ports.QueuePort {
+			return queue.NewQueue(name, s, ev, l)
+		},
+		newEngine: func(cfg domain.EngineConfig, nodeID string, nr ports.NodeRegistryPort, q ports.QueuePort, s ports.StoragePort, ev ports.EventManager, lb ports.LoadBalancer, l *slog.Logger) ports.EnginePort {
+			return engine.NewEngine(cfg, nodeID, nr, q, s, ev, lb, l)
+		},
+		newTransport: func(l *slog.Logger, cfg domain.TransportConfig) ports.TransportPort {
+			return transport.NewGRPCTransport(l, cfg)
+		},
+	}
 }
 
 type ClusterMetrics struct {
@@ -84,51 +138,132 @@ func NewWithConfig(config *domain.Config) *Manager {
 	}
 
 	logger := config.Logger.With("component", "graft", "node_id", config.NodeID)
+
+	var cleanup []func() error
+	defer func() {
+		if len(cleanup) > 0 {
+			for i := len(cleanup) - 1; i >= 0; i-- {
+				if err := cleanup[i](); err != nil {
+					logger.Error("cleanup failed", "error", err)
+				}
+			}
+		}
+	}()
+
 	discoveryManager := createDiscoveryManager(config, logger)
 
 	raftConfig := raft.DefaultRaftConfig(config.NodeID, config.ClusterID, config.BindAddr, config.DataDir, config.Cluster.Policy)
 
-	raftStorage, err := raft.NewStorage(config.DataDir, logger)
+	prov := defaultProviders()
+
+	raftStorage, err := prov.newRaftStorage(config.DataDir, logger)
 	if err != nil {
 		logger.Error("failed to create raft storage", "error", err)
 		return nil
 	}
+	cleanup = append(cleanup, raftStorage.Close)
 
-	eventManager := events.NewManager(logger)
+	eventManager := prov.newEventManager(logger)
+	cleanup = append(cleanup, func() error {
+		if eventManager != nil {
+			return eventManager.Stop()
+		}
+		return nil
+	})
 
-	raftAdapter, err := raft.NewNode(raftConfig, raftStorage, eventManager, logger)
+	raftAdapter, err := prov.newRaftNode(raftConfig, raftStorage, eventManager, logger)
 	if err != nil {
 		logger.Error("failed to create raft node", "error", err)
 		return nil
 	}
+	cleanup = append(cleanup, raftAdapter.Stop)
 
-	appStorage := storage.NewAppStorage(raftAdapter, raftStorage.StateDB(), logger)
+	appStorage := prov.newAppStorage(raftAdapter, raftStorage.StateDB(), logger)
 
-	eventManager.SetStorage(appStorage, config.NodeID)
-
-	nodeRegistryManager := node_registry.NewManager(logger)
-
-	clusterManager := cluster.NewRaftClusterManager(raftAdapter, 1, logger)
-
-	loadBalancerManager := load_balancer.NewManager(appStorage, eventManager, config.NodeID, clusterManager, logger)
-
-	queueAdapter := queue.NewQueue("main", appStorage, eventManager, logger)
-	engineAdapter := engine.NewEngine(config.Engine, config.NodeID, nodeRegistryManager, queueAdapter, appStorage, eventManager, loadBalancerManager, logger)
-
-	return &Manager{
-		config:         config,
-		logger:         logger,
-		nodeID:         config.NodeID,
-		discovery:      discoveryManager,
-		raftAdapter:    raftAdapter,
-		storage:        appStorage,
-		eventManager:   eventManager,
-		nodeRegistry:   nodeRegistryManager,
-		queue:          queueAdapter,
-		engine:         engineAdapter,
-		loadBalancer:   loadBalancerManager,
-		clusterManager: clusterManager,
+	if setter, ok := eventManager.(interface {
+		SetStorage(ports.StoragePort, string)
+	}); ok {
+		setter.SetStorage(appStorage, config.NodeID)
 	}
+
+	nodeRegistryManager := prov.newNodeRegistry(logger)
+
+	clusterManager := prov.newClusterManager(raftAdapter, 1, logger)
+
+	loadBalancerConfig := &load_balancer.Config{
+		ScoreCacheTTL:   config.LoadBalancer.ScoreCacheTTL,
+		FailurePolicy:   config.LoadBalancer.FailurePolicy,
+		DefaultCapacity: config.LoadBalancer.DefaultCapacity,
+		Algorithm:       config.LoadBalancer.Algorithm,
+		WeightedConfig:  config.LoadBalancer.WeightedConfig,
+		AdaptiveConfig:  config.LoadBalancer.AdaptiveConfig,
+	}
+	loadBalancerManager := prov.newLoadBalancer(appStorage, eventManager, config.NodeID, clusterManager, loadBalancerConfig, logger)
+	cleanup = append(cleanup, func() error {
+		if loadBalancerManager != nil {
+			return loadBalancerManager.Stop()
+		}
+		return nil
+	})
+
+	queueAdapter := prov.newQueue("main", appStorage, eventManager, logger)
+	cleanup = append(cleanup, queueAdapter.Close)
+
+	engineAdapter := prov.newEngine(config.Engine, config.NodeID, nodeRegistryManager, queueAdapter, appStorage, eventManager, loadBalancerManager, logger)
+	cleanup = append(cleanup, func() error {
+		if engineAdapter != nil {
+			return engineAdapter.Stop()
+		}
+		return nil
+	})
+
+	var circuitBreakerProvider ports.CircuitBreakerProvider
+	if config.CircuitBreaker.Enabled {
+		circuitBreakerProvider = circuit_breaker.NewProvider(logger)
+	}
+
+	var rateLimiterProvider ports.RateLimiterProvider
+	if config.RateLimiter.Enabled {
+		rateLimiterProvider = rate_limiter.NewProvider(logger)
+	}
+
+	var tracingProvider ports.TracingProvider
+	if config.Tracing.Enabled {
+		tracingProvider = tracing.NewTracingProvider(config.Tracing, logger)
+		cleanup = append(cleanup, func() error {
+			if tracingProvider != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				return tracingProvider.Shutdown(ctx)
+			}
+			return nil
+		})
+	}
+
+	manager := &Manager{
+		config:          config,
+		logger:          logger,
+		nodeID:          config.NodeID,
+		discovery:       discoveryManager,
+		raftAdapter:     raftAdapter,
+		storage:         appStorage,
+		eventManager:    eventManager,
+		nodeRegistry:    nodeRegistryManager,
+		queue:           queueAdapter,
+		engine:          engineAdapter,
+		loadBalancer:    loadBalancerManager,
+		clusterManager:  clusterManager,
+		circuitBreakers: circuitBreakerProvider,
+		rateLimiters:    rateLimiterProvider,
+		tracing:         tracingProvider,
+	}
+
+	if config.Observability.Enabled {
+		manager.observability = observability.NewServer(config.Observability.Port, manager, manager, logger)
+	}
+
+	cleanup = nil
+	return manager
 }
 
 func createDiscoveryManager(config *domain.Config, logger *slog.Logger) ports.DiscoveryManager {
@@ -205,32 +340,33 @@ func (m *Manager) Static(peers []ports.Peer) *Manager {
 func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	m.ctx, m.cancel = context.WithCancel(ctx)
 
-	// Start discovery services first
-	address := extractAddress(m.config.BindAddr)
-	port := extractPort(m.config.BindAddr)
-	if err := m.discovery.Start(m.ctx, address, port); err != nil {
+	host, portStr, err := net.SplitHostPort(m.config.BindAddr)
+	if err != nil {
+		return fmt.Errorf("invalid bind address: %w", err)
+	}
+	p, err := strconv.Atoi(portStr)
+	if err != nil {
+		return fmt.Errorf("invalid bind port: %w", err)
+	}
+	if err := m.discovery.Start(m.ctx, host, p); err != nil {
 		return fmt.Errorf("failed to start discovery: %w", err)
 	}
 
-	// Wait for discovery to stabilize and find peers
 	existingPeers, err := m.waitForDiscovery(ctx, m.config.Raft.DiscoveryTimeout)
 	if err != nil {
 		return fmt.Errorf("discovery wait failed: %w", err)
 	}
 
-	// Determine if we should bootstrap or wait/join
 	if len(existingPeers) == 0 && !m.shouldBootstrap(existingPeers, &m.config.Raft) {
-		// We should NOT bootstrap but have no peers - keep waiting and retry discovery
+
 		m.logger.Info("deferring bootstrap decision, will wait for other nodes")
 
-		// Continue with longer wait for other nodes to appear or bootstrap
-		extendedTimeout := m.config.Raft.DiscoveryTimeout * 3 // Wait 3x longer
+		extendedTimeout := m.config.Raft.DiscoveryTimeout * 3
 		existingPeers, err = m.waitForDiscovery(ctx, extendedTimeout)
 		if err != nil {
 			return fmt.Errorf("extended discovery wait failed: %w", err)
 		}
 
-		// Final check - if still no peers after extended wait, force bootstrap
 		if len(existingPeers) == 0 {
 			m.logger.Warn("no peers found after extended wait, proceeding with bootstrap")
 		}
@@ -252,14 +388,49 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 		return fmt.Errorf("failed to start event manager: %w", err)
 	}
 
-	m.transport = transport.NewGRPCTransport(m.logger)
+	if m.observability != nil {
+		go func() {
+			if err := m.observability.Start(m.ctx); err != nil {
+				m.logger.Error("observability server failed", "error", err)
+			}
+		}()
+	}
+
+	m.transport = transport.NewGRPCTransport(m.logger, m.config.Transport)
 	m.transport.RegisterRaft(m.raftAdapter)
 
 	if err := m.transport.Start(m.ctx, m.config.BindAddr, grpcPort); err != nil {
 		return err
 	}
 
-	// Discovery was already started earlier in this method
+	if len(existingPeers) > 0 {
+		joinCtx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
+		defer cancel()
+		for _, peer := range existingPeers {
+			if peer.ID == m.nodeID {
+				continue
+			}
+			peerAddr := net.JoinHostPort(peer.Address, strconv.Itoa(peer.Port))
+			req := &ports.JoinRequest{NodeID: m.nodeID, Address: host, Port: grpcPort, Metadata: map[string]string{"cluster_id": m.config.ClusterID}}
+			resp, err := m.transport.SendJoinRequest(joinCtx, peerAddr, req)
+			if err != nil {
+				m.logger.Warn("join request failed", "peer", peerAddr, "error", err)
+				continue
+			}
+			if resp != nil && resp.Accepted {
+				m.logger.Info("successfully joined cluster via RPC", "peer", peerAddr)
+				break
+			} else {
+				m.logger.Warn("join request not accepted", "peer", peerAddr, "message", func() string {
+					if resp != nil {
+						return resp.Message
+					}
+					return ""
+				}())
+			}
+		}
+	}
+
 	return nil
 }
 
@@ -296,7 +467,7 @@ func (m *Manager) Stop() error {
 }
 
 func (m *Manager) RegisterNode(node interface{}) error {
-	// Pass directly to registry which will handle validation
+
 	return m.nodeRegistry.RegisterNode(node)
 }
 
@@ -533,33 +704,6 @@ func (m *Manager) calculateClusterMetrics() ClusterMetrics {
 	}
 }
 
-func extractAddress(bindAddr string) string {
-	for i := len(bindAddr) - 1; i >= 0; i-- {
-		if bindAddr[i] == ':' {
-			return bindAddr[:i]
-		}
-	}
-	return bindAddr
-}
-
-func extractPort(bindAddr string) int {
-	for i := len(bindAddr) - 1; i >= 0; i-- {
-		if bindAddr[i] == ':' {
-			portStr := bindAddr[i+1:]
-			port := 0
-			for _, r := range portStr {
-				if r >= '0' && r <= '9' {
-					port = port*10 + int(r-'0')
-				} else {
-					return 8080
-				}
-			}
-			return port
-		}
-	}
-	return 8080
-}
-
 // waitForDiscovery waits for discovery to stabilize and find peers
 func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) ([]ports.Peer, error) {
 	if m.discovery == nil {
@@ -592,28 +736,25 @@ func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) (
 
 // shouldBootstrap determines if this node should bootstrap based on configuration and peers
 func (m *Manager) shouldBootstrap(peers []ports.Peer, raftConfig *domain.RaftConfig) bool {
-	// If forced to bootstrap, always bootstrap
+
 	if raftConfig.ForceBootstrap {
 		m.logger.Info("force bootstrap enabled, will bootstrap")
 		return true
 	}
 
-	// If we have peers, we should join not bootstrap
 	if len(peers) > 0 {
 		m.logger.Info("peers found, will attempt to join cluster", "peer_count", len(peers))
 		return false
 	}
 
-	// No existing cluster found - determine who should bootstrap among expected nodes
 	expectedNodes := raftConfig.ExpectedNodes
 	if len(expectedNodes) == 0 {
-		// Fallback: use just this node
+
 		expectedNodes = []string{m.nodeID}
 		m.logger.Info("no expected nodes configured, will bootstrap as single node", "node_id", m.nodeID)
 		return true
 	}
 
-	// Check if this node is in the expected nodes list
 	nodeInExpected := false
 	for _, nodeID := range expectedNodes {
 		if nodeID == m.nodeID {
@@ -627,7 +768,6 @@ func (m *Manager) shouldBootstrap(peers []ports.Peer, raftConfig *domain.RaftCon
 		return false
 	}
 
-	// Among expected nodes, use lexicographic sorting - lowest ID bootstraps
 	sort.Strings(expectedNodes)
 	shouldBootstrap := expectedNodes[0] == m.nodeID
 
@@ -843,4 +983,108 @@ func marshalToRawMessage(v interface{}) (json.RawMessage, error) {
 		return nil, err
 	}
 	return json.RawMessage(data), nil
+}
+
+func (m *Manager) GetHealth() ports.HealthStatus {
+	health := ports.HealthStatus{
+		Healthy: true,
+		Details: make(map[string]interface{}),
+	}
+
+	if m.engine == nil {
+		health.Healthy = false
+		health.Error = "engine not initialized"
+		return health
+	}
+
+	if m.raftAdapter != nil {
+		raftHealth := m.raftAdapter.GetHealth()
+		if !raftHealth.Healthy {
+			health.Healthy = false
+			health.Error = fmt.Sprintf("raft unhealthy: %s", raftHealth.Error)
+		}
+		health.Details["raft"] = raftHealth
+	}
+
+	if m.queue != nil {
+		queueSize, err := m.queue.Size()
+		if err != nil {
+			health.Details["queue_error"] = err.Error()
+		} else {
+			health.Details["queue_size"] = queueSize
+		}
+	}
+
+	if m.storage != nil {
+		health.Details["storage"] = "connected"
+	}
+
+	info := m.GetClusterInfo()
+	health.Details["cluster"] = map[string]interface{}{
+		"node_id":   info.NodeID,
+		"is_leader": info.IsLeader,
+		"status":    info.Status,
+		"peers":     len(info.Peers),
+	}
+
+	return health
+}
+
+func (m *Manager) GetMetrics() ports.SystemMetrics {
+	metrics := ports.SystemMetrics{}
+
+	if m.engine != nil {
+		metrics.Engine = m.engine.GetMetrics()
+	}
+
+	metrics.Cluster = m.calculateClusterMetrics()
+
+	if m.raftAdapter != nil {
+		metrics.Raft = m.raftAdapter.GetMetrics()
+	}
+
+	if m.queue != nil {
+		queueSize, _ := m.queue.Size()
+		dlqSize, _ := m.queue.GetDeadLetterSize()
+		metrics.Queue = map[string]interface{}{
+			"size":             queueSize,
+			"dead_letter_size": dlqSize,
+		}
+	}
+
+	if m.storage != nil {
+		metrics.Storage = map[string]interface{}{
+			"status": "connected",
+		}
+	}
+
+	if m.circuitBreakers != nil {
+		cbMetrics := m.circuitBreakers.GetAllMetrics()
+		if len(cbMetrics) > 0 {
+			metrics.CircuitBreaker = cbMetrics
+		}
+	}
+
+	if m.rateLimiters != nil {
+		rlMetrics := m.rateLimiters.GetAllMetrics()
+		if len(rlMetrics) > 0 {
+			metrics.RateLimiter = rlMetrics
+		}
+	}
+
+	if m.tracing != nil {
+		if tracingImpl, ok := m.tracing.(*tracing.TracingProvider); ok {
+			metrics.Tracing = tracingImpl.GetMetrics()
+		}
+	}
+
+	return metrics
+}
+
+func (m *Manager) GetCircuitBreakerProvider() ports.CircuitBreakerProvider {
+	return m.circuitBreakers
+}
+
+func (m *Manager) GetRateLimiterProvider() ports.RateLimiterProvider {
+	return m.rateLimiters
 }

@@ -2,9 +2,10 @@ package queue
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
+	json "github.com/eleven-am/graft/internal/xjson"
 	"log/slog"
+	"math/rand"
 	"strings"
 	"sync"
 	"time"
@@ -15,31 +16,38 @@ import (
 )
 
 type Queue struct {
-	name          string
-	storage       ports.StoragePort
-	eventManager  ports.EventManager
-	logger        *slog.Logger
-	mu            sync.RWMutex
-	closed        bool
-	workflowIndex sync.Map
+	name            string
+	storage         ports.StoragePort
+	eventManager    ports.EventManager
+	logger          *slog.Logger
+	mu              sync.RWMutex
+	closed          bool
+	workflowIndex   sync.Map
+	claimedIndex    sync.Map
+	claimToWorkflow sync.Map
 }
 
 func NewQueue(name string, storage ports.StoragePort, eventManager ports.EventManager, logger *slog.Logger) *Queue {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &Queue{
+	q := &Queue{
 		name:         name,
 		storage:      storage,
 		eventManager: eventManager,
 		logger:       logger,
 	}
+
+	return q
 }
 
 func (q *Queue) Enqueue(item []byte) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	if len(item) > 1<<20 {
+		return &domain.StorageError{Type: domain.ErrStorageFull, Message: "queue item too large"}
+	}
 	if q.closed {
 		return &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
 	}
@@ -62,13 +70,9 @@ func (q *Queue) Enqueue(item []byte) error {
 
 	q.updateWorkflowIndex(item, sequence, true)
 
-	event := domain.Event{
-		Type:      domain.EventPut,
-		Key:       key,
-		Timestamp: time.Now(),
-	}
-	if err := q.eventManager.Broadcast(event); err != nil {
-		q.logger.Warn("failed to broadcast queue enqueue event", "error", err)
+	if q.eventManager != nil {
+		event := domain.Event{Type: domain.EventPut, Key: key, Timestamp: time.Now()}
+		_ = q.eventManager.Broadcast(event)
 	}
 
 	return nil
@@ -161,6 +165,7 @@ func (q *Queue) Claim() (item []byte, claimID string, exists bool, err error) {
 			}
 
 			q.updateWorkflowIndex(queueItem.Data, queueItem.Sequence, false)
+			q.updateClaimedIndex(claimID, queueItem.Data, true)
 
 			return queueItem.Data, claimID, true, nil
 		}
@@ -184,7 +189,90 @@ func (q *Queue) Complete(claimID string) error {
 	}
 
 	key := domain.QueueClaimedKey(q.name, claimID)
+	q.removeClaimedIndexByClaimID(claimID)
 	return q.storage.Delete(key)
+}
+
+func (q *Queue) Release(claimID string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if q.closed {
+		return &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
+	}
+
+	claimedKey := domain.QueueClaimedKey(q.name, claimID)
+	value, _, exists, err := q.storage.Get(claimedKey)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return &domain.StorageError{Type: domain.ErrKeyNotFound, Key: claimedKey, Message: "claimed item not found"}
+	}
+
+	claimedItem, err := domain.ClaimedItemFromBytes(value)
+	if err != nil {
+		return err
+	}
+
+	type workItemMeta struct {
+		ProcessAfter time.Time `json:"process_after"`
+		Deferrals    int       `json:"deferrals,omitempty"`
+	}
+
+	var meta workItemMeta
+	updatedData := claimedItem.Data
+	if err := json.Unmarshal(claimedItem.Data, &meta); err == nil {
+		meta.Deferrals++
+		const deferralLimit = 10
+		if meta.Deferrals >= deferralLimit {
+			seq, seqErr := q.getNextDeadLetterSequence()
+			if seqErr != nil {
+				return seqErr
+			}
+			dlqItem := domain.NewDeadLetterQueueItem(claimedItem.Data, fmt.Sprintf("exceeded deferrals (%d)", deferralLimit), meta.Deferrals, seq)
+			dlqBytes, encErr := dlqItem.ToBytes()
+			if encErr != nil {
+				return encErr
+			}
+			dlqKey := domain.QueueDeadLetterKey(q.name, dlqItem.ID)
+
+			ops := []ports.WriteOp{
+				{Type: ports.OpPut, Key: dlqKey, Value: dlqBytes},
+				{Type: ports.OpDelete, Key: claimedKey},
+			}
+			if err := q.storage.BatchWrite(ops); err != nil {
+				return err
+			}
+			q.updateWorkflowIndex(claimedItem.Data, claimedItem.Sequence, false)
+			return nil
+		}
+
+		delay := 50*time.Millisecond + time.Duration(rand.Intn(150))*time.Millisecond
+		meta.ProcessAfter = time.Now().Add(delay)
+		if newBytes, encErr := json.Marshal(meta); encErr == nil {
+			updatedData = newBytes
+		}
+	}
+
+	queueItem := domain.NewQueueItem(updatedData, claimedItem.Sequence)
+	itemBytes, err := queueItem.ToBytes()
+	if err != nil {
+		return err
+	}
+
+	pendingKey := domain.QueuePendingKey(q.name, claimedItem.Sequence)
+	ops := []ports.WriteOp{
+		{Type: ports.OpPut, Key: pendingKey, Value: itemBytes},
+		{Type: ports.OpDelete, Key: claimedKey},
+	}
+	if err := q.storage.BatchWrite(ops); err != nil {
+		return err
+	}
+
+	q.updateWorkflowIndex(updatedData, claimedItem.Sequence, true)
+	q.removeClaimedIndexByClaimID(claimID)
+	return nil
 }
 
 func (q *Queue) WaitForItem(ctx context.Context) <-chan struct{} {
@@ -194,14 +282,30 @@ func (q *Queue) WaitForItem(ctx context.Context) <-chan struct{} {
 		defer close(ch)
 
 		prefix := fmt.Sprintf("queue:%s:pending:", q.name)
-		err := q.eventManager.Subscribe(prefix, func(key string, event interface{}) {
-			select {
-			case ch <- struct{}{}:
-			default:
+
+		type channelSubscriber interface {
+			SubscribeToChannel(prefix string) (<-chan ports.StorageEvent, func(), error)
+		}
+
+		if sub, ok := q.eventManager.(channelSubscriber); ok {
+			eventsCh, unsubscribe, err := sub.SubscribeToChannel(prefix)
+			if err == nil && eventsCh != nil && unsubscribe != nil {
+				defer unsubscribe()
+				for {
+					select {
+					case <-ctx.Done():
+						return
+					case _, ok := <-eventsCh:
+						if !ok {
+							return
+						}
+						select {
+						case ch <- struct{}{}:
+						default:
+						}
+					}
+				}
 			}
-		})
-		if err != nil {
-			return
 		}
 
 		<-ctx.Done()
@@ -270,6 +374,16 @@ func (q *Queue) HasClaimedItemsWithPrefix(dataPrefix string) (bool, error) {
 		return false, &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
 	}
 
+	if strings.HasPrefix(dataPrefix, `"workflow_id":"`) {
+		workflowID := q.extractWorkflowIDFromPrefix(dataPrefix)
+		if workflowID != "" {
+			if _, exists := q.claimedIndex.Load(workflowID); exists {
+				return true, nil
+			}
+
+		}
+	}
+
 	prefix := fmt.Sprintf("queue:%s:claimed:", q.name)
 	items, err := q.storage.ListByPrefix(prefix)
 	if err != nil {
@@ -281,11 +395,9 @@ func (q *Queue) HasClaimedItemsWithPrefix(dataPrefix string) (bool, error) {
 		if err != nil {
 			continue
 		}
-
 		if len(claimedItem.Data) > 0 {
 			dataStr := string(claimedItem.Data)
-			if len(dataStr) >= len(dataPrefix) &&
-				strings.Contains(dataStr, dataPrefix) {
+			if strings.Contains(dataStr, dataPrefix) {
 				return true, nil
 			}
 		}
@@ -302,34 +414,45 @@ func (q *Queue) GetClaimedItemsWithPrefix(dataPrefix string) ([]ports.ClaimedIte
 		return nil, &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
 	}
 
+	var results []ports.ClaimedItem
+	if strings.HasPrefix(dataPrefix, `"workflow_id":"`) {
+		workflowID := q.extractWorkflowIDFromPrefix(dataPrefix)
+		if workflowID != "" {
+			if ids, ok := q.claimedIndex.Load(workflowID); ok {
+				idMap := ids.(*sync.Map)
+				idMap.Range(func(k, _ interface{}) bool {
+					claimID, _ := k.(string)
+					key := domain.QueueClaimedKey(q.name, claimID)
+					if value, _, exists, err := q.storage.Get(key); err == nil && exists {
+						if ci, e := domain.ClaimedItemFromBytes(value); e == nil {
+							results = append(results, ports.ClaimedItem{Data: ci.Data, ClaimID: ci.ClaimID, ClaimedAt: ci.ClaimedAt, Sequence: ci.Sequence})
+						}
+					}
+					return true
+				})
+				return results, nil
+			}
+
+		}
+	}
+
 	prefix := fmt.Sprintf("queue:%s:claimed:", q.name)
 	items, err := q.storage.ListByPrefix(prefix)
 	if err != nil {
 		return nil, err
 	}
 
-	var claimedItems []ports.ClaimedItem
 	for _, item := range items {
 		claimedItem, err := domain.ClaimedItemFromBytes(item.Value)
 		if err != nil {
 			continue
 		}
-
-		if len(claimedItem.Data) > 0 {
-			dataStr := string(claimedItem.Data)
-			if len(dataStr) >= len(dataPrefix) &&
-				strings.Contains(dataStr, dataPrefix) {
-				claimedItems = append(claimedItems, ports.ClaimedItem{
-					Data:      claimedItem.Data,
-					ClaimID:   claimedItem.ClaimID,
-					ClaimedAt: claimedItem.ClaimedAt,
-					Sequence:  claimedItem.Sequence,
-				})
-			}
+		if len(claimedItem.Data) > 0 && strings.Contains(string(claimedItem.Data), dataPrefix) {
+			results = append(results, ports.ClaimedItem{Data: claimedItem.Data, ClaimID: claimedItem.ClaimID, ClaimedAt: claimedItem.ClaimedAt, Sequence: claimedItem.Sequence})
 		}
 	}
 
-	return claimedItems, nil
+	return results, nil
 }
 
 func (q *Queue) GetItemsWithPrefix(dataPrefix string) ([][]byte, error) {
@@ -624,4 +747,58 @@ func (q *Queue) rebuildWorkflowIndex() {
 			break
 		}
 	}
+}
+
+func (q *Queue) rebuildClaimedIndex() {
+	prefix := fmt.Sprintf("queue:%s:claimed:", q.name)
+	currentKey, value, exists, err := q.storage.GetNext(prefix)
+	if err != nil || !exists {
+		return
+	}
+	for exists {
+		if claimedItem, e := domain.ClaimedItemFromBytes(value); e == nil {
+			q.updateClaimedIndex(claimedItem.ClaimID, claimedItem.Data, true)
+		}
+		currentKey, value, exists, err = q.storage.GetNextAfter(prefix, currentKey)
+		if err != nil {
+			break
+		}
+	}
+}
+
+func (q *Queue) updateClaimedIndex(claimID string, itemData []byte, add bool) {
+	workflowID := q.extractWorkflowID(itemData)
+	if workflowID == "" {
+		return
+	}
+	if add {
+		mInterface, _ := q.claimedIndex.LoadOrStore(workflowID, &sync.Map{})
+		m := mInterface.(*sync.Map)
+		m.Store(claimID, struct{}{})
+		q.claimToWorkflow.Store(claimID, workflowID)
+	} else {
+		q.removeClaimedIndexByClaimID(claimID)
+	}
+}
+
+func (q *Queue) removeClaimedIndexByClaimID(claimID string) {
+	if wf, ok := q.claimToWorkflow.Load(claimID); ok {
+		workflowID := wf.(string)
+		if mInterface, ok := q.claimedIndex.Load(workflowID); ok {
+			m := mInterface.(*sync.Map)
+			m.Delete(claimID)
+			empty := true
+			m.Range(func(_, _ interface{}) bool { empty = false; return false })
+			if empty {
+				q.claimedIndex.Delete(workflowID)
+			}
+		}
+		q.claimToWorkflow.Delete(claimID)
+	}
+}
+
+func (q *Queue) Start(ctx context.Context) error {
+	q.rebuildWorkflowIndex()
+	q.rebuildClaimedIndex()
+	return nil
 }

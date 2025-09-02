@@ -10,6 +10,7 @@ type QueuePort interface {
 	Peek() (item []byte, exists bool, err error)
 	Claim() (item []byte, claimID string, exists bool, err error)
 	Complete(claimID string) error
+	Release(claimID string) error
 	WaitForItem(ctx context.Context) <-chan struct{}
 	Size() (int, error)
 	HasItemsWithPrefix(dataPrefix string) (bool, error)

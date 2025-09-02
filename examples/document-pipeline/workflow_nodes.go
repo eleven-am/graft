@@ -389,7 +389,6 @@ func (n *DocumentRepairNode) Execute(ctx context.Context, doc Document, processi
 		doc.Metadata["repaired_at"] = time.Now()
 	}
 
-	// Use the same idempotency key as the original validator
 	validatorKey := fmt.Sprintf("%s-document_validator", doc.ID)
 	return &graft.NodeResult{
 		GlobalState: doc,

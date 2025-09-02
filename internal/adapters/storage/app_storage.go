@@ -21,6 +21,8 @@ type AppStorage struct {
 
 	mu     sync.RWMutex
 	closed bool
+
+	subs map[string][]chan ports.StorageEvent
 }
 
 func NewAppStorage(raftNode ports.RaftNode, db *badger.DB, logger *slog.Logger) *AppStorage {
@@ -28,6 +30,7 @@ func NewAppStorage(raftNode ports.RaftNode, db *badger.DB, logger *slog.Logger) 
 		raftNode: raftNode,
 		db:       db,
 		logger:   logger.With("component", "app-storage"),
+		subs:     make(map[string][]chan ports.StorageEvent),
 	}
 }
 
@@ -76,6 +79,8 @@ func (s *AppStorage) Put(key string, value []byte, version int64) error {
 		return errors.New(result.Error)
 	}
 
+	s.broadcast(result.Events)
+
 	return nil
 }
 
@@ -101,6 +106,8 @@ func (s *AppStorage) Delete(key string) error {
 	if !result.Success {
 		return errors.New(result.Error)
 	}
+
+	s.broadcast(result.Events)
 
 	return nil
 }
@@ -175,6 +182,8 @@ func (s *AppStorage) BatchWrite(ops []ports.WriteOp) error {
 	if !result.Success {
 		return errors.New(result.Error)
 	}
+
+	s.broadcast(result.Events)
 
 	return nil
 }
@@ -337,6 +346,8 @@ func (s *AppStorage) AtomicIncrement(key string) (newValue int64, err error) {
 		return 0, fmt.Errorf("atomic increment failed: %s", result.Error)
 	}
 
+	s.broadcast(result.Events)
+
 	value, _, exists, err := s.Get(key)
 	if err != nil {
 		return 0, domain.NewDiscoveryError("app-storage", "get_counter_after_increment", err)
@@ -352,6 +363,50 @@ func (s *AppStorage) AtomicIncrement(key string) (newValue int64, err error) {
 	}
 
 	return counterValue, nil
+}
+
+func (s *AppStorage) Subscribe(prefix string) (<-chan ports.StorageEvent, func(), error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return nil, nil, &domain.StorageError{Type: domain.ErrClosed, Message: "storage already closed"}
+	}
+	ch := make(chan ports.StorageEvent, 100)
+	s.subs[prefix] = append(s.subs[prefix], ch)
+	unsub := func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		subs := s.subs[prefix]
+		for i, c := range subs {
+			if c == ch {
+				s.subs[prefix] = append(subs[:i], subs[i+1:]...)
+				break
+			}
+		}
+		close(ch)
+	}
+	return ch, unsub, nil
+}
+
+func (s *AppStorage) broadcast(events []domain.Event) {
+	if len(events) == 0 {
+		return
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, ev := range events {
+		for prefix, list := range s.subs {
+			if len(ev.Key) >= len(prefix) && ev.Key[:len(prefix)] == prefix {
+				evt := ports.StorageEvent{Type: domain.EventType(ev.Type), Key: ev.Key, Version: ev.Version, NodeID: ev.NodeID, Timestamp: ev.Timestamp, RequestID: ev.RequestID}
+				for _, ch := range list {
+					select {
+					case ch <- evt:
+					default:
+					}
+				}
+			}
+		}
+	}
 }
 
 func (s *AppStorage) DeleteByPrefix(prefix string) (deletedCount int, err error) {
@@ -483,6 +538,9 @@ func (s *AppStorage) CleanExpired() (cleanedCount int, err error) {
 }
 
 func (s *AppStorage) RunInTransaction(fn func(tx ports.Transaction) error) error {
+	if s.raftNode != nil {
+		return domain.NewDiscoveryError("storage", "run_in_transaction", errors.New("RunInTransaction is disabled when Raft is active"))
+	}
 	txn := s.db.NewTransaction(true)
 	defer txn.Discard()
 
@@ -529,6 +587,13 @@ func (s *AppStorage) Close() error {
 	}
 
 	s.closed = true
+
+	for _, list := range s.subs {
+		for _, ch := range list {
+			close(ch)
+		}
+	}
+	s.subs = make(map[string][]chan ports.StorageEvent)
 
 	return nil
 }

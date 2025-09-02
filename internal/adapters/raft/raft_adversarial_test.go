@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +16,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func getAvailablePort(t *testing.T) string {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	defer listener.Close()
+	return listener.Addr().String()
+}
 
 func TestNode_ConcurrentOperations(t *testing.T) {
 	tempDir := t.TempDir()
@@ -87,10 +95,14 @@ func TestNode_LeaderElection(t *testing.T) {
 	tempDir2 := t.TempDir()
 	tempDir3 := t.TempDir()
 
+	addr1 := getAvailablePort(t)
+	addr2 := getAvailablePort(t)
+	addr3 := getAvailablePort(t)
+
 	configs := []*Config{
 		{
 			NodeID:             "node1",
-			BindAddr:           "127.0.0.1:7000",
+			BindAddr:           addr1,
 			DataDir:            tempDir1,
 			ClusterID:          "test-cluster",
 			SnapshotInterval:   24 * time.Hour,
@@ -106,7 +118,7 @@ func TestNode_LeaderElection(t *testing.T) {
 		},
 		{
 			NodeID:             "node2",
-			BindAddr:           "127.0.0.1:7001",
+			BindAddr:           addr2,
 			DataDir:            tempDir2,
 			ClusterID:          "test-cluster",
 			SnapshotInterval:   24 * time.Hour,
@@ -122,7 +134,7 @@ func TestNode_LeaderElection(t *testing.T) {
 		},
 		{
 			NodeID:             "node3",
-			BindAddr:           "127.0.0.1:7002",
+			BindAddr:           addr3,
 			DataDir:            tempDir3,
 			ClusterID:          "test-cluster",
 			SnapshotInterval:   24 * time.Hour,
@@ -154,7 +166,7 @@ func TestNode_LeaderElection(t *testing.T) {
 		if i == 0 {
 			peers = nil
 		} else {
-			peers = []ports.Peer{{ID: "node1", Address: "127.0.0.1:7000"}}
+			peers = []ports.Peer{{ID: "node1", Address: addr1}}
 		}
 		err = node.Start(context.Background(), peers)
 		require.NoError(t, err)

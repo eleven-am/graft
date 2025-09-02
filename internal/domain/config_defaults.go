@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -14,13 +16,18 @@ import (
 
 func DefaultConfig() *Config {
 	return &Config{
-		Discovery:    []DiscoveryConfig{},
-		Transport:    DefaultTransportConfig(),
-		Raft:         DefaultRaftConfig(),
-		Resources:    DefaultResourceConfig(),
-		Engine:       DefaultEngineConfig(),
-		Orchestrator: DefaultOrchestratorConfig(),
-		Cluster:      DefaultClusterConfig(),
+		Discovery:      []DiscoveryConfig{},
+		Transport:      DefaultTransportConfig(),
+		Raft:           DefaultRaftConfig(),
+		Resources:      DefaultResourceConfig(),
+		Engine:         DefaultEngineConfig(),
+		Orchestrator:   DefaultOrchestratorConfig(),
+		Cluster:        DefaultClusterConfig(),
+		LoadBalancer:   DefaultLoadBalancerConfig(),
+		Observability:  DefaultObservabilityConfig(),
+		CircuitBreaker: DefaultCircuitBreakerSettings(),
+		RateLimiter:    DefaultRateLimiterSettings(),
+		Tracing:        DefaultTracingConfig(),
 	}
 }
 
@@ -116,6 +123,7 @@ func DefaultEngineConfig() EngineConfig {
 		StateUpdateInterval:    time.Second,
 		RetryAttempts:          3,
 		RetryBackoff:           time.Second,
+		StateOptimization:      DefaultStateOptimizationConfig(),
 	}
 }
 
@@ -136,6 +144,84 @@ func DefaultClusterConfig() ClusterConfig {
 	}
 }
 
+func DefaultLoadBalancerConfig() LoadBalancerConfig {
+	return LoadBalancerConfig{
+		ScoreCacheTTL:   1 * time.Second,
+		FailurePolicy:   "fail-open",
+		DefaultCapacity: 10.0,
+		Algorithm:       AlgorithmAdaptive,
+		WeightedConfig: WeightedRoundRobinConfig{
+			DefaultWeight:   1,
+			NodeWeights:     make(map[string]int),
+			SmoothWeighting: true,
+		},
+		AdaptiveConfig: AdaptiveLoadBalancerConfig{
+			ResponseTimeWeight:    0.3,
+			CpuUsageWeight:        0.2,
+			MemoryUsageWeight:     0.15,
+			ConnectionCountWeight: 0.2,
+			ErrorRateWeight:       0.15,
+			AdaptationInterval:    30 * time.Second,
+			HistoryWindow:         5 * time.Minute,
+		},
+	}
+}
+
+func DefaultObservabilityConfig() ObservabilityConfig {
+	return ObservabilityConfig{
+		Enabled:       true,
+		Port:          9090,
+		ReadTimeout:   10 * time.Second,
+		WriteTimeout:  10 * time.Second,
+		IdleTimeout:   60 * time.Second,
+		EnablePprof:   false,
+		EnableMetrics: true,
+	}
+}
+
+func DefaultCircuitBreakerSettings() CircuitBreakerConfig {
+	return CircuitBreakerConfig{
+		Enabled: true,
+		DefaultConfig: DefaultCircuitBreakerConfig{
+			FailureThreshold: 5,
+			SuccessThreshold: 3,
+			Timeout:          30 * time.Second,
+			MaxRequests:      1,
+			Interval:         60 * time.Second,
+		},
+		ServiceOverrides: make(map[string]DefaultCircuitBreakerConfig),
+	}
+}
+
+func DefaultRateLimiterSettings() RateLimiterConfig {
+	return RateLimiterConfig{
+		Enabled: true,
+		DefaultConfig: DefaultRateLimiterConfig{
+			RequestsPerSecond: 100.0,
+			BurstSize:         100,
+			WaitTimeout:       5 * time.Second,
+			EnableMetrics:     true,
+			CleanupInterval:   5 * time.Minute,
+			KeyExpiry:         10 * time.Minute,
+		},
+		ServiceOverrides:  make(map[string]DefaultRateLimiterConfig),
+		EndpointOverrides: make(map[string]DefaultRateLimiterConfig),
+	}
+}
+
+func DefaultTracingConfig() TracingConfig {
+	return TracingConfig{
+		Enabled:          false,
+		ServiceName:      "graft",
+		SamplingRate:     0.1,
+		JaegerEndpoint:   "",
+		OTLPEndpoint:     "",
+		Environment:      "development",
+		ResourceTags:     make(map[string]string),
+		MaxSpansPerTrace: 1000,
+	}
+}
+
 func NewConfigFromSimple(nodeID, bindAddr, dataDir string, logger *slog.Logger) *Config {
 	config := DefaultConfig()
 	config.NodeID = nodeID
@@ -147,10 +233,9 @@ func NewConfigFromSimple(nodeID, bindAddr, dataDir string, logger *slog.Logger) 
 		config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 
-	// Initialize cluster ID with persistence
 	if err := initializeClusterID(config); err != nil {
 		config.Logger.Warn("failed to initialize cluster ID", "error", err)
-		// Fallback to random UUID
+
 		config.ClusterID = uuid.New().String()
 	}
 
@@ -257,6 +342,13 @@ func (c *Config) Validate() error {
 	}
 	if c.BindAddr == "" {
 		return NewConfigError("bind_addr", ErrInvalidInput)
+	}
+	if host, port, err := net.SplitHostPort(c.BindAddr); err != nil || host == "" {
+		return NewConfigError("bind_addr", ErrInvalidInput)
+	} else {
+		if _, err := strconv.Atoi(port); err != nil {
+			return NewConfigError("bind_addr", ErrInvalidInput)
+		}
 	}
 	if c.DataDir == "" {
 		return NewConfigError("data_dir", ErrInvalidInput)

@@ -2,6 +2,8 @@ package transport
 
 import (
 	"context"
+	"log/slog"
+	"os"
 	"testing"
 	"time"
 
@@ -45,32 +47,34 @@ func (m *mockEngine) StopWorkflow(ctx context.Context, workflowID string) error 
 	return nil
 }
 
+func (m *mockEngine) GetMetrics() domain.ExecutionMetrics {
+	return domain.ExecutionMetrics{}
+}
+
 func TestGRPCTransport_BasicLifecycle(t *testing.T) {
-	transport := NewGRPCTransport(nil)
-	
-	// Start transport
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	transport := NewGRPCTransport(logger, domain.TransportConfig{})
+
 	ctx := context.Background()
 	err := transport.Start(ctx, "127.0.0.1", 0)
 	if err != nil {
 		t.Fatalf("Failed to start transport: %v", err)
 	}
 	defer transport.Stop()
-	
-	// Register mock engine
+
 	mockEng := &mockEngine{}
 	transport.RegisterEngine(mockEng)
-	
-	// Give server time to start
+
 	time.Sleep(100 * time.Millisecond)
 }
 
 func TestGRPCTransport_RegisterEngine(t *testing.T) {
-	transport := NewGRPCTransport(nil)
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	transport := NewGRPCTransport(logger, domain.TransportConfig{})
 	mockEng := &mockEngine{}
-	
-	// Test engine registration
+
 	transport.RegisterEngine(mockEng)
-	
+
 	if transport.engine != mockEng {
 		t.Error("Engine not properly registered")
 	}

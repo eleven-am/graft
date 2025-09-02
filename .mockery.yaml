@@ -20,6 +20,12 @@ packages:
       LoadBalancer:
       NodeRegistryPort:
       RaftNode:
+      QueuePort:
+  github.com/eleven-am/graft/internal/adapters/engine:
+    config:
+      dir: "./internal/mocks"
+    interfaces:
+      StateManagerInterface:
   github.com/hashicorp/raft:
     config:
       dir: "./internal/mocks"
