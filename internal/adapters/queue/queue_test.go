@@ -16,11 +16,6 @@ import (
 func TestQueue_Enqueue(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
@@ -35,8 +30,6 @@ func TestQueue_Enqueue(t *testing.T) {
 func TestQueue_EnqueueMultiple(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
@@ -57,8 +50,6 @@ func TestQueue_EnqueueMultiple(t *testing.T) {
 func TestQueue_Peek(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	queueItem := domain.NewQueueItem([]byte("test data"), 1)
@@ -78,8 +69,6 @@ func TestQueue_Peek(t *testing.T) {
 func TestQueue_PeekEmpty(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	mockStorage.On("GetNext", "queue:test:pending:").Return("", nil, false, nil).Once()
@@ -95,8 +84,6 @@ func TestQueue_PeekEmpty(t *testing.T) {
 func TestQueue_PeekOrdering(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	item1 := domain.NewQueueItem([]byte("first"), 1)
@@ -117,8 +104,6 @@ func TestQueue_PeekOrdering(t *testing.T) {
 func TestQueue_Claim(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	queueItem := domain.NewQueueItem([]byte("test data"), 1)
@@ -147,8 +132,6 @@ func TestQueue_Claim(t *testing.T) {
 func TestQueue_ClaimEmpty(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	mockStorage.On("GetNext", "queue:test:pending:").Return("", nil, false, nil).Once()
@@ -165,8 +148,6 @@ func TestQueue_ClaimEmpty(t *testing.T) {
 func TestQueue_ClaimOrdering(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	item1 := domain.NewQueueItem([]byte("first"), 1)
@@ -191,8 +172,6 @@ func TestQueue_ClaimOrdering(t *testing.T) {
 func TestQueue_Complete(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	claimID := "test-claim-id"
@@ -209,8 +188,6 @@ func TestQueue_Complete(t *testing.T) {
 func TestQueue_Size(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	mockStorage.On("CountPrefix", "queue:test:pending:").Return(3, nil).Once()
@@ -225,7 +202,6 @@ func TestQueue_Size(t *testing.T) {
 func TestQueue_SizeEmpty(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	mockStorage.On("CountPrefix", "queue:test:pending:").Return(0, nil).Once()
@@ -240,7 +216,6 @@ func TestQueue_SizeEmpty(t *testing.T) {
 func TestQueue_WaitForItem(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	mockEventManager.On("Subscribe", "queue:test:pending:", mock.AnythingOfType("func(string, interface {})")).Return(nil).Once()
@@ -262,7 +237,6 @@ func TestQueue_WaitForItem(t *testing.T) {
 func TestQueue_WaitForItemIgnoreDelete(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	mockEventManager.On("Subscribe", "queue:test:pending:", mock.AnythingOfType("func(string, interface {})")).Return(nil).Once()
@@ -284,7 +258,6 @@ func TestQueue_WaitForItemIgnoreDelete(t *testing.T) {
 func TestQueue_Close(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	err := queue.Close()
@@ -298,7 +271,6 @@ func TestQueue_Close(t *testing.T) {
 func TestQueue_ClosedOperations(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	queue.Close()
@@ -321,7 +293,6 @@ func TestQueue_ClosedOperations(t *testing.T) {
 func TestQueue_ConcurrentEnqueue(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	// Use AtomicIncrement for concurrent sequence generation
@@ -353,7 +324,6 @@ func TestQueue_ConcurrentEnqueue(t *testing.T) {
 func TestQueue_EnqueueClaimComplete(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Maybe()
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	queueItem := domain.NewQueueItem([]byte("test data"), 1)

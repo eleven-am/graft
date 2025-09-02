@@ -417,7 +417,7 @@ func (r *Node) GetMetrics() ports.RaftMetrics {
 	if leaderID != "" {
 		metrics.LeaderID = string(leaderID)
 		metrics.LeaderAddress = string(leaderAddr)
-		metrics.IsLeader = r.raft.State() == raft.Leader
+		metrics.IsLeader = (r.raft.State() == raft.Leader)
 	}
 
 	configFuture := r.raft.GetConfiguration()

@@ -90,7 +90,7 @@ func TestNode_LeaderElection(t *testing.T) {
 	configs := []*Config{
 		{
 			NodeID:             "node1",
-			BindAddr:           "127.0.0.1:0",
+			BindAddr:           "127.0.0.1:7000",
 			DataDir:            tempDir1,
 			ClusterID:          "test-cluster",
 			SnapshotInterval:   24 * time.Hour,
@@ -106,7 +106,7 @@ func TestNode_LeaderElection(t *testing.T) {
 		},
 		{
 			NodeID:             "node2",
-			BindAddr:           "127.0.0.1:0",
+			BindAddr:           "127.0.0.1:7001",
 			DataDir:            tempDir2,
 			ClusterID:          "test-cluster",
 			SnapshotInterval:   24 * time.Hour,
@@ -122,7 +122,7 @@ func TestNode_LeaderElection(t *testing.T) {
 		},
 		{
 			NodeID:             "node3",
-			BindAddr:           "127.0.0.1:0",
+			BindAddr:           "127.0.0.1:7002",
 			DataDir:            tempDir3,
 			ClusterID:          "test-cluster",
 			SnapshotInterval:   24 * time.Hour,
@@ -154,9 +154,7 @@ func TestNode_LeaderElection(t *testing.T) {
 		if i == 0 {
 			peers = nil
 		} else {
-			// Use the actual address of node1 when binding to :0
-			addr := nodes[0].GetLocalAddress()
-			peers = []ports.Peer{{ID: "node1", Address: addr}}
+			peers = []ports.Peer{{ID: "node1", Address: "127.0.0.1:7000"}}
 		}
 		err = node.Start(context.Background(), peers)
 		require.NoError(t, err)

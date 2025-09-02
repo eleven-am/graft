@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/ports"
@@ -115,9 +114,6 @@ func (m *Manager) Start(ctx context.Context) error {
 
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.running = true
-	if m.storage != nil {
-		go m.cleanupLoop()
-	}
 
 	return nil
 }
@@ -146,21 +142,6 @@ func (m *Manager) Stop() error {
 
 	m.running = false
 	return nil
-}
-
-func (m *Manager) cleanupLoop() {
-	ticker := time.NewTicker(1 * time.Minute)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-m.ctx.Done():
-			return
-		case <-ticker.C:
-			if m.storage != nil {
-				_, _ = m.storage.CleanExpired()
-			}
-		}
-	}
 }
 
 func (m *Manager) processStorageEvent(event *ports.StorageEvent) error {
@@ -232,33 +213,6 @@ func (m *Manager) processWorkflowEvent(event *ports.StorageEvent, keyParts []str
 			return domain.ErrInvalidInput
 		}
 		m.notifyWorkflowResumed(&workflowEvent)
-
-	case "node":
-		if len(keyParts) < 5 {
-			return nil
-		}
-		_ = keyParts[3]
-		subType := keyParts[4]
-		switch subType {
-		case "started":
-			var nodeEvent domain.NodeStartedEvent
-			if err := json.Unmarshal(data, &nodeEvent); err != nil {
-				return domain.ErrInvalidInput
-			}
-			m.notifyNodeStarted(&nodeEvent)
-		case "completed":
-			var nodeEvent domain.NodeCompletedEvent
-			if err := json.Unmarshal(data, &nodeEvent); err != nil {
-				return domain.ErrInvalidInput
-			}
-			m.notifyNodeCompleted(&nodeEvent)
-		case "error":
-			var nodeEvent domain.NodeErrorEvent
-			if err := json.Unmarshal(data, &nodeEvent); err != nil {
-				return domain.ErrInvalidInput
-			}
-			m.notifyNodeError(&nodeEvent)
-		}
 	}
 
 	m.notifyGenericHandlers(event.Key, workflowID)
@@ -553,14 +507,7 @@ func (m *Manager) patternMatches(pattern, key string) bool {
 }
 
 func (m *Manager) BroadcastCommand(ctx context.Context, devCmd *domain.DevCommand) error {
-	if m.storage == nil {
-		return domain.ErrInvalidInput
-	}
 	internalCmd := devCmd.ToInternalCommand()
-	payload, _ := json.Marshal(devCmd)
-	if err := m.storage.Put(internalCmd.Key, payload, 1); err != nil {
-		return err
-	}
 	domainEvent := domain.Event{
 		Type:      domain.EventType(internalCmd.Type),
 		Key:       internalCmd.Key,

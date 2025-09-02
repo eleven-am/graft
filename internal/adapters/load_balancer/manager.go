@@ -31,7 +31,6 @@ type Manager struct {
 	recentLatencyMs float64
 	errorWindow     *RollingWindow
 	nodeCapacities  map[string]float64
-	nodeWeights     map[string]float64
 
 	scoreCache    map[string]scoreCacheEntry
 	scoreCacheTTL time.Duration
@@ -56,18 +55,9 @@ func NewManager(storage ports.StoragePort, events ports.EventManager, nodeID str
 		executionUnits: make(map[string]float64),
 		errorWindow:    NewRollingWindow(100),
 		nodeCapacities: make(map[string]float64),
-		nodeWeights:    make(map[string]float64),
 		scoreCache:     make(map[string]scoreCacheEntry),
 		scoreCacheTTL:  1 * time.Second,
 	}
-}
-
-func (m *Manager) SetNodeWeights(weights map[string]float64) {
-	m.mu.Lock()
-	for k, v := range weights {
-		m.nodeWeights[k] = v
-	}
-	m.mu.Unlock()
 }
 
 func (m *Manager) Start(ctx context.Context) error {
@@ -188,14 +178,7 @@ func (m *Manager) initializeNodeLoad() error {
 		LastUpdated:     time.Now().Unix(),
 	}
 
-	if err := m.updateNodeLoad(load); err != nil {
-		if domain.IsNotFound(err) {
-			m.logger.Info("storage not writable on follower; skipping initial load write", "node_id", m.nodeID)
-			return nil
-		}
-		return err
-	}
-	return nil
+	return m.updateNodeLoad(load)
 }
 
 func (m *Manager) onNodeStarted(event *domain.NodeStartedEvent) {
@@ -204,12 +187,7 @@ func (m *Manager) onNodeStarted(event *domain.NodeStartedEvent) {
 	}
 
 	m.mu.Lock()
-	weight := 0.0
-	if w, ok := m.nodeWeights[event.NodeName]; ok {
-		weight = w
-	} else {
-		weight = ports.GetNodeWeight(nil, event.NodeName)
-	}
+	weight := ports.GetNodeWeight(nil, event.NodeName)
 	m.executionUnits[event.WorkflowID] = weight
 	m.totalWeight += weight
 
@@ -361,14 +339,9 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 
 	filteredLoad := m.filterActiveNodes(clusterLoad)
 	if len(filteredLoad) == 0 {
-		if len(clusterLoad) > 0 {
-			m.logger.Warn("no active nodes reported; falling back to all nodes",
-				"total_nodes", len(clusterLoad))
-			filteredLoad = clusterLoad
-		} else {
-			m.logger.Warn("no cluster load data available; allowing local execution")
-			return true, nil
-		}
+		m.logger.Warn("no active nodes in cluster load data, defaulting to execute",
+			"total_nodes", len(clusterLoad))
+		return true, nil
 	}
 
 	capacities := m.getNodeCapacities()
@@ -376,15 +349,9 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 	bestNode, bestScore := scorer.SelectBestNode(filteredLoad, capacities)
 
 	if bestNode == "" {
-		var lexMin string
-		for nodeID := range filteredLoad {
-			if lexMin == "" || nodeID < lexMin {
-				lexMin = nodeID
-			}
-		}
-		bestNode = lexMin
-		m.logger.Warn("no best node selected; using lexicographic tie-breaker",
-			"selected_node", bestNode, "score", bestScore)
+		m.logger.Warn("no best node selected, defaulting to execute",
+			"reason", "empty_best_node", "score", bestScore)
+		return true, nil
 	}
 
 	shouldExecute := bestNode == m.nodeID

@@ -196,8 +196,6 @@ type EngineConfig struct {
 	RetryAttempts          int           `json:"retry_attempts" yaml:"retry_attempts"`
 	RetryBackoff           time.Duration `json:"retry_backoff" yaml:"retry_backoff"`
 	WorkerCount            int           `json:"worker_count" yaml:"worker_count"`
-	QueueName              string        `json:"queue_name" yaml:"queue_name"`
-	EventsTTL              time.Duration `json:"events_ttl" yaml:"events_ttl"`
 }
 
 type OrchestratorConfig struct {

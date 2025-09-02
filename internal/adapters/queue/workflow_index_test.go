@@ -209,8 +209,7 @@ func TestQueue_HasItemsWithPrefixOptimized(t *testing.T) {
 	assert.NoError(t, err)
 	assert.True(t, exists)
 
-	// Test non-existent workflow - falls back to persistent index in storage
-	mockStorage.On("ListByPrefix", "queue:test:wf:nonexistent:").Return([]ports.KeyValueVersion{}, nil).Once()
+	// Test non-existent workflow - no storage calls expected
 	exists, err = queue.HasItemsWithPrefix(`"workflow_id":"nonexistent"`)
 
 	assert.NoError(t, err)

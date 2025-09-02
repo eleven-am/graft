@@ -166,28 +166,6 @@ func (a *NodeAdapter) Execute(ctx context.Context, state json.RawMessage, config
 	if field := resultVal.FieldByName("NextNodes"); field.IsValid() {
 		if nodes, ok := field.Interface().([]ports.NextNode); ok {
 			portResult.NextNodes = nodes
-		} else if field.Kind() == reflect.Slice {
-			ln := field.Len()
-			out := make([]ports.NextNode, 0, ln)
-			for i := 0; i < ln; i++ {
-				elem := field.Index(i)
-				if elem.Kind() == reflect.Ptr {
-					elem = elem.Elem()
-				}
-				var nn ports.NextNode
-				if elem.Kind() == reflect.Struct {
-					if f := elem.FieldByName("NodeName"); f.IsValid() && f.Kind() == reflect.String {
-						nn.NodeName = f.String()
-					}
-					if f := elem.FieldByName("Config"); f.IsValid() {
-						nn.Config = f.Interface()
-					}
-					out = append(out, nn)
-				}
-			}
-			if len(out) > 0 {
-				portResult.NextNodes = out
-			}
 		}
 	}
 
@@ -220,9 +198,10 @@ func (a *NodeAdapter) buildArguments(ctx context.Context, state json.RawMessage,
 
 			if len(dataToUnmarshal) > 0 {
 				if err := json.Unmarshal(dataToUnmarshal, ptr.Interface()); err != nil {
-					return nil, fmt.Errorf("invalid parameter: %w", err)
+					args[i] = reflect.Zero(paramType)
+				} else {
+					args[i] = ptr.Elem()
 				}
-				args[i] = ptr.Elem()
 			} else {
 				args[i] = reflect.Zero(paramType)
 			}
