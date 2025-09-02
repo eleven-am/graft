@@ -4,32 +4,22 @@ import (
 	"context"
 	"log/slog"
 	"testing"
-
-	"github.com/eleven-am/graft/internal/mocks"
-	"github.com/eleven-am/graft/internal/ports"
 )
 
 func TestEventManager_BasicLifecycle(t *testing.T) {
-	storage := &mocks.MockStoragePort{}
-	eventsChan := make(chan ports.StorageEvent, 10)
-	unsubscribe := func() {}
-	storage.On("Subscribe", "workflow:").Return((<-chan ports.StorageEvent)(eventsChan), unsubscribe, nil)
-	storage.On("Subscribe", "node:").Return((<-chan ports.StorageEvent)(eventsChan), unsubscribe, nil)
-
-	manager := NewManagerWithStorage(storage, "test-node", slog.Default())
+	manager := NewManagerWithStorage(nil, "test-node", slog.Default())
 
 	ctx := context.Background()
 	err := manager.Start(ctx)
 	if err != nil {
 		t.Fatalf("Failed to start manager: %v", err)
 	}
-	defer manager.Stop()
-
 	if !manager.running {
 		t.Error("Manager should be running")
 	}
-
-	storage.AssertExpectations(t)
+	if err := manager.Stop(); err != nil {
+		t.Fatalf("Failed to stop manager: %v", err)
+	}
 }
 
 func TestEventManager_PatternMatching(t *testing.T) {

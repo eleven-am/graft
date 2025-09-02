@@ -486,7 +486,7 @@ func TestNodeAdapter_TypeConversion(t *testing.T) {
 		assert.NotNil(t, result)
 	})
 
-	t.Run("handles malformed json with zero value", func(t *testing.T) {
+	t.Run("handles malformed json with error", func(t *testing.T) {
 		node := &NodeWithState{name: "test"}
 		adapter, err := NewNodeAdapter(node)
 		require.NoError(t, err)
@@ -494,8 +494,8 @@ func TestNodeAdapter_TypeConversion(t *testing.T) {
 		malformedJSON := json.RawMessage(`{invalid json`)
 
 		result, err := adapter.Execute(context.Background(), malformedJSON, nil)
-		assert.NoError(t, err)
-		assert.NotNil(t, result)
+		assert.Error(t, err)
+		assert.Nil(t, result)
 	})
 
 	t.Run("complex type conversion", func(t *testing.T) {

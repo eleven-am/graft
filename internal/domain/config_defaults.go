@@ -116,6 +116,8 @@ func DefaultEngineConfig() EngineConfig {
 		StateUpdateInterval:    time.Second,
 		RetryAttempts:          3,
 		RetryBackoff:           time.Second,
+		QueueName:              "main",
+		EventsTTL:              24 * time.Hour,
 	}
 }
 

@@ -20,20 +20,21 @@ type Manager struct {
 	logger         *slog.Logger
 	clusterManager ports.ClusterManager
 
-	mu      sync.RWMutex
-	running bool
+	mu       sync.RWMutex
+	running  bool
 	draining bool
-	ctx     context.Context
-	cancel  context.CancelFunc
+	ctx      context.Context
+	cancel   context.CancelFunc
 
-	executionUnits    map[string]float64
-	totalWeight       float64
-	recentLatencyMs   float64
-	errorWindow       *RollingWindow
-	nodeCapacities    map[string]float64
-	
-	scoreCache        map[string]scoreCacheEntry
-	scoreCacheTTL     time.Duration
+	executionUnits  map[string]float64
+	totalWeight     float64
+	recentLatencyMs float64
+	errorWindow     *RollingWindow
+	nodeCapacities  map[string]float64
+	nodeWeights     map[string]float64
+
+	scoreCache    map[string]scoreCacheEntry
+	scoreCacheTTL time.Duration
 }
 
 type scoreCacheEntry struct {
@@ -55,9 +56,18 @@ func NewManager(storage ports.StoragePort, events ports.EventManager, nodeID str
 		executionUnits: make(map[string]float64),
 		errorWindow:    NewRollingWindow(100),
 		nodeCapacities: make(map[string]float64),
+		nodeWeights:    make(map[string]float64),
 		scoreCache:     make(map[string]scoreCacheEntry),
 		scoreCacheTTL:  1 * time.Second,
 	}
+}
+
+func (m *Manager) SetNodeWeights(weights map[string]float64) {
+	m.mu.Lock()
+	for k, v := range weights {
+		m.nodeWeights[k] = v
+	}
+	m.mu.Unlock()
 }
 
 func (m *Manager) Start(ctx context.Context) error {
@@ -100,14 +110,14 @@ func (m *Manager) monitorClusterHealth() {
 			return
 		case <-ticker.C:
 			health := m.clusterManager.GetClusterHealth()
-			
+
 			if !health.IsHealthy {
-				m.logger.Warn("cluster unhealthy", 
+				m.logger.Warn("cluster unhealthy",
 					"healthy_nodes", health.HealthyNodes,
 					"total_nodes", health.TotalNodes,
 					"minimum_nodes", health.MinimumNodes,
 					"unhealthy_nodes", health.UnhealthyNodes)
-				
+
 				m.mu.Lock()
 				for cacheKey := range m.scoreCache {
 					delete(m.scoreCache, cacheKey)
@@ -117,7 +127,7 @@ func (m *Manager) monitorClusterHealth() {
 				m.logger.Info("cluster stable with some unhealthy nodes",
 					"healthy_nodes", health.HealthyNodes,
 					"unhealthy_nodes", health.UnhealthyNodes)
-				
+
 				m.cleanupUnhealthyNodeCache(health.UnhealthyNodes)
 			}
 		}
@@ -127,7 +137,7 @@ func (m *Manager) monitorClusterHealth() {
 func (m *Manager) cleanupUnhealthyNodeCache(unhealthyNodes []string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	for cacheKey := range m.scoreCache {
 		for _, unhealthyNode := range unhealthyNodes {
 			if len(cacheKey) > len(unhealthyNode) && cacheKey[:len(unhealthyNode)] == unhealthyNode {
@@ -178,7 +188,14 @@ func (m *Manager) initializeNodeLoad() error {
 		LastUpdated:     time.Now().Unix(),
 	}
 
-	return m.updateNodeLoad(load)
+	if err := m.updateNodeLoad(load); err != nil {
+		if domain.IsNotFound(err) {
+			m.logger.Info("storage not writable on follower; skipping initial load write", "node_id", m.nodeID)
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 func (m *Manager) onNodeStarted(event *domain.NodeStartedEvent) {
@@ -187,15 +204,20 @@ func (m *Manager) onNodeStarted(event *domain.NodeStartedEvent) {
 	}
 
 	m.mu.Lock()
-	weight := ports.GetNodeWeight(nil, event.NodeName)
+	weight := 0.0
+	if w, ok := m.nodeWeights[event.NodeName]; ok {
+		weight = w
+	} else {
+		weight = ports.GetNodeWeight(nil, event.NodeName)
+	}
 	m.executionUnits[event.WorkflowID] = weight
 	m.totalWeight += weight
-	
+
 	executionUnitsCopy := make(map[string]float64, len(m.executionUnits))
 	for k, v := range m.executionUnits {
 		executionUnitsCopy[k] = v
 	}
-	
+
 	load := &ports.NodeLoad{
 		NodeID:          m.nodeID,
 		TotalWeight:     m.totalWeight,
@@ -211,7 +233,7 @@ func (m *Manager) onNodeStarted(event *domain.NodeStartedEvent) {
 			"workflow_id", event.WorkflowID,
 			"weight", weight)
 	}
-	
+
 	m.mu.Lock()
 	m.cleanupScoreCacheIfNeeded()
 	m.mu.Unlock()
@@ -219,24 +241,24 @@ func (m *Manager) onNodeStarted(event *domain.NodeStartedEvent) {
 
 func (m *Manager) onNodeCompleted(event *domain.NodeCompletedEvent) {
 	m.mu.Lock()
-	
+
 	if weight, exists := m.executionUnits[event.WorkflowID]; exists {
 		m.totalWeight -= weight
 		delete(m.executionUnits, event.WorkflowID)
 	}
-	
+
 	latencyMs := float64(event.Duration.Milliseconds())
 	if latencyMs > 0 {
 		m.recentLatencyMs = UpdateEWMA(m.recentLatencyMs, latencyMs, 0.2)
 	}
-	
+
 	m.errorWindow.Record(true)
-	
+
 	executionUnitsCopy := make(map[string]float64, len(m.executionUnits))
 	for k, v := range m.executionUnits {
 		executionUnitsCopy[k] = v
 	}
-	
+
 	load := &ports.NodeLoad{
 		NodeID:          m.nodeID,
 		TotalWeight:     m.totalWeight,
@@ -254,19 +276,19 @@ func (m *Manager) onNodeCompleted(event *domain.NodeCompletedEvent) {
 
 func (m *Manager) onNodeError(event *domain.NodeErrorEvent) {
 	m.mu.Lock()
-	
+
 	if weight, exists := m.executionUnits[event.WorkflowID]; exists {
 		m.totalWeight -= weight
 		delete(m.executionUnits, event.WorkflowID)
 	}
-	
+
 	m.errorWindow.Record(false)
-	
+
 	executionUnitsCopy := make(map[string]float64, len(m.executionUnits))
 	for k, v := range m.executionUnits {
 		executionUnitsCopy[k] = v
 	}
-	
+
 	load := &ports.NodeLoad{
 		NodeID:          m.nodeID,
 		TotalWeight:     m.totalWeight,
@@ -276,7 +298,7 @@ func (m *Manager) onNodeError(event *domain.NodeErrorEvent) {
 		LastUpdated:     time.Now().Unix(),
 	}
 	m.mu.Unlock()
-	
+
 	if err := m.updateNodeLoad(load); err != nil {
 		m.logger.Error("failed to update load in storage", "error", err)
 	}
@@ -296,7 +318,7 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 	m.mu.RLock()
 	isDraining := m.draining
 	m.mu.RUnlock()
-	
+
 	if isDraining {
 		m.logger.Info("node is draining, rejecting new work", "node_id", m.nodeID)
 		return false, nil
@@ -304,21 +326,21 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 
 	if m.clusterManager != nil {
 		health := m.clusterManager.GetClusterHealth()
-		
+
 		if !health.IsHealthy {
-			m.logger.Warn("cluster unhealthy, applying fail-safe behavior", 
+			m.logger.Warn("cluster unhealthy, applying fail-safe behavior",
 				"healthy_nodes", health.HealthyNodes,
 				"minimum_nodes", health.MinimumNodes,
 				"cluster_viable", health.IsMinimumViable)
-			
+
 			if !health.IsMinimumViable {
-				m.logger.Error("cluster below minimum viable nodes, defaulting to execute", 
+				m.logger.Error("cluster below minimum viable nodes, defaulting to execute",
 					"healthy_nodes", health.HealthyNodes,
 					"minimum_nodes", health.MinimumNodes)
 				return true, nil
 			}
 		}
-		
+
 		if !m.clusterManager.IsNodeActive(m.nodeID) {
 			m.logger.Warn("current node not active in cluster, defaulting to execute", "node_id", m.nodeID)
 			return true, nil
@@ -330,30 +352,41 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 		m.logger.Warn("failed to get cluster load, defaulting to execute", "error", err)
 		return true, nil
 	}
-	
+
 	if len(clusterLoad) == 0 {
-		m.logger.Warn("no valid cluster load data found, defaulting to execute", 
+		m.logger.Warn("no valid cluster load data found, defaulting to execute",
 			"reason", "empty_cluster_load")
 		return true, nil
 	}
 
 	filteredLoad := m.filterActiveNodes(clusterLoad)
 	if len(filteredLoad) == 0 {
-		m.logger.Warn("no active nodes in cluster load data, defaulting to execute",
-			"total_nodes", len(clusterLoad))
-		return true, nil
+		if len(clusterLoad) > 0 {
+			m.logger.Warn("no active nodes reported; falling back to all nodes",
+				"total_nodes", len(clusterLoad))
+			filteredLoad = clusterLoad
+		} else {
+			m.logger.Warn("no cluster load data available; allowing local execution")
+			return true, nil
+		}
 	}
-	
+
 	capacities := m.getNodeCapacities()
 	scorer := DefaultScorer
 	bestNode, bestScore := scorer.SelectBestNode(filteredLoad, capacities)
-	
+
 	if bestNode == "" {
-		m.logger.Warn("no best node selected, defaulting to execute", 
-			"reason", "empty_best_node", "score", bestScore)
-		return true, nil
+		var lexMin string
+		for nodeID := range filteredLoad {
+			if lexMin == "" || nodeID < lexMin {
+				lexMin = nodeID
+			}
+		}
+		bestNode = lexMin
+		m.logger.Warn("no best node selected; using lexicographic tie-breaker",
+			"selected_node", bestNode, "score", bestScore)
 	}
-	
+
 	shouldExecute := bestNode == m.nodeID
 	return shouldExecute, nil
 }
@@ -361,15 +394,15 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 func (m *Manager) StartDraining() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if !m.running {
 		return domain.NewDiscoveryError("load-balancer", "drain", domain.ErrNotStarted)
 	}
-	
+
 	if m.draining {
 		return nil
 	}
-	
+
 	m.draining = true
 	m.logger.Info("started draining node", "node_id", m.nodeID)
 	return nil
@@ -378,11 +411,11 @@ func (m *Manager) StartDraining() error {
 func (m *Manager) StopDraining() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	
+
 	if !m.draining {
 		return nil
 	}
-	
+
 	m.draining = false
 	m.logger.Info("stopped draining node", "node_id", m.nodeID)
 	return nil
@@ -397,7 +430,7 @@ func (m *Manager) IsDraining() bool {
 func (m *Manager) WaitForDraining(ctx context.Context) error {
 	ticker := time.NewTicker(1 * time.Second)
 	defer ticker.Stop()
-	
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -406,14 +439,14 @@ func (m *Manager) WaitForDraining(ctx context.Context) error {
 			m.mu.RLock()
 			totalWork := m.totalWeight
 			m.mu.RUnlock()
-			
+
 			if totalWork == 0 {
 				m.logger.Info("node fully drained", "node_id", m.nodeID)
 				return nil
 			}
-			
-			m.logger.Debug("waiting for work to complete", 
-				"node_id", m.nodeID, 
+
+			m.logger.Debug("waiting for work to complete",
+				"node_id", m.nodeID,
 				"remaining_work", totalWork)
 		}
 	}
@@ -426,29 +459,29 @@ func (m *Manager) filterActiveNodes(clusterLoad map[string]*ports.NodeLoad) map[
 
 	filteredLoad := make(map[string]*ports.NodeLoad)
 	activeNodes := m.clusterManager.GetActiveNodes()
-	
+
 	for _, activeNodeID := range activeNodes {
 		if load, exists := clusterLoad[activeNodeID]; exists {
 			filteredLoad[activeNodeID] = load
 		}
 	}
-	
+
 	return filteredLoad
 }
 
 func (m *Manager) getNodeCapacities() map[string]float64 {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	
+
 	capacities := make(map[string]float64)
 	for nodeID, capacity := range m.nodeCapacities {
 		capacities[nodeID] = capacity
 	}
-	
+
 	if len(capacities) == 0 {
 		capacities[m.nodeID] = 10.0
 	}
-	
+
 	return capacities
 }
 
@@ -458,14 +491,14 @@ func (m *Manager) selectBestNodeWithCache(clusterLoad map[string]*ports.NodeLoad
 			return nodeID, 0
 		}
 	}
-	
+
 	now := time.Now().Unix()
 	var bestNode string
 	bestScore := math.MaxFloat64
-	
+
 	for nodeID, load := range clusterLoad {
 		cacheKey := fmt.Sprintf("%s:%d", nodeID, load.LastUpdated)
-		
+
 		var score float64
 		if entry, exists := m.scoreCache[cacheKey]; exists && (now-entry.timestamp) < int64(m.scoreCacheTTL.Seconds()) {
 			score = entry.score
@@ -475,23 +508,23 @@ func (m *Manager) selectBestNodeWithCache(clusterLoad map[string]*ports.NodeLoad
 				capacity = scorer.Config.DefaultCapacity
 			}
 			score = scorer.CalculateScore(load, capacity)
-			
+
 			m.scoreCache[cacheKey] = scoreCacheEntry{
 				score:     score,
 				timestamp: now,
 			}
-			
+
 			if len(m.scoreCache) > 1000 {
 				m.cleanupScoreCache(now)
 			}
 		}
-		
+
 		if score < bestScore {
 			bestNode = nodeID
 			bestScore = score
 		}
 	}
-	
+
 	return bestNode, bestScore
 }
 
@@ -523,7 +556,7 @@ func (m *Manager) GetClusterLoad() (map[string]*ports.NodeLoad, error) {
 			m.logger.Warn("failed to unmarshal node load", "key", kv.Key, "error", err)
 			continue
 		}
-		
+
 		if load.ExecutionUnits == nil {
 			load.ExecutionUnits = make(map[string]float64)
 		}
@@ -555,7 +588,7 @@ func (m *Manager) GetNodeLoad(nodeID string) (*ports.NodeLoad, error) {
 	if err := json.Unmarshal(data, &load); err != nil {
 		return nil, domain.ErrInvalidInput
 	}
-	
+
 	if load.ExecutionUnits == nil {
 		load.ExecutionUnits = make(map[string]float64)
 	}

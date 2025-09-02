@@ -62,13 +62,19 @@ func (q *Queue) Enqueue(item []byte) error {
 
 	q.updateWorkflowIndex(item, sequence, true)
 
-	event := domain.Event{
-		Type:      domain.EventPut,
-		Key:       key,
-		Timestamp: time.Now(),
+	if wfID := q.extractWorkflowID(item); wfID != "" {
+		_ = q.storage.Put(queueWorkflowIndexKey(q.name, wfID, sequence), []byte("1"), 0)
 	}
-	if err := q.eventManager.Broadcast(event); err != nil {
-		q.logger.Warn("failed to broadcast queue enqueue event", "error", err)
+
+	if q.eventManager != nil {
+		event := domain.Event{
+			Type:      domain.EventPut,
+			Key:       key,
+			Timestamp: time.Now(),
+		}
+		if err := q.eventManager.Broadcast(event); err != nil {
+			q.logger.Warn("failed to broadcast queue enqueue event", "error", err)
+		}
 	}
 
 	return nil
@@ -162,6 +168,10 @@ func (q *Queue) Claim() (item []byte, claimID string, exists bool, err error) {
 
 			q.updateWorkflowIndex(queueItem.Data, queueItem.Sequence, false)
 
+			if wfID := q.extractWorkflowID(queueItem.Data); wfID != "" {
+				_ = q.storage.Delete(queueWorkflowIndexKey(q.name, wfID, queueItem.Sequence))
+			}
+
 			return queueItem.Data, claimID, true, nil
 		}
 
@@ -233,7 +243,15 @@ func (q *Queue) HasItemsWithPrefix(dataPrefix string) (bool, error) {
 	if strings.HasPrefix(dataPrefix, `"workflow_id":"`) {
 		workflowID := q.extractWorkflowIDFromPrefix(dataPrefix)
 		if workflowID != "" {
-			return q.hasWorkflowItems(workflowID), nil
+			if q.hasWorkflowItems(workflowID) {
+				return true, nil
+			}
+			idxPrefix := queueWorkflowIndexPrefix(q.name, workflowID)
+			items, err := q.storage.ListByPrefix(idxPrefix)
+			if err == nil && len(items) > 0 {
+				return true, nil
+			}
+			return false, nil
 		}
 	}
 
@@ -345,7 +363,19 @@ func (q *Queue) GetItemsWithPrefix(dataPrefix string) ([][]byte, error) {
 		if workflowID != "" {
 			sequences := q.getWorkflowSequences(workflowID)
 			if len(sequences) == 0 {
-				return [][]byte{}, nil
+				idxPrefix := queueWorkflowIndexPrefix(q.name, workflowID)
+				kvs, err := q.storage.ListByPrefix(idxPrefix)
+				if err != nil {
+					return [][]byte{}, nil
+				}
+				for _, kv := range kvs {
+					if seq, ok := parseSeqFromIndexKey(kv.Key); ok {
+						sequences = append(sequences, seq)
+					}
+				}
+				if len(sequences) == 0 {
+					return [][]byte{}, nil
+				}
 			}
 
 			var matchingItems [][]byte
@@ -624,4 +654,27 @@ func (q *Queue) rebuildWorkflowIndex() {
 			break
 		}
 	}
+}
+
+func queueWorkflowIndexKey(name, workflowID string, sequence int64) string {
+	return fmt.Sprintf("queue:%s:wf:%s:%020d", name, workflowID, sequence)
+}
+
+func queueWorkflowIndexPrefix(name, workflowID string) string {
+	return fmt.Sprintf("queue:%s:wf:%s:", name, workflowID)
+}
+
+func parseSeqFromIndexKey(key string) (int64, bool) {
+	i := strings.LastIndexByte(key, ':')
+	if i < 0 || i+1 >= len(key) {
+		return 0, false
+	}
+	var seq int64
+	for _, r := range key[i+1:] {
+		if r < '0' || r > '9' {
+			return 0, false
+		}
+		seq = seq*10 + int64(r-'0')
+	}
+	return seq, true
 }

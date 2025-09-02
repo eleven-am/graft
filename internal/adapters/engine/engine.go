@@ -59,6 +59,9 @@ func (e *Engine) Start(ctx context.Context) error {
 		go e.processWork()
 	}
 
+	e.wg.Add(1)
+	go e.publishMetricsLoop()
+
 	return nil
 }
 
@@ -224,33 +227,31 @@ func (e *Engine) StopWorkflow(ctx context.Context, workflowID string) error {
 func (e *Engine) processWork() {
 	defer e.wg.Done()
 
+	notify := e.queue.WaitForItem(e.ctx)
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	drain := func() {
+		for {
+			processed, err := e.processNextItem()
+			if err != nil {
+				e.logger.Error("failed to process work item", "error", err)
+				time.Sleep(100 * time.Millisecond)
+			}
+			if !processed {
+				break
+			}
+		}
+	}
+
 	for {
 		select {
 		case <-e.ctx.Done():
 			return
-		case <-e.queue.WaitForItem(e.ctx):
-			for {
-				processed, err := e.processNextItem()
-				if err != nil {
-					e.logger.Error("failed to process work item", "error", err)
-					time.Sleep(100 * time.Millisecond)
-				}
-				if !processed {
-					break
-				}
-			}
-		case <-time.After(1 * time.Second):
-			// Periodic check for delayed items that are now ready
-			for {
-				processed, err := e.processNextItem()
-				if err != nil {
-					e.logger.Error("failed to process work item", "error", err)
-					time.Sleep(100 * time.Millisecond)
-				}
-				if !processed {
-					break
-				}
-			}
+		case <-notify:
+			drain()
+		case <-ticker.C:
+			drain()
 		}
 	}
 }
@@ -451,6 +452,26 @@ func (e *Engine) RetryFromDeadLetter(itemID string) error {
 
 func (e *Engine) GetMetrics() domain.ExecutionMetrics {
 	return e.metrics.GetSnapshot()
+}
+
+func (e *Engine) publishMetricsLoop() {
+	defer e.wg.Done()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-e.ctx.Done():
+			return
+		case <-ticker.C:
+			snapshot := e.metrics.GetSnapshot()
+			data, err := json.Marshal(snapshot)
+			if err != nil {
+				continue
+			}
+			key := fmt.Sprintf("metrics:execution:%s", e.nodeID)
+			_ = e.storage.PutWithTTL(key, data, 1, 30*time.Second)
+		}
+	}
 }
 
 func (e *Engine) emitWorkflowStartedEvent(event domain.WorkflowStartedEvent) error {

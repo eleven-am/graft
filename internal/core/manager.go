@@ -109,10 +109,21 @@ func NewWithConfig(config *domain.Config) *Manager {
 	nodeRegistryManager := node_registry.NewManager(logger)
 
 	clusterManager := cluster.NewRaftClusterManager(raftAdapter, 1, logger)
-	
-	loadBalancerManager := load_balancer.NewManager(appStorage, eventManager, config.NodeID, clusterManager, logger)
 
-	queueAdapter := queue.NewQueue("main", appStorage, eventManager, logger)
+	loadBalancerManager := load_balancer.NewManager(appStorage, eventManager, config.NodeID, clusterManager, logger)
+	if len(config.Resources.NodePriorities) > 0 {
+		weights := make(map[string]float64, len(config.Resources.NodePriorities))
+		for k, v := range config.Resources.NodePriorities {
+			weights[k] = float64(v)
+		}
+		loadBalancerManager.SetNodeWeights(weights)
+	}
+
+	queueName := config.Engine.QueueName
+	if queueName == "" {
+		queueName = "main"
+	}
+	queueAdapter := queue.NewQueue(queueName, appStorage, eventManager, logger)
 	engineAdapter := engine.NewEngine(config.Engine, config.NodeID, nodeRegistryManager, queueAdapter, appStorage, eventManager, loadBalancerManager, logger)
 
 	return &Manager{
@@ -253,7 +264,11 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	}
 
 	m.transport = transport.NewGRPCTransport(m.logger)
+	if gt, ok := m.transport.(*transport.GRPCTransport); ok {
+		gt.ConfigureTransport(m.config.Transport)
+	}
 	m.transport.RegisterRaft(m.raftAdapter)
+	m.transport.RegisterEngine(m.engine)
 
 	if err := m.transport.Start(m.ctx, m.config.BindAddr, grpcPort); err != nil {
 		return err
@@ -422,6 +437,13 @@ func (m *Manager) OnNodeError(handler func(*NodeErrorEvent)) error {
 	return m.eventManager.OnNodeError(handler)
 }
 
+func (m *Manager) GetExecutionMetrics() domain.ExecutionMetrics {
+	if eng, ok := m.engine.(*engine.Engine); ok {
+		return eng.GetMetrics()
+	}
+	return domain.ExecutionMetrics{}
+}
+
 func (m *Manager) Subscribe(pattern string, handler func(string, interface{})) error {
 	return m.eventManager.Subscribe(pattern, handler)
 }
@@ -431,6 +453,14 @@ func (m *Manager) Unsubscribe(pattern string) error {
 }
 
 func (m *Manager) BroadcastCommand(ctx context.Context, devCmd *DevCommand) error {
+	if m.raftAdapter == nil {
+		return nil
+	}
+	// Avoid calling IsLeader() when raft isn't initialized yet.
+	info := m.raftAdapter.GetClusterInfo()
+	if info.Leader == nil || info.Leader.ID != info.NodeID {
+		return nil
+	}
 	return m.eventManager.BroadcastCommand(ctx, devCmd)
 }
 
