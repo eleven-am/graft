@@ -376,7 +376,7 @@ func (e *Executor) persistExecutedNode(ctx context.Context, workflowID string, e
 		return domain.NewDiscoveryError("executor", "marshal_executed_node", err)
 	}
 
-	if err := e.storage.Put(executionKey, nodeBytes, 1); err != nil {
+	if err := e.storage.Put(executionKey, nodeBytes, 0); err != nil {
 		return domain.NewDiscoveryError("executor", "persist_executed_node", err)
 	}
 
@@ -521,7 +521,7 @@ func (e *Executor) publishWorkflowCompletedEvent(ctx context.Context, workflowID
 	}
 
 	eventKey := fmt.Sprintf("workflow:%s:completed", workflowID)
-	if err := e.storage.Put(eventKey, eventBytes, 1); err != nil {
+	if err := e.storage.Put(eventKey, eventBytes, 0); err != nil {
 		return domain.NewDiscoveryError("executor", "publish_workflow_completed_event", err)
 	}
 
@@ -576,7 +576,7 @@ func (e *Executor) emitNodeStartedEvent(workflowCtx *domain.WorkflowContext, con
 	}
 
 	eventKey := fmt.Sprintf("workflow:%s:node:%s:started", workflowCtx.WorkflowID, workflowCtx.NodeName)
-	if err := e.storage.Put(eventKey, eventBytes, 1); err != nil {
+	if err := e.storage.Put(eventKey, eventBytes, 0); err != nil {
 		return fmt.Errorf("failed to store node started event: %w", err)
 	}
 
@@ -605,7 +605,7 @@ func (e *Executor) emitNodeCompletedEvent(workflowCtx *domain.WorkflowContext, r
 	}
 
 	eventKey := fmt.Sprintf("workflow:%s:node:%s:completed", workflowCtx.WorkflowID, workflowCtx.NodeName)
-	if err := e.storage.Put(eventKey, eventBytes, 1); err != nil {
+	if err := e.storage.Put(eventKey, eventBytes, 0); err != nil {
 		return fmt.Errorf("failed to store node completed event: %w", err)
 	}
 
@@ -631,7 +631,7 @@ func (e *Executor) emitNodeErrorEvent(workflowCtx *domain.WorkflowContext, curre
 	}
 
 	eventKey := fmt.Sprintf("workflow:%s:node:%s:error", workflowCtx.WorkflowID, workflowCtx.NodeName)
-	if err := e.storage.Put(eventKey, eventBytes, 1); err != nil {
+	if err := e.storage.Put(eventKey, eventBytes, 0); err != nil {
 		return fmt.Errorf("failed to store node error event: %w", err)
 	}
 

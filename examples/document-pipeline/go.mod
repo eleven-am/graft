@@ -5,8 +5,7 @@ go 1.23.0
 toolchain go1.24.4
 
 require (
-	github.com/eleven-am/graft v0.1.14
-	github.com/sanity-io/litter v1.5.8
+	github.com/eleven-am/graft v0.1.25
 )
 
 require (
