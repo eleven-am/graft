@@ -577,7 +577,7 @@ func (e *Executor) emitNodeStartedEvent(workflowCtx *domain.WorkflowContext, con
 
 	eventKey := fmt.Sprintf("workflow:%s:node:%s:started", workflowCtx.WorkflowID, workflowCtx.NodeName)
 	if err := e.storage.Put(eventKey, eventBytes, 0); err != nil {
-		return fmt.Errorf("failed to store node started event: %w", err)
+		return fmt.Errorf("failed to store node started event (using version 0): %w", err)
 	}
 
 	return nil

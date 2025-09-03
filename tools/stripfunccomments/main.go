@@ -46,7 +46,6 @@ func main() {
 			continue
 		}
 
-		// Collect function body ranges
 		var ranges [][2]token.Pos
 		ast.Inspect(file, func(n ast.Node) bool {
 			if fn, ok := n.(*ast.FuncDecl); ok && fn.Body != nil {
@@ -73,7 +72,6 @@ func main() {
 			file.Comments = kept
 		}
 
-		// Write back
 		var out strings.Builder
 		cfg := &printer.Config{Mode: printer.UseSpaces | printer.TabIndent, Tabwidth: 8}
 		if err := cfg.Fprint(&out, fset, file); err != nil {

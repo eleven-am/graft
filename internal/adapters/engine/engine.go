@@ -137,7 +137,7 @@ func (e *Engine) ProcessTrigger(trigger domain.WorkflowTrigger) error {
 		CurrentState: trigger.InitialState,
 		StartedAt:    time.Now(),
 		Metadata:     trigger.Metadata,
-		Version:      1,
+		Version:      0,
 	}
 
 	if err := e.stateManager.SaveWorkflowState(e.ctx, workflow); err != nil {
@@ -542,7 +542,7 @@ func (e *Engine) emitWorkflowStartedEvent(event domain.WorkflowStartedEvent) err
 	}
 
 	eventKey := fmt.Sprintf("workflow:%s:started", event.WorkflowID)
-	if err := e.storage.Put(eventKey, eventBytes, 1); err != nil {
+	if err := e.storage.Put(eventKey, eventBytes, 0); err != nil {
 		return fmt.Errorf("failed to store workflow started event: %w", err)
 	}
 
@@ -566,7 +566,7 @@ func (e *Engine) emitWorkflowLifecycleEvent(workflowID, eventType string, reason
 	}
 
 	eventKey := fmt.Sprintf("workflow:%s:%s", workflowID, eventType)
-	if err := e.storage.Put(eventKey, eventBytes, 1); err != nil {
+	if err := e.storage.Put(eventKey, eventBytes, 0); err != nil {
 		return fmt.Errorf("failed to store workflow %s event: %w", eventType, err)
 	}
 
