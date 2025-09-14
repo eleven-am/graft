@@ -16,8 +16,8 @@ import (
 manager := graft.New("node-1", "localhost:7000", "./data", slog.Default())
 
 // Configure discovery dynamically
-manager.Discovery().MDNS()                    // Add mDNS discovery
-manager.Discovery().Static([]graft.Peer{...}) // Add static peers
+manager.Discovery().MDNS("", "")                    // Add mDNS discovery (defaults)
+manager.Discovery().Static([]graft.Peer{...})        // Add static peers
 
 // Start the system
 err := manager.Start(ctx, 8080)
@@ -35,9 +35,8 @@ import (
 
 // Build comprehensive configuration
 config := graft.NewConfigBuilder("node-1", "localhost:7000", "./data").
-    // Discovery: supports multiple methods simultaneously
+    // Discovery: supports multiple methods simultaneously (built-ins)
     WithMDNS("_graft._tcp", "local.", "").
-    WithKubernetes("graft-service", "production").
     WithStaticPeers(graft.StaticPeer{
         ID: "peer-1", Address: "10.1.1.1", Port: 7000,
     }).
@@ -66,9 +65,9 @@ err := manager.Start(ctx, 8080)
 
 ### Discovery Methods
 
-Graft supports **multiple discovery methods simultaneously**:
+Graft supports **multiple discovery methods simultaneously**. In-tree providers:
 
-#### mDNS Discovery
+#### mDNS Discovery (built-in)
 ```go
 WithMDNS(service, domain, host)
 // service: "_graft._tcp" (default)
@@ -76,14 +75,7 @@ WithMDNS(service, domain, host)
 // host:    "" (auto-detect)
 ```
 
-#### Kubernetes Discovery
-```go
-WithKubernetes(serviceName, namespace)
-// Automatic peer discovery in K8s clusters
-// Supports service discovery, pod discovery, StatefulSets
-```
-
-#### Static Peers
+#### Static Peers (built-in)
 ```go
 WithStaticPeers(graft.StaticPeer{
     ID:       "node-2",
@@ -136,23 +128,13 @@ config := graft.NewConfigBuilder("worker-node", "0.0.0.0:7000", "/data").
     Build()
 ```
 
-### Production Kubernetes
-```go
-config := graft.NewConfigBuilder(os.Getenv("NODE_ID"), "0.0.0.0:7000", "/data").
-    WithKubernetes("graft-service", "production").
-    WithTLS("/certs/tls.crt", "/certs/tls.key", "/certs/ca.crt").
-    WithResourceLimits(100, 15, map[string]int{
-        "ml-training": 2,     // Limit expensive ML jobs
-        "data-export": 5,     // Control data operations
-    }).
-    Build()
-```
+### External Providers
+- For environments like Kubernetes or Consul, use an external provider package that implements the Provider interface, then call `manager.Discovery().Add(provider)`.
 
 ### Hybrid Discovery
 ```go
 config := graft.NewConfigBuilder("hybrid-node", "10.0.0.5:7000", "/data").
     WithMDNS("", "", "").     // Local network discovery
-    WithKubernetes("graft", "default").  // K8s cluster discovery  
     WithStaticPeers(          // External data centers
         graft.StaticPeer{ID: "dc1-leader", Address: "dc1.company.com", Port: 7000},
         graft.StaticPeer{ID: "dc2-leader", Address: "dc2.company.com", Port: 7000},
@@ -170,10 +152,10 @@ manager := graft.New("node-1", "localhost:7000", "./data", logger)
 manager.Discovery().MDNS()
 ```
 
-**After:**  
+**After:**
 ```go
 config := graft.NewConfigBuilder("node-1", "localhost:7000", "./data").
-    WithMDNS("", "", "").  // Same as .MDNS()
+    WithMDNS("", "", "").  // MDNS built-in
     Build()
 manager := graft.NewWithConfig(config)
 ```

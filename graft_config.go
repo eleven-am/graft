@@ -12,7 +12,7 @@ type Config = domain.Config
 
 // Service Discovery Types
 
-// DiscoveryType specifies the method used for service discovery (mDNS, Kubernetes, or static).
+// DiscoveryType specifies the method used for service discovery (mDNS or static).
 type DiscoveryType = domain.DiscoveryType
 
 // DiscoveryConfig contains the configuration for service discovery mechanisms.
@@ -21,8 +21,6 @@ type DiscoveryConfig = domain.DiscoveryConfig
 // MDNSConfig configures multicast DNS-based service discovery for local network environments.
 type MDNSConfig = domain.MDNSConfig
 
-// KubernetesConfig configures Kubernetes-based service discovery using various K8s primitives.
-type KubernetesConfig = domain.KubernetesConfig
 
 // StaticPeer represents a statically configured peer in the cluster.
 type StaticPeer = domain.StaticPeer
@@ -55,113 +53,17 @@ type OrchestratorConfig = domain.OrchestratorConfig
 
 // Strategy and Method Types
 
-// AuthMethod specifies how to authenticate with Kubernetes clusters.
-type AuthMethod = domain.AuthMethod
-
-// DiscoveryMethod defines the specific mechanism used for peer discovery within a service discovery type.
-type DiscoveryMethod = domain.DiscoveryMethod
-
-// PeerIDSource specifies how peer IDs are determined in Kubernetes environments.
-type PeerIDSource = domain.PeerIDSource
-
-// PortSource defines how to determine the port for peer communication in Kubernetes.
-type PortSource = domain.PortSource
-
-// NetworkingMode specifies the networking approach for peer communication.
-type NetworkingMode = domain.NetworkingMode
-
-// DiscoveryStrategy, PeerIDStrategy, PortStrategy, and RetryStrategy define various behavioral strategies.
-type DiscoveryStrategy = domain.DiscoveryStrategy
-type PeerIDStrategy = domain.PeerIDStrategy
-type PortStrategy = domain.PortStrategy
-type RetryStrategy = domain.RetryStrategy
 
 // Service Discovery Constants
 const (
 	// MDNS enables multicast DNS-based service discovery for local networks.
 	MDNS = domain.DiscoveryMDNS
 
-	// Kubernetes enables Kubernetes-based service discovery using K8s APIs.
-	Kubernetes = domain.DiscoveryKubernetes
 
 	// Static uses a predefined list of peers for service discovery.
 	Static = domain.DiscoveryStatic
 )
 
-// Kubernetes Authentication Methods
-const (
-	// AuthInCluster uses the service account token when running inside a Kubernetes cluster.
-	AuthInCluster = domain.AuthInCluster
-
-	// AuthKubeconfig uses a kubeconfig file for authentication.
-	AuthKubeconfig = domain.AuthKubeconfig
-
-	// AuthExplicitToken uses an explicitly provided authentication token.
-	AuthExplicitToken = domain.AuthExplicitToken
-)
-
-// Kubernetes Discovery Methods
-const (
-	// DiscoveryLabelSelector discovers peers using Kubernetes label selectors.
-	DiscoveryLabelSelector = domain.DiscoveryLabelSelector
-
-	// DiscoveryService discovers peers through a Kubernetes service.
-	DiscoveryService = domain.DiscoveryService
-
-	// DiscoveryDNS discovers peers using DNS queries.
-	DiscoveryDNS = domain.DiscoveryDNS
-
-	// DiscoveryStatefulSet discovers peers within a StatefulSet.
-	DiscoveryStatefulSet = domain.DiscoveryStatefulSet
-
-	// DiscoveryNamespace discovers all peers within a Kubernetes namespace.
-	DiscoveryNamespace = domain.DiscoveryNamespace
-
-	// DiscoverySiblings discovers peer pods that are siblings (same labels/selectors).
-	DiscoverySiblings = domain.DiscoverySiblings
-)
-
-// Kubernetes Peer ID Sources
-const (
-	// PeerIDPodName uses the Kubernetes pod name as the peer ID.
-	PeerIDPodName = domain.PeerIDPodName
-
-	// PeerIDAnnotation extracts the peer ID from a pod annotation.
-	PeerIDAnnotation = domain.PeerIDAnnotation
-
-	// PeerIDLabel extracts the peer ID from a pod label.
-	PeerIDLabel = domain.PeerIDLabel
-
-	// PeerIDTemplate generates the peer ID using a template.
-	PeerIDTemplate = domain.PeerIDTemplate
-)
-
-// Kubernetes Port Discovery
-const (
-	// PortNamedPort uses a named port from the pod specification.
-	PortNamedPort = domain.PortNamedPort
-
-	// PortAnnotation extracts the port from a pod annotation.
-	PortAnnotation = domain.PortAnnotation
-
-	// PortFirstPort uses the first exposed port from the container.
-	PortFirstPort = domain.PortFirstPort
-
-	// PortEnvVar reads the port from an environment variable.
-	PortEnvVar = domain.PortEnvVar
-)
-
-// Kubernetes Networking Modes
-const (
-	// NetworkingPodIP uses the pod's IP address for communication.
-	NetworkingPodIP = domain.NetworkingPodIP
-
-	// NetworkingServiceIP uses the service IP for communication.
-	NetworkingServiceIP = domain.NetworkingServiceIP
-
-	// NetworkingNodePort uses NodePort services for communication.
-	NetworkingNodePort = domain.NetworkingNodePort
-)
 
 type ClusterPolicy = domain.ClusterPolicy
 
@@ -186,11 +88,6 @@ func DefaultMDNSConfig() *MDNSConfig {
 	return domain.DefaultMDNSConfig()
 }
 
-// DefaultKubernetesConfig returns a default Kubernetes service discovery configuration.
-// Uses in-cluster authentication and common discovery patterns.
-func DefaultKubernetesConfig() *KubernetesConfig {
-	return domain.DefaultKubernetesConfig()
-}
 
 // DefaultTransportConfig returns default network transport settings.
 // Includes reasonable timeouts and connection limits without TLS.
@@ -266,17 +163,6 @@ func (cb *ConfigBuilder) WithMDNS(service, domain, host string) *ConfigBuilder {
 	return cb
 }
 
-// WithKubernetes configures Kubernetes-based service discovery.
-//
-// Parameters:
-//   - serviceName: Name of the Kubernetes service
-//   - namespace: Kubernetes namespace (empty string uses current namespace)
-//
-// This enables automatic peer discovery in Kubernetes deployments.
-func (cb *ConfigBuilder) WithKubernetes(serviceName, namespace string) *ConfigBuilder {
-	cb.config.WithKubernetes(serviceName, namespace)
-	return cb
-}
 
 // WithStaticPeers configures a static list of cluster peers.
 //

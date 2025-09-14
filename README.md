@@ -13,7 +13,7 @@ By integrating Graft, you can add resilient, long-running process management dir
 - **Fault-Tolerant & Consistent**: Built on HashiCorp Raft for strong consistency, automatic leader election, and state replication
 - **Embeddable & Lightweight**: Designed to be integrated as a library within your existing Go applications
 - **Dynamic Workflow Execution**: Define workflows as typed Go structs with automatic type discovery, chainable at runtime
-- **Pluggable Service Discovery**: Static peer lists, mDNS, and Kubernetes discovery strategies
+- **Pluggable Service Discovery**: Static peer lists, mDNS, and external providers
 - **Resource Management**: Control workflow concurrency with global and per-type execution limits
 - **Secure Transport**: gRPC communication with TLS support and health checking
 - **Persistent State**: BadgerDB for high-performance local storage with replication
@@ -94,7 +94,7 @@ func main() {
     }
     
     // Configure discovery (optional)
-    manager.Discovery().MDNS()  // or Static(), Kubernetes()
+    manager.Discovery().MDNS("", "")  // or Static()
     
     ctx := context.Background()
     if err := manager.Start(ctx, 8080); err != nil {  // gRPC port
@@ -206,9 +206,8 @@ logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: sl
 manager := graft.New("node-1", "localhost:7000", "./data", logger)
 
 // Configure discovery before starting
-manager.Discovery().MDNS()  // mDNS discovery
-// or manager.Discovery().Static("peer1:7001", "peer2:7002")  // Static peers
-// or manager.Discovery().Kubernetes("my-service", "default") // Kubernetes
+manager.Discovery().MDNS("", "")  // mDNS discovery (defaults: _graft._tcp, local.)
+// or manager.Discovery().Static([]graft.Peer{{ID: "peer1", Address: "host", Port: 7001}})  // Static peers
 
 // Start with gRPC port
 if err := manager.Start(context.Background(), 8080); err != nil {

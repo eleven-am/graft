@@ -200,15 +200,6 @@ func TestConfig_BuilderMethods_EdgeCases(t *testing.T) {
 			expectPanic: false,
 		},
 		{
-			name: "with_kubernetes_nil_values",
-			buildConfig: func() *Config {
-
-				config := NewConfigFromSimple("node", "addr", "dir", slog.Default())
-				return config.WithKubernetes("", "")
-			},
-			expectPanic: false,
-		},
-		{
 			name: "with_static_peers_empty_slice",
 			buildConfig: func() *Config {
 				return NewConfigFromSimple("node", "addr", "dir", slog.Default()).

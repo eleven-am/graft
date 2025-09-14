@@ -39,33 +39,6 @@ func DefaultMDNSConfig() *MDNSConfig {
 	}
 }
 
-func DefaultKubernetesConfig() *KubernetesConfig {
-	return &KubernetesConfig{
-		AuthMethod:   AuthInCluster,
-		Namespace:    "default",
-		RequireReady: true,
-		Discovery: DiscoveryStrategy{
-			Method: DiscoveryService,
-		},
-		PeerID: PeerIDStrategy{
-			Source: PeerIDPodName,
-		},
-		Port: PortStrategy{
-			Source:      PortFirstPort,
-			DefaultPort: 7000,
-		},
-		NetworkingMode: NetworkingPodIP,
-		WatchInterval:  30 * time.Second,
-		RetryStrategy: RetryStrategy{
-			MaxRetries:    3,
-			InitialDelay:  time.Second,
-			MaxDelay:      30 * time.Second,
-			BackoffFactor: 2.0,
-		},
-		BufferSize: 100,
-	}
-}
-
 func DefaultTransportConfig() TransportConfig {
 	return TransportConfig{
 		EnableTLS:         false,
@@ -261,22 +234,6 @@ func (c *Config) WithMDNS(service, domain, host string) *Config {
 	return c
 }
 
-func (c *Config) WithKubernetes(serviceName, namespace string) *Config {
-	k8sConfig := DefaultKubernetesConfig()
-	if serviceName != "" {
-		k8sConfig.Discovery.ServiceName = serviceName
-	}
-	if namespace != "" {
-		k8sConfig.Namespace = namespace
-	}
-
-	c.Discovery = append(c.Discovery, DiscoveryConfig{
-		Type:       DiscoveryKubernetes,
-		Kubernetes: k8sConfig,
-	})
-	return c
-}
-
 func (c *Config) WithStaticPeers(peers ...StaticPeer) *Config {
 	c.Discovery = append(c.Discovery, DiscoveryConfig{
 		Type:   DiscoveryStatic,
@@ -396,13 +353,6 @@ func validateDiscoveryConfig(config *DiscoveryConfig) error {
 		}
 		if config.MDNS.Service == "" {
 			return NewConfigError("mdns.service", ErrInvalidInput)
-		}
-	case DiscoveryKubernetes:
-		if config.Kubernetes == nil {
-			return NewConfigError("kubernetes", ErrInvalidInput)
-		}
-		if config.Kubernetes.Namespace == "" {
-			return NewConfigError("kubernetes.namespace", ErrInvalidInput)
 		}
 	case DiscoveryStatic:
 		if len(config.Static) == 0 {

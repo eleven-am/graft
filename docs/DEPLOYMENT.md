@@ -361,7 +361,7 @@ data:
     service_name: "graft-cluster"
     
     discovery:
-      strategy: "kubernetes"
+      # discovery handled via external provider in application code
       service_name: "graft"
     
     transport:
@@ -622,7 +622,7 @@ export GRAFT_SERVICE_NAME="graft-cluster"
 export GRAFT_LOG_LEVEL="info"
 
 # Discovery configuration
-export GRAFT_DISCOVERY_STRATEGY="kubernetes"
+# Configure discovery via your application (e.g., external k8s provider)
 export GRAFT_DISCOVERY_SERVICE_NAME="graft"
 
 # Transport configuration

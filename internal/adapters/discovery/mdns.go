@@ -13,34 +13,43 @@ import (
 	"github.com/hashicorp/mdns"
 )
 
-type MDNSAdapter struct {
-	mu       sync.RWMutex
-	logger   *slog.Logger
-	server   *mdns.Server
-	peers    map[string]ports.Peer
-	ctx      context.Context
-	cancel   context.CancelFunc
-	nodeInfo ports.NodeInfo
-	service  string
-	domain   string
-	host     string
+type MDNSProvider struct {
+    mu       sync.RWMutex
+    logger   *slog.Logger
+    server   *mdns.Server
+    peers    map[string]ports.Peer
+    ctx      context.Context
+    cancel   context.CancelFunc
+    nodeInfo ports.NodeInfo
+    service  string
+    domain   string
+    host     string
+    events   chan ports.Event
 }
 
-func NewMDNSAdapter(service, domain, host string, logger *slog.Logger) *MDNSAdapter {
+func NewMDNSProvider(service, domain, host string, logger *slog.Logger) *MDNSProvider {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
-	return &MDNSAdapter{
-		logger:  logger.With("component", "discovery", "adapter", "mdns"),
-		peers:   make(map[string]ports.Peer),
-		service: service,
-		domain:  domain,
-		host:    host,
+	if service == "" {
+		service = "_graft._tcp"
 	}
+	if domain == "" {
+		domain = "local."
+	}
+
+    return &MDNSProvider{
+        logger:  logger.With("component", "discovery", "provider", "mdns"),
+        peers:   make(map[string]ports.Peer),
+        service: service,
+        domain:  domain,
+        host:    host,
+        events:  make(chan ports.Event, 100),
+    }
 }
 
-func (m *MDNSAdapter) Start(ctx context.Context) error {
+func (m *MDNSProvider) Start(ctx context.Context, announce ports.NodeInfo) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -49,15 +58,20 @@ func (m *MDNSAdapter) Start(ctx context.Context) error {
 	}
 
 	m.ctx, m.cancel = context.WithCancel(ctx)
-	m.logger.Debug("starting mDNS discovery adapter")
+	m.nodeInfo = announce
+	m.logger.Debug("starting mDNS discovery provider")
+
+	if err := m.announce(); err != nil {
+		return err
+	}
 
 	go m.discoveryLoop()
 
-	m.logger.Debug("mDNS discovery adapter started")
+	m.logger.Debug("mDNS discovery provider started")
 	return nil
 }
 
-func (m *MDNSAdapter) Stop() error {
+func (m *MDNSProvider) Stop() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -65,23 +79,24 @@ func (m *MDNSAdapter) Stop() error {
 		return domain.NewDiscoveryError("mdns", "stop", domain.ErrNotStarted)
 	}
 
-	m.logger.Debug("stopping mDNS discovery adapter")
+	m.logger.Debug("stopping mDNS discovery provider")
 
 	if m.server != nil {
 		m.server.Shutdown()
 		m.server = nil
 	}
 
-	m.cancel()
-	m.ctx = nil
-	m.cancel = nil
-	m.peers = make(map[string]ports.Peer)
+    m.cancel()
+    m.ctx = nil
+    m.cancel = nil
+    m.peers = make(map[string]ports.Peer)
 
-	m.logger.Debug("mDNS discovery adapter stopped")
-	return nil
+    m.logger.Debug("mDNS discovery provider stopped")
+    close(m.events)
+    return nil
 }
 
-func (m *MDNSAdapter) GetPeers() []ports.Peer {
+func (m *MDNSProvider) Snapshot() []ports.Peer {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -93,32 +108,32 @@ func (m *MDNSAdapter) GetPeers() []ports.Peer {
 	return peers
 }
 
-func (m *MDNSAdapter) Announce(nodeInfo ports.NodeInfo) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+func (m *MDNSProvider) Events() <-chan ports.Event {
+    return m.events
+}
 
-	m.nodeInfo = nodeInfo
+func (m *MDNSProvider) Name() string {
+	return "mdns"
+}
+
+func (m *MDNSProvider) announce() error {
 	m.logger.Debug("announcing service via mDNS",
-		"id", nodeInfo.ID,
-		"address", nodeInfo.Address,
-		"port", nodeInfo.Port)
-
-	if m.ctx == nil {
-		return domain.NewDiscoveryError("mdns", "announce", domain.ErrNotStarted)
-	}
+		"id", m.nodeInfo.ID,
+		"address", m.nodeInfo.Address,
+		"port", m.nodeInfo.Port)
 
 	if m.server != nil {
 		m.server.Shutdown()
 	}
 
 	service, err := mdns.NewMDNSService(
-		nodeInfo.ID,
-		fmt.Sprintf("_%s._tcp", m.service),
+		m.nodeInfo.ID,
+		m.service,
 		m.domain,
 		m.host,
-		nodeInfo.Port,
-		[]net.IP{net.ParseIP(nodeInfo.Address)},
-		[]string{fmt.Sprintf("id=%s", nodeInfo.ID)},
+		m.nodeInfo.Port,
+		[]net.IP{net.ParseIP(m.nodeInfo.Address)},
+		[]string{fmt.Sprintf("id=%s", m.nodeInfo.ID)},
 	)
 	if err != nil {
 		return domain.NewDiscoveryError("mdns", "service_create", err)
@@ -130,16 +145,16 @@ func (m *MDNSAdapter) Announce(nodeInfo ports.NodeInfo) error {
 	}
 
 	m.server = server
-	m.logger.Debug("mDNS service announced successfully", "id", nodeInfo.ID)
+	m.logger.Debug("mDNS service announced successfully", "id", m.nodeInfo.ID)
 
 	return nil
 }
 
-func (m *MDNSAdapter) discoveryLoop() {
-	ticker := time.NewTicker(10 * time.Second)
-	defer ticker.Stop()
+func (m *MDNSProvider) discoveryLoop() {
+    ticker := time.NewTicker(10 * time.Second)
+    defer ticker.Stop()
 
-	m.performDiscovery()
+    m.performDiscovery()
 
 	for {
 		m.mu.RLock()
@@ -159,61 +174,95 @@ func (m *MDNSAdapter) discoveryLoop() {
 	}
 }
 
-func (m *MDNSAdapter) performDiscovery() {
-	entries := make(chan *mdns.ServiceEntry, 100)
-	defer close(entries)
+func (m *MDNSProvider) performDiscovery() {
+    entries := make(chan *mdns.ServiceEntry, 100)
+    defer close(entries)
 
-	go func() {
-		for entry := range entries {
-			m.processMDNSEntry(entry)
-		}
-	}()
+    // Track which peers are seen in this sweep for removal detection
+    seen := make(map[string]struct{})
+
+    go func() {
+        for entry := range entries {
+            if id, peer, changed := m.processMDNSEntry(entry); id != "" {
+                seen[id] = struct{}{}
+                if changed && peer != nil {
+                    select {
+                    case m.events <- ports.Event{Type: ports.PeerUpdated, Peer: *peer}:
+                    default:
+                        // drop if buffer full
+                    }
+                }
+            }
+        }
+    }()
 
 	params := &mdns.QueryParam{
-		Service: "_graft._tcp",
-		Domain:  "local",
+		Service: m.service,
+		Domain:  m.domain,
 		Timeout: 5 * time.Second,
 		Entries: entries,
 	}
 
-	if err := mdns.Query(params); err != nil {
-		m.logger.Error("mDNS query failed", "error", err)
-		return
-	}
+    if err := mdns.Query(params); err != nil {
+        m.logger.Error("mDNS query failed", "error", err)
+        return
+    }
 
-	time.Sleep(100 * time.Millisecond)
+    time.Sleep(100 * time.Millisecond)
+
+    // Remove peers not seen in this sweep
+    m.mu.Lock()
+    for id, p := range m.peers {
+        if id == m.nodeInfo.ID {
+            continue
+        }
+        if _, ok := seen[id]; !ok {
+            delete(m.peers, id)
+            select {
+            case m.events <- ports.Event{Type: ports.PeerRemoved, Peer: p}:
+            default:
+            }
+        }
+    }
+    m.mu.Unlock()
 }
 
-func (m *MDNSAdapter) processMDNSEntry(entry *mdns.ServiceEntry) {
-	if len(entry.AddrV4) == 0 {
-		return
-	}
+func (m *MDNSProvider) processMDNSEntry(entry *mdns.ServiceEntry) (string, *ports.Peer, bool) {
+    if len(entry.AddrV4) == 0 {
+        return "", nil, false
+    }
 
-	peerID := m.extractPeerID(entry)
-	if peerID == "" {
-		peerID = fmt.Sprintf("%s:%d", entry.AddrV4.String(), entry.Port)
-	}
+    peerID := m.extractPeerID(entry)
+    if peerID == "" {
+        peerID = fmt.Sprintf("%s:%d", entry.AddrV4.String(), entry.Port)
+    }
 
-	if peerID == m.nodeInfo.ID {
-		return
-	}
+    if peerID == m.nodeInfo.ID {
+        return "", nil, false
+    }
 
-	peer := ports.Peer{
-		ID:      peerID,
-		Address: entry.AddrV4.String(),
-		Port:    entry.Port,
-		Metadata: map[string]string{
-			"host": entry.Host,
-			"name": entry.Name,
-		},
-	}
+    peer := ports.Peer{
+        ID:      peerID,
+        Address: entry.AddrV4.String(),
+        Port:    entry.Port,
+        Metadata: map[string]string{
+            "host": entry.Host,
+            "name": entry.Name,
+        },
+    }
 
-	m.mu.Lock()
-	m.peers[peerID] = peer
-	m.mu.Unlock()
+    m.mu.Lock()
+    prev, existed := m.peers[peerID]
+    m.peers[peerID] = peer
+    m.mu.Unlock()
+
+    if !existed || prev.Address != peer.Address || prev.Port != peer.Port {
+        return peerID, &peer, true
+    }
+    return peerID, &peer, false
 }
 
-func (m *MDNSAdapter) extractPeerID(entry *mdns.ServiceEntry) string {
+func (m *MDNSProvider) extractPeerID(entry *mdns.ServiceEntry) string {
 	for _, txt := range entry.InfoFields {
 		if len(txt) > 3 && txt[:3] == "id=" {
 			return txt[3:]

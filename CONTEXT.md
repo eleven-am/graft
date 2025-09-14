@@ -309,22 +309,6 @@ config := &domain.Config{
 manager := graft.NewWithConfig(config)
 ```
 
-#### Kubernetes (Production)
-```go
-config := &domain.Config{
-    // ... basic config ...
-    Discovery: []domain.DiscoveryConfig{
-        {
-            Type: domain.DiscoveryKubernetes,
-            Kubernetes: &domain.KubernetesConfig{
-                ServiceName: "graft-cluster",
-                Namespace:   "default",
-            },
-        },
-    },
-}
-```
-
 #### Static Peers
 ```go
 config := &domain.Config{

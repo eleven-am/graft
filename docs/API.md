@@ -48,7 +48,7 @@ func main() {
     }
     
     // Configure discovery before starting
-    manager.Discovery().MDNS()  // or Static(), Kubernetes()
+    manager.Discovery().MDNS("", "")  // or Static()
     
     // Start the manager with gRPC port
     if err := manager.Start(context.Background(), 8080); err != nil {
@@ -145,7 +145,7 @@ type Manager interface {
 **Discovery() DiscoveryManager**
 - Returns the discovery manager for configuring service discovery
 - Must be called before Start() to configure discovery
-- Supports MDNS, Static, and Kubernetes discovery strategies
+- Supports built-in MDNS and Static; external providers via Add(provider)
 
 **Start(ctx context.Context, grpcPort int) error**
 - Starts the manager and begins listening for gRPC connections
@@ -333,20 +333,20 @@ manager := graft.New(nodeID, bindAddr, dataDir, logger)
 Configure service discovery before starting the manager:
 
 ```go
-// MDNS Discovery (automatic local discovery)
-manager.Discovery().MDNS()
+// mDNS Discovery (automatic local discovery)
+manager.Discovery().MDNS("", "")
 
 // Static Discovery (predefined peer list)
-manager.Discovery().Static("peer1:7001", "peer2:7002", "peer3:7003")
-
-// Kubernetes Discovery (service-based discovery)
-manager.Discovery().Kubernetes("my-service", "default")  // service name, namespace
+manager.Discovery().Static([]graft.Peer{
+    {ID: "peer1", Address: "host1", Port: 7001},
+    {ID: "peer2", Address: "host2", Port: 7002},
+})
 ```
 
 **Discovery Strategies:**
-- **MDNS**: Automatically discovers peers on the local network using multicast DNS
-- **Static**: Uses a predefined list of peer addresses
-- **Kubernetes**: Discovers peers through Kubernetes service endpoints
+- **MDNS**: Automatically discovers peers on the local network using multicast DNS (built-in)
+- **Static**: Uses a predefined list of peer addresses (built-in)
+- **External providers**: Implement the Provider interface and call `manager.Discovery().Add(provider)`
 
 ### Resource Configuration
 

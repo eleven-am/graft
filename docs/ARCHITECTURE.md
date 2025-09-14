@@ -128,15 +128,14 @@ Graft is a distributed workflow orchestration framework built on modern distribu
 **Purpose**: Enables automatic peer discovery and cluster formation.
 
 **Key Components**:
-- `discovery.MDNSDiscovery`: Multicast DNS discovery implementation
-- `discovery.KubernetesDiscovery`: Kubernetes service discovery implementation
-- Array-based configuration supporting multiple simultaneous discovery methods
+- `discovery.MDNS`: Multicast DNS discovery provider (built-in)
+- `discovery.Static`: Static peers provider (built-in)
+- External discovery providers (e.g., Kubernetes) integrated out-of-tree
 
 **Strategies**:
 - **mDNS**: Local network multicast discovery for development and local clusters
-- **Kubernetes**: Service/endpoint discovery for containerized deployments
-- **Multi-Discovery**: Simultaneous use of multiple discovery methods through array configuration
-- **Hybrid**: Intelligent fallback between discovery methods
+- **Static**: Predefined peer list for controlled environments
+- **External**: Add custom providers via `manager.Discovery().Add(provider)`
 
 ### 7. Resource Management (`internal/adapters/resource_manager/`)
 
@@ -407,9 +406,7 @@ discovery:
   - type: "mdns"
     service_name: "_graft._tcp"
     domain: "local."
-  - type: "kubernetes"
-    service_name: "graft-service"
-    namespace: "production"
+  # For Kubernetes or other environments, use an external provider in code
 
 # Transport configuration
 transport:
@@ -444,7 +441,6 @@ orchestrator:
 ```go
 config := graft.NewConfigBuilder("node-1", "0.0.0.0:7000", "/data").
     WithMDNS("_graft._tcp", "local.", "").
-    WithKubernetes("graft-service", "production").
     WithTLS("/certs/tls.crt", "/certs/tls.key", "/certs/ca.crt").
     WithResourceLimits(200, 20, map[string]int{
         "ml-training": 2,
@@ -491,7 +487,6 @@ manager.Discovery().MDNS()
 ```go
 // Production cluster configuration
 config := graft.NewConfigBuilder("prod-node", "0.0.0.0:7000", "/var/lib/graft").
-    WithKubernetes("graft-cluster", "production").
     WithTLS("/etc/certs/tls.crt", "/etc/certs/tls.key", "/etc/certs/ca.crt").
     WithResourceLimits(200, 20, map[string]int{
         "data-processor": 50,
@@ -568,16 +563,17 @@ Graft automatically discovers the Execute method signature via reflection, extra
 
 This approach eliminates boilerplate while maintaining type safety and providing runtime metadata access.
 
-### Custom Discovery Strategies
+### Custom Discovery Providers
 
-Implement the `DiscoveryPort` interface:
+Implement the Provider interface and add it via `manager.Discovery().Add(provider)`:
 
 ```go
-type DiscoveryPort interface {
-    Start(ctx context.Context) error
+type Provider interface {
+    Start(ctx context.Context, announce NodeInfo) error
     Stop() error
-    GetPeers() []PeerInfo
-    Subscribe(handler PeerEventHandler) error
+    Snapshot() []Peer
+    Events() <-chan Event // optional, can return nil
+    Name() string
 }
 ```
 

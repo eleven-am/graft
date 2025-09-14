@@ -6,7 +6,7 @@
 //   - Distributed execution across cluster nodes
 //   - State persistence and recovery
 //   - Event-driven architecture with pub/sub capabilities
-//   - Service discovery (mDNS, Kubernetes, static)
+//   - Service discovery (mDNS, static; external providers supported)
 //   - Built-in clustering with Raft consensus
 //
 // Basic usage:

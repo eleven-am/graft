@@ -36,7 +36,7 @@ type Manager struct {
 	queue           ports.QueuePort
 	nodeRegistry    ports.NodeRegistryPort
 	transport       ports.TransportPort
-	discovery       ports.DiscoveryManager
+	discovery       *discovery.Manager
 	raftAdapter     ports.RaftNode
 	eventManager    ports.EventManager
 	loadBalancer    ports.LoadBalancer
@@ -266,24 +266,16 @@ func NewWithConfig(config *domain.Config) *Manager {
 	return manager
 }
 
-func createDiscoveryManager(config *domain.Config, logger *slog.Logger) ports.DiscoveryManager {
+func createDiscoveryManager(config *domain.Config, logger *slog.Logger) *discovery.Manager {
 	manager := discovery.NewManager(config.NodeID, logger)
 
 	for _, discoveryConfig := range config.Discovery {
 		switch discoveryConfig.Type {
 		case domain.DiscoveryMDNS:
 			if discoveryConfig.MDNS != nil {
-				manager.MDNS(discoveryConfig.MDNS.Service, discoveryConfig.MDNS.Domain, discoveryConfig.MDNS.Host)
+				manager.MDNS(discoveryConfig.MDNS.Service, discoveryConfig.MDNS.Domain)
 			} else {
-				manager.MDNS()
-			}
-		case domain.DiscoveryKubernetes:
-			if discoveryConfig.Kubernetes != nil {
-				serviceName := discoveryConfig.Kubernetes.Discovery.ServiceName
-				namespace := discoveryConfig.Kubernetes.Namespace
-				manager.Kubernetes(serviceName, namespace)
-			} else {
-				manager.Kubernetes()
+				manager.MDNS("", "")
 			}
 		case domain.DiscoveryStatic:
 			if len(discoveryConfig.Static) > 0 {
@@ -304,31 +296,17 @@ func createDiscoveryManager(config *domain.Config, logger *slog.Logger) ports.Di
 	return manager
 }
 
-func (m *Manager) Discovery() ports.DiscoveryManager {
+func (m *Manager) Discovery() *discovery.Manager {
 	return m.discovery
 }
 
-func (m *Manager) MDNS(args ...string) *Manager {
-	if len(args) == 0 {
-		m.discovery.MDNS()
-	} else if len(args) == 1 {
-		m.discovery.MDNS(args[0])
-	} else if len(args) == 2 {
-		m.discovery.MDNS(args[0], args[1])
-	} else {
-		m.discovery.MDNS(args[0], args[1], args[2])
-	}
+func (m *Manager) MDNS(service, domain string) *Manager {
+	m.discovery.MDNS(service, domain)
 	return m
 }
 
-func (m *Manager) Kubernetes(args ...string) *Manager {
-	if len(args) == 0 {
-		m.discovery.Kubernetes()
-	} else if len(args) == 1 {
-		m.discovery.Kubernetes(args[0])
-	} else {
-		m.discovery.Kubernetes(args[0], args[1])
-	}
+func (m *Manager) AddProvider(provider ports.Provider) *Manager {
+	m.discovery.Add(provider)
 	return m
 }
 
