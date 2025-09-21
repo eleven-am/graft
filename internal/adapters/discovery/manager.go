@@ -1,12 +1,12 @@
 package discovery
 
 import (
-    "context"
-    "sync"
-    "time"
+	"context"
+	"sync"
+	"time"
 
-    "github.com/eleven-am/graft/internal/ports"
-    "log/slog"
+	"github.com/eleven-am/graft/internal/ports"
+	"log/slog"
 )
 
 type Manager struct {
@@ -85,7 +85,6 @@ func (m *Manager) Start(ctx context.Context, address string, port int) error {
 
 	go m.aggregateEvents()
 
-	// Periodic snapshot refresh to pick up providers without Events()
 	go m.snapshotLoop()
 
 	m.updateSnapshots()
@@ -148,22 +147,22 @@ func (m *Manager) aggregateEvents() {
 }
 
 func (m *Manager) snapshotLoop() {
-    ticker := time.NewTicker(10 * time.Second)
-    defer ticker.Stop()
-    for {
-        m.mu.RLock()
-        ctx := m.ctx
-        m.mu.RUnlock()
-        if ctx == nil {
-            return
-        }
-        select {
-        case <-ctx.Done():
-            return
-        case <-ticker.C:
-            m.updateSnapshots()
-        }
-    }
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		m.mu.RLock()
+		ctx := m.ctx
+		m.mu.RUnlock()
+		if ctx == nil {
+			return
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.updateSnapshots()
+		}
+	}
 }
 
 func (m *Manager) handleEvent(event ports.Event) {

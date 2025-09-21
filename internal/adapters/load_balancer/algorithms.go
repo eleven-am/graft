@@ -478,7 +478,7 @@ func (as *AdaptiveStrategy) trimHistoryToWindow(history *nodeHistory, cutoff tim
 	}
 
 	if start > 0 {
-		// Ensure all slices have the same length to avoid race conditions
+
 		minLen := len(history.timestamps)
 		if len(history.responseTimeHistory) < minLen {
 			minLen = len(history.responseTimeHistory)
@@ -487,14 +487,13 @@ func (as *AdaptiveStrategy) trimHistoryToWindow(history *nodeHistory, cutoff tim
 			minLen = len(history.errorRateHistory)
 		}
 
-		// Adjust start if it's beyond the minimum length
 		if start >= minLen {
-			// Clear all if start is beyond bounds
+
 			history.responseTimeHistory = history.responseTimeHistory[:0]
 			history.errorRateHistory = history.errorRateHistory[:0]
 			history.timestamps = history.timestamps[:0]
 		} else {
-			// Safely slice each array within its own bounds
+
 			if start < len(history.responseTimeHistory) {
 				endIdx := minLen
 				if endIdx > len(history.responseTimeHistory) {

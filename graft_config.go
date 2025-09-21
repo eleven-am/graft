@@ -21,7 +21,6 @@ type DiscoveryConfig = domain.DiscoveryConfig
 // MDNSConfig configures multicast DNS-based service discovery for local network environments.
 type MDNSConfig = domain.MDNSConfig
 
-
 // StaticPeer represents a statically configured peer in the cluster.
 type StaticPeer = domain.StaticPeer
 
@@ -53,17 +52,14 @@ type OrchestratorConfig = domain.OrchestratorConfig
 
 // Strategy and Method Types
 
-
 // Service Discovery Constants
 const (
 	// MDNS enables multicast DNS-based service discovery for local networks.
 	MDNS = domain.DiscoveryMDNS
 
-
 	// Static uses a predefined list of peers for service discovery.
 	Static = domain.DiscoveryStatic
 )
-
 
 type ClusterPolicy = domain.ClusterPolicy
 
@@ -87,7 +83,6 @@ func DefaultConfig() *Config {
 func DefaultMDNSConfig() *MDNSConfig {
 	return domain.DefaultMDNSConfig()
 }
-
 
 // DefaultTransportConfig returns default network transport settings.
 // Includes reasonable timeouts and connection limits without TLS.
@@ -162,7 +157,6 @@ func (cb *ConfigBuilder) WithMDNS(service, domain, host string) *ConfigBuilder {
 	cb.config.WithMDNS(service, domain, host)
 	return cb
 }
-
 
 // WithStaticPeers configures a static list of cluster peers.
 //

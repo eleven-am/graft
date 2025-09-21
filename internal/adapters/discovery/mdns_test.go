@@ -107,7 +107,6 @@ func TestMDNSProvider_DefaultService(t *testing.T) {
 	}
 	defer provider.Stop()
 
-	// Should use default values when empty strings are provided
 	if provider.service != "_graft._tcp" {
 		t.Errorf("Expected default service '_graft._tcp', got '%s'", provider.service)
 	}

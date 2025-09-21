@@ -203,7 +203,7 @@ func NewWithConfig(config *domain.Config) *Manager {
 		AvailabilityWindow: config.LoadBalancer.AvailabilityWindow,
 	}
 	loadBalancerManager := prov.newLoadBalancer(eventManager, config.NodeID, clusterManager, loadBalancerConfig, logger)
-	// Wire transport and peer provider into load balancer if supported
+
 	if lb, ok := loadBalancerManager.(interface {
 		SetTransport(ports.TransportPort)
 		SetPeerAddrProvider(func() []string)

@@ -265,8 +265,6 @@ func TestLoadBalancer_CorruptedDataHandling(t *testing.T) {
 	manager := NewManager(events, "corrupt-node", nil, &Config{FailurePolicy: "fail-open"}, nil)
 	_ = manager
 
-	// In RPC/in-memory mode, cluster load is maintained internally; no storage-backed view to fetch.
-
 	shouldExecute, err := manager.ShouldExecuteNode("corrupt-node", "test-workflow", "test-node")
 	assert.NoError(t, err, "Should handle corrupted data gracefully")
 	assert.True(t, shouldExecute, "Should default to execute on corrupted data")

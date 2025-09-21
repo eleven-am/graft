@@ -49,11 +49,9 @@ func TestLoadBalancer_ShouldExecuteNode(t *testing.T) {
 
 	manager := NewManager(events, "node-1", nil, config, nil)
 
-	// Seed in-memory metrics via ReceiveLoadUpdate (simulating peers)
 	_ = manager.ReceiveLoadUpdate(ports.LoadUpdate{NodeID: "node-2", ActiveWorkflows: 1, TotalWeight: 2, RecentLatencyMs: 30, RecentErrorRate: 0.005, Capacity: 10, Timestamp: time.Now().Unix()})
 	_ = manager.ReceiveLoadUpdate(ports.LoadUpdate{NodeID: "node-3", ActiveWorkflows: 4, TotalWeight: 8, RecentLatencyMs: 100, RecentErrorRate: 0.02, Capacity: 10, Timestamp: time.Now().Unix()})
 
-	// Decision should be computed without storage
 	_, err := manager.ShouldExecuteNode("node-1", "workflow-123", "test-node")
 	if err != nil {
 		t.Fatalf("Failed to check should execute: %v", err)

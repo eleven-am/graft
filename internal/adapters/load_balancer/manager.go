@@ -93,14 +93,13 @@ func NewManager(events ports.EventManager, nodeID string, clusterManager ports.C
 		scoreCache:     make(map[string]scoreCacheEntry),
 		scoreCacheTTL:  config.ScoreCacheTTL,
 		nodeMetrics:    make(map[string]NodeMetrics),
-		// reasonable defaults for telemetry
+
 		publishInterval:    2 * time.Second,
 		publishDebounce:    250 * time.Millisecond,
 		availabilityWindow: 30 * time.Second,
 		publishCh:          make(chan struct{}, 1),
 	}
 
-	// Override telemetry defaults from config if provided
 	if config.PublishInterval > 0 {
 		manager.publishInterval = config.PublishInterval
 	}
@@ -172,7 +171,6 @@ func (m *Manager) Start(ctx context.Context) error {
 		go m.monitorClusterHealth()
 	}
 
-	// start telemetry publisher
 	go m.publisherLoop()
 
 	return nil
@@ -387,7 +385,6 @@ func (m *Manager) getInMemoryClusterLoad() map[string]*ports.NodeLoad {
 
 	clusterLoad := make(map[string]*ports.NodeLoad)
 
-	// Add current node data
 	clusterLoad[m.nodeID] = &ports.NodeLoad{
 		NodeID:          m.nodeID,
 		TotalWeight:     m.totalWeight,
@@ -397,27 +394,23 @@ func (m *Manager) getInMemoryClusterLoad() map[string]*ports.NodeLoad {
 		LastUpdated:     time.Now().Unix(),
 	}
 
-	// Copy execution units for current node
 	for k, v := range m.executionUnits {
 		clusterLoad[m.nodeID].ExecutionUnits[k] = v
 	}
 
-	// Add received node metrics from other nodes
 	now := time.Now()
 
-	// Make a copy of nodeMetrics to avoid race conditions during iteration
 	nodeMetricsCopy := make(map[string]NodeMetrics)
 	for nodeID, metrics := range m.nodeMetrics {
 		nodeMetricsCopy[nodeID] = metrics
 	}
 
 	for nodeID, metrics := range nodeMetricsCopy {
-		// Skip current node (already added above)
+
 		if nodeID == m.nodeID {
 			continue
 		}
 
-		// Apply freshness filter - ignore stale data (older than configured window)
 		window := m.availabilityWindow
 		if window <= 0 {
 			window = 30 * time.Second
@@ -428,8 +421,8 @@ func (m *Manager) getInMemoryClusterLoad() map[string]*ports.NodeLoad {
 
 		clusterLoad[nodeID] = &ports.NodeLoad{
 			NodeID:          nodeID,
-			TotalWeight:     float64(metrics.ActiveWorkflows), // Use active workflows as proxy for weight
-			ExecutionUnits:  make(map[string]float64),         // Remote nodes don't share execution unit details
+			TotalWeight:     float64(metrics.ActiveWorkflows),
+			ExecutionUnits:  make(map[string]float64),
 			RecentLatencyMs: metrics.ResponseTime,
 			RecentErrorRate: metrics.ErrorRate,
 			LastUpdated:     metrics.LastUpdated.Unix(),
@@ -447,23 +440,21 @@ func (m *Manager) ReceiveLoadUpdate(update ports.LoadUpdate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Update or create node metrics entry
 	if m.nodeMetrics == nil {
 		m.nodeMetrics = make(map[string]NodeMetrics)
 	}
 
-	// Convert LoadUpdate to NodeMetrics and store (use local receipt time for freshness)
 	m.nodeMetrics[update.NodeID] = NodeMetrics{
 		NodeID:          update.NodeID,
 		ResponseTime:    update.RecentLatencyMs,
-		CpuUsage:        0, // Not provided in LoadUpdate
-		MemoryUsage:     0, // Not provided in LoadUpdate
+		CpuUsage:        0,
+		MemoryUsage:     0,
 		ConnectionCount: update.ActiveWorkflows,
 		ErrorRate:       update.RecentErrorRate,
 		Capacity:        update.Capacity,
 		ActiveWorkflows: update.ActiveWorkflows,
 		LastUpdated:     time.Now(),
-		Available:       true, // Assume available if we received an update
+		Available:       true,
 	}
 
 	m.logger.Debug("received load update",
@@ -474,7 +465,6 @@ func (m *Manager) ReceiveLoadUpdate(update ports.LoadUpdate) error {
 		"error_rate", update.RecentErrorRate,
 		"capacity", update.Capacity)
 
-	// Clean up stale metrics periodically
 	m.cleanupStaleNodeMetrics()
 
 	return nil
@@ -488,7 +478,7 @@ func (m *Manager) cleanupStaleNodeMetrics() {
 		window = 30 * time.Second
 	}
 	for nodeID, metrics := range m.nodeMetrics {
-		// Remove entries older than window
+
 		if now.Sub(metrics.LastUpdated) > window {
 			delete(m.nodeMetrics, nodeID)
 			m.logger.Debug("removed stale node metrics", "node_id", nodeID)
@@ -519,7 +509,7 @@ func (m *Manager) requestPublish() {
 }
 
 func (m *Manager) publisherLoop() {
-	// Periodic ticker
+
 	interval := m.publishInterval
 	if interval <= 0 {
 		interval = 2 * time.Second
@@ -534,7 +524,7 @@ func (m *Manager) publisherLoop() {
 		case <-ticker.C:
 			m.publishLocalMetrics()
 		case <-m.publishCh:
-			// debounce short bursts
+
 			debounce := m.publishDebounce
 			if debounce <= 0 {
 				debounce = 250 * time.Millisecond
@@ -564,7 +554,6 @@ func (m *Manager) publishLocalMetrics() {
 		return
 	}
 
-	// publish to peers with a short timeout
 	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 	defer cancel()
 	for _, addr := range provider() {
