@@ -59,6 +59,8 @@ type LoadUpdate struct {
 	TotalWeight     float64
 	RecentLatencyMs float64
 	RecentErrorRate float64
-	Capacity        float64
-	Timestamp       int64
+	// Pressure is a normalized local load indicator (cpu+mem in [0,2]).
+	// Transport currently sends this via the protobuf LoadUpdate.capacity field.
+	Pressure  float64
+	Timestamp int64
 }

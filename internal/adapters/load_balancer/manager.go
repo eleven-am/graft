@@ -5,6 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"os"
+	"runtime"
+	rmetrics "runtime/metrics"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -12,16 +17,24 @@ import (
 	"github.com/eleven-am/graft/internal/ports"
 )
 
+type NodeMetrics struct {
+	NodeID          string
+	ResponseTime    float64
+	CpuUsage        float64
+	LastUpdated     time.Time
+	MemoryUsage     float64
+	ConnectionCount int
+	ErrorRate       float64
+	Pressure        float64
+	ActiveWorkflows int
+	Available       bool
+}
+
 type Config struct {
-	ScoreCacheTTL      time.Duration                     `json:"score_cache_ttl"`
-	FailurePolicy      string                            `json:"failure_policy"` // "fail-open" or "fail-closed"
-	DefaultCapacity    float64                           `json:"default_capacity"`
-	Algorithm          domain.LoadBalancingAlgorithm     `json:"algorithm"`
-	WeightedConfig     domain.WeightedRoundRobinConfig   `json:"weighted_config"`
-	AdaptiveConfig     domain.AdaptiveLoadBalancerConfig `json:"adaptive_config"`
-	PublishInterval    time.Duration                     `json:"publish_interval"`
-	PublishDebounce    time.Duration                     `json:"publish_debounce"`
-	AvailabilityWindow time.Duration                     `json:"availability_window"`
+	FailurePolicy      string        `json:"failure_policy"` // "fail-open" or "fail-closed"
+	PublishInterval    time.Duration `json:"publish_interval"`
+	PublishDebounce    time.Duration `json:"publish_debounce"`
+	AvailabilityWindow time.Duration `json:"availability_window"`
 }
 
 type Manager struct {
@@ -41,13 +54,7 @@ type Manager struct {
 	totalWeight     float64
 	recentLatencyMs float64
 	errorWindow     *RollingWindow
-	nodeCapacities  map[string]float64
-
-	scoreCache    map[string]scoreCacheEntry
-	scoreCacheTTL time.Duration
-
-	// Advanced load balancing
-	strategy    LoadBalancingStrategy
+	// Minimal mode: no strategy/score caches
 	nodeMetrics map[string]NodeMetrics
 
 	// RPC telemetry publishing
@@ -57,12 +64,16 @@ type Manager struct {
 	publishInterval    time.Duration
 	availabilityWindow time.Duration
 	publishCh          chan struct{}
+
+	// Local pressure sampling (CPU and memory)
+	lastCPUSampleSeconds float64
+	lastCPUSampleTime    time.Time
+
+	// test hook: when set, used to compute local pressure instead of sampling
+	pressureFn func() float64
 }
 
-type scoreCacheEntry struct {
-	score     float64
-	timestamp int64
-}
+// score caches removed in minimal mode
 
 func NewManager(events ports.EventManager, nodeID string, clusterManager ports.ClusterManager, config *Config, logger *slog.Logger) *Manager {
 	if logger == nil {
@@ -70,11 +81,7 @@ func NewManager(events ports.EventManager, nodeID string, clusterManager ports.C
 	}
 
 	if config == nil {
-		config = &Config{
-			ScoreCacheTTL:   1 * time.Second,
-			FailurePolicy:   "fail-open",
-			DefaultCapacity: 10.0,
-		}
+		config = &Config{FailurePolicy: "fail-open"}
 	}
 
 	if config.FailurePolicy != "fail-open" && config.FailurePolicy != "fail-closed" {
@@ -89,9 +96,6 @@ func NewManager(events ports.EventManager, nodeID string, clusterManager ports.C
 		logger:         logger.With("component", "load-balancer"),
 		executionUnits: make(map[string]float64),
 		errorWindow:    NewRollingWindow(100),
-		nodeCapacities: make(map[string]float64),
-		scoreCache:     make(map[string]scoreCacheEntry),
-		scoreCacheTTL:  config.ScoreCacheTTL,
 		nodeMetrics:    make(map[string]NodeMetrics),
 
 		publishInterval:    2 * time.Second,
@@ -110,38 +114,7 @@ func NewManager(events ports.EventManager, nodeID string, clusterManager ports.C
 		manager.availabilityWindow = config.AvailabilityWindow
 	}
 
-	manager.initializeStrategy()
-
 	return manager
-}
-
-func (m *Manager) initializeStrategy() {
-	switch m.config.Algorithm {
-	case domain.AlgorithmRoundRobin:
-		m.strategy = NewRoundRobinStrategy(m.logger)
-	case domain.AlgorithmWeightedRoundRobin:
-		m.strategy = NewWeightedRoundRobinStrategy(m.config.WeightedConfig, m.logger)
-	case domain.AlgorithmLeastConnections:
-		m.strategy = NewLeastConnectionsStrategy(m.logger)
-	case domain.AlgorithmLeastResponseTime:
-
-		adaptiveConfig := m.config.AdaptiveConfig
-		adaptiveConfig.ResponseTimeWeight = 0.8
-		adaptiveConfig.CpuUsageWeight = 0.05
-		adaptiveConfig.MemoryUsageWeight = 0.05
-		adaptiveConfig.ConnectionCountWeight = 0.05
-		adaptiveConfig.ErrorRateWeight = 0.05
-		m.strategy = NewAdaptiveStrategy(adaptiveConfig, m.logger)
-	case domain.AlgorithmAdaptive:
-		m.strategy = NewAdaptiveStrategy(m.config.AdaptiveConfig, m.logger)
-	case domain.AlgorithmConsistentHash:
-		m.strategy = NewConsistentHashStrategy(m.logger)
-	default:
-		m.logger.Warn("unknown load balancing algorithm, using adaptive", "algorithm", m.config.Algorithm)
-		m.strategy = NewAdaptiveStrategy(m.config.AdaptiveConfig, m.logger)
-	}
-
-	m.logger.Info("initialized load balancing strategy", "algorithm", m.config.Algorithm)
 }
 
 func (m *Manager) Start(ctx context.Context) error {
@@ -193,32 +166,10 @@ func (m *Manager) monitorClusterHealth() {
 					"total_nodes", health.TotalNodes,
 					"minimum_nodes", health.MinimumNodes,
 					"unhealthy_nodes", health.UnhealthyNodes)
-
-				m.mu.Lock()
-				for cacheKey := range m.scoreCache {
-					delete(m.scoreCache, cacheKey)
-				}
-				m.mu.Unlock()
 			} else if len(health.UnhealthyNodes) > 0 {
 				m.logger.Info("cluster stable with some unhealthy nodes",
 					"healthy_nodes", health.HealthyNodes,
 					"unhealthy_nodes", health.UnhealthyNodes)
-
-				m.cleanupUnhealthyNodeCache(health.UnhealthyNodes)
-			}
-		}
-	}
-}
-
-func (m *Manager) cleanupUnhealthyNodeCache(unhealthyNodes []string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	for cacheKey := range m.scoreCache {
-		for _, unhealthyNode := range unhealthyNodes {
-			if len(cacheKey) > len(unhealthyNode) && cacheKey[:len(unhealthyNode)] == unhealthyNode {
-				delete(m.scoreCache, cacheKey)
-				break
 			}
 		}
 	}
@@ -264,14 +215,11 @@ func (m *Manager) onNodeStarted(event *domain.NodeStartedEvent) {
 	}
 
 	m.mu.Lock()
-	weight := ports.GetNodeWeight(nil, event.NodeName)
-	m.executionUnits[event.WorkflowID] = weight
-	m.totalWeight += weight
 
-	m.mu.Unlock()
+	const unit = 1.0
+	m.executionUnits[event.WorkflowID] = unit
+	m.totalWeight += unit
 
-	m.mu.Lock()
-	m.cleanupScoreCacheIfNeeded()
 	m.mu.Unlock()
 
 	m.requestPublish()
@@ -356,27 +304,69 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 		return m.handleFailurePolicy(fmt.Sprintf("no active nodes in cluster load data (total_nodes: %d)", len(clusterLoad)), nil), nil
 	}
 
-	nodeMetrics := m.convertToNodeMetrics(filteredLoad)
-
-	selectedNode, err := m.strategy.SelectNode(context.Background(), nodeMetrics, workflowID)
-	if err != nil {
-		return m.handleFailurePolicy(fmt.Sprintf("failed to select node: %v", err), err), nil
+	type candidate struct {
+		id       string
+		active   int
+		pressure float64
 	}
 
-	if selectedNode == "" {
-		return m.handleFailurePolicy("no node selected by strategy", nil), nil
+	cands := make([]candidate, 0, len(filteredLoad))
+	for id, load := range filteredLoad {
+		if load == nil {
+			continue
+		}
+		active := int(load.TotalWeight)
+		c := candidate{id: id, active: active}
+
+		if id != m.nodeID {
+			m.mu.RLock()
+			if nm, ok := m.nodeMetrics[id]; ok {
+				c.pressure = nm.Pressure
+			}
+			m.mu.RUnlock()
+		}
+		cands = append(cands, c)
 	}
 
-	shouldExecute := selectedNode == m.nodeID
+	if len(cands) == 0 {
+		return m.handleFailurePolicy("no candidates available", nil), nil
+	}
 
-	m.logger.Debug("node selection result",
-		"selected_node", selectedNode,
-		"current_node", m.nodeID,
-		"workflow_id", workflowID,
-		"should_execute", shouldExecute,
-		"algorithm", m.config.Algorithm)
+	localPressure := m.collectLocalPressure()
 
-	return shouldExecute, nil
+	minActive := math.MaxInt32
+	for _, c := range cands {
+		if c.active < minActive {
+			minActive = c.active
+		}
+	}
+
+	winners := make([]candidate, 0, len(cands))
+	for _, c := range cands {
+		if c.active == minActive {
+			if c.id == m.nodeID {
+				c.pressure = localPressure
+			}
+			winners = append(winners, c)
+		}
+	}
+
+	if len(winners) == 1 {
+		return winners[0].id == m.nodeID, nil
+	}
+
+	selected := winners[0]
+	for _, c := range winners[1:] {
+		if c.pressure < selected.pressure {
+			selected = c
+		} else if c.pressure == selected.pressure {
+			if strings.Compare(c.id, selected.id) < 0 {
+				selected = c
+			}
+		}
+	}
+
+	return selected.id == m.nodeID, nil
 }
 
 func (m *Manager) getInMemoryClusterLoad() map[string]*ports.NodeLoad {
@@ -451,7 +441,7 @@ func (m *Manager) ReceiveLoadUpdate(update ports.LoadUpdate) error {
 		MemoryUsage:     0,
 		ConnectionCount: update.ActiveWorkflows,
 		ErrorRate:       update.RecentErrorRate,
-		Capacity:        update.Capacity,
+		Pressure:        update.Pressure,
 		ActiveWorkflows: update.ActiveWorkflows,
 		LastUpdated:     time.Now(),
 		Available:       true,
@@ -463,7 +453,7 @@ func (m *Manager) ReceiveLoadUpdate(update ports.LoadUpdate) error {
 		"total_weight", update.TotalWeight,
 		"latency_ms", update.RecentLatencyMs,
 		"error_rate", update.RecentErrorRate,
-		"capacity", update.Capacity)
+		"pressure", update.Pressure)
 
 	m.cleanupStaleNodeMetrics()
 
@@ -545,7 +535,7 @@ func (m *Manager) publishLocalMetrics() {
 		TotalWeight:     m.totalWeight,
 		RecentLatencyMs: m.recentLatencyMs,
 		RecentErrorRate: m.errorWindow.GetErrorRate(),
-		Capacity:        m.config.DefaultCapacity,
+		Pressure:        m.collectLocalPressure(),
 		Timestamp:       time.Now().Unix(),
 	}
 	m.mu.RUnlock()
@@ -562,61 +552,8 @@ func (m *Manager) publishLocalMetrics() {
 }
 
 func (m *Manager) convertToNodeMetrics(clusterLoad map[string]*ports.NodeLoad) []NodeMetrics {
-	m.mu.Lock()
-	defer m.mu.Unlock()
 
-	metrics := make([]NodeMetrics, 0, len(clusterLoad))
-	now := time.Now()
-
-	for nodeID, load := range clusterLoad {
-		if load == nil {
-			continue
-		}
-
-		responseTime := load.RecentLatencyMs
-		if responseTime == 0 {
-			responseTime = 100.0
-		}
-
-		errorRate := load.RecentErrorRate
-
-		capacity := m.config.DefaultCapacity
-		if nodeCapacity, exists := m.nodeCapacities[nodeID]; exists {
-			capacity = nodeCapacity
-		}
-
-		cpuUsage := (load.TotalWeight / capacity) * 100
-		if cpuUsage > 100 {
-			cpuUsage = 100
-		}
-
-		memoryUsage := cpuUsage * 0.8
-
-		connectionCount := len(load.ExecutionUnits)
-
-		nodeMetric := NodeMetrics{
-			NodeID:          nodeID,
-			ResponseTime:    responseTime,
-			CpuUsage:        cpuUsage,
-			MemoryUsage:     memoryUsage,
-			ConnectionCount: connectionCount,
-			ErrorRate:       errorRate,
-			Capacity:        capacity,
-			ActiveWorkflows: connectionCount,
-			LastUpdated:     now,
-			Available:       time.Now().Unix()-load.LastUpdated < 30,
-		}
-
-		metrics = append(metrics, nodeMetric)
-
-		if m.strategy != nil {
-			m.strategy.UpdateMetrics(nodeID, nodeMetric)
-		}
-
-		m.nodeMetrics[nodeID] = nodeMetric
-	}
-
-	return metrics
+	return nil
 }
 
 func (m *Manager) handleFailurePolicy(reason string, err error) bool {
@@ -710,97 +647,16 @@ func (m *Manager) filterActiveNodes(clusterLoad map[string]*ports.NodeLoad) map[
 	return filteredLoad
 }
 
-func (m *Manager) getNodeCapacities() map[string]float64 {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	capacities := make(map[string]float64)
-	for nodeID, capacity := range m.nodeCapacities {
-		capacities[nodeID] = capacity
-	}
-
-	if len(capacities) == 0 {
-		capacities[m.nodeID] = 10.0
-	}
-
-	return capacities
-}
-
-func (m *Manager) selectBestNodeWithCache(clusterLoad map[string]*ports.NodeLoad, capacities map[string]float64, scorer *NodeScorer) (string, float64) {
-	if len(clusterLoad) == 1 {
-		for nodeID := range clusterLoad {
-			return nodeID, 0
-		}
-	}
-
-	now := time.Now().Unix()
-	var bestNode string
-	bestScore := math.MaxFloat64
-
-	for nodeID, load := range clusterLoad {
-		cacheKey := fmt.Sprintf("%s:%d", nodeID, load.LastUpdated)
-
-		var score float64
-		if entry, exists := m.scoreCache[cacheKey]; exists && (now-entry.timestamp) < int64(m.scoreCacheTTL.Seconds()) {
-			score = entry.score
-		} else {
-			capacity := capacities[nodeID]
-			if capacity == 0 {
-				capacity = scorer.Config.DefaultCapacity
-			}
-			score = scorer.CalculateScore(load, capacity)
-
-			m.scoreCache[cacheKey] = scoreCacheEntry{
-				score:     score,
-				timestamp: now,
-			}
-
-			if len(m.scoreCache) > 1000 {
-				m.cleanupScoreCache(now)
-			}
-		}
-
-		if score < bestScore {
-			bestNode = nodeID
-			bestScore = score
-		}
-	}
-
-	return bestNode, bestScore
-}
-
-func (m *Manager) cleanupScoreCache(now int64) {
-	for key, entry := range m.scoreCache {
-		if (now - entry.timestamp) > int64(m.scoreCacheTTL.Seconds()) {
-			delete(m.scoreCache, key)
-		}
-	}
-}
-
-func (m *Manager) cleanupScoreCacheIfNeeded() {
-	if len(m.scoreCache) > 100 {
-		now := time.Now().Unix()
-		m.cleanupScoreCache(now)
-	}
-}
+// Note: score caches and capacity helpers are removed in minimal mode.
 
 func (m *Manager) GetLoadBalancingMetrics() map[string]interface{} {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
 	metrics := map[string]interface{}{
-		"algorithm":        string(m.config.Algorithm),
-		"failure_policy":   m.config.FailurePolicy,
-		"default_capacity": m.config.DefaultCapacity,
-		"running":          m.running,
-		"draining":         m.draining,
-	}
-
-	if m.strategy != nil {
-		strategyMetrics := m.strategy.GetAlgorithmMetrics()
-		for k, v := range strategyMetrics {
-			metrics[k] = v
-		}
+		"failure_policy": m.config.FailurePolicy,
+		"running":        m.running,
+		"draining":       m.draining,
 	}
 
 	if len(m.nodeMetrics) > 0 {
@@ -826,4 +682,127 @@ func (m *Manager) GetLoadBalancingMetrics() map[string]interface{} {
 	}
 
 	return metrics
+}
+
+// collectLocalPressure computes a simple pressure value by sampling CPU and memory.
+// Returns a value in [0,2] (cpu [0,1] + mem [0,1]).
+func (m *Manager) collectLocalPressure() float64 {
+	if m.pressureFn != nil {
+		return m.pressureFn()
+	}
+	cpu := m.sampleCPUUsage()
+	mem := m.sampleMemPressure()
+	if cpu < 0 {
+		cpu = 0
+	} else if cpu > 1 {
+		cpu = 1
+	}
+	if mem < 0 {
+		mem = 0
+	} else if mem > 1 {
+		mem = 1
+	}
+	p := cpu + mem
+	if p < 0 {
+		p = 0
+	}
+	if p > 2 {
+		p = 2
+	}
+	return p
+}
+
+// sampleCPUUsage estimates CPU usage as process CPU seconds over wall time since last sample.
+func (m *Manager) sampleCPUUsage() float64 {
+
+	var s = rmetrics.Sample{Name: "/process/cpu:seconds"}
+	rmetrics.Read([]rmetrics.Sample{s})
+
+	var cpuSeconds float64
+	if s.Value.Kind() == rmetrics.KindFloat64 {
+		cpuSeconds = s.Value.Float64()
+	} else {
+
+		cpuSeconds = float64(runtime.NumGoroutine()) * 0.001
+	}
+	now := time.Now()
+
+	if m.lastCPUSampleTime.IsZero() {
+		m.lastCPUSampleSeconds = cpuSeconds
+		m.lastCPUSampleTime = now
+		return 0
+	}
+
+	deltaCPU := cpuSeconds - m.lastCPUSampleSeconds
+	deltaWall := now.Sub(m.lastCPUSampleTime).Seconds()
+	if deltaWall <= 0 {
+		return 0
+	}
+
+	m.lastCPUSampleSeconds = cpuSeconds
+	m.lastCPUSampleTime = now
+
+	usage := deltaCPU / deltaWall
+	if usage < 0 {
+		usage = 0
+	} else if usage > 1 {
+		usage = 1
+	}
+	return usage
+}
+
+// sampleMemPressure estimates memory pressure using Alloc vs GOMEMLIMIT (bytes), if present.
+func (m *Manager) sampleMemPressure() float64 {
+	limitStr := os.Getenv("GOMEMLIMIT")
+	if limitStr == "" {
+		return 0
+	}
+	limitBytes, ok := parseBytes(limitStr)
+	if !ok || limitBytes == 0 {
+		return 0
+	}
+	var ms runtime.MemStats
+	runtime.ReadMemStats(&ms)
+	alloc := ms.Alloc
+	p := float64(alloc) / float64(limitBytes)
+	if p < 0 {
+		p = 0
+	} else if p > 1 {
+		p = 1
+	}
+	return p
+}
+
+func parseBytes(s string) (uint64, bool) {
+	s = strings.TrimSpace(strings.ToLower(s))
+	mul := uint64(1)
+	switch {
+	case strings.HasSuffix(s, "kib"):
+		mul = 1024
+		s = strings.TrimSuffix(s, "kib")
+	case strings.HasSuffix(s, "mib"):
+		mul = 1024 * 1024
+		s = strings.TrimSuffix(s, "mib")
+	case strings.HasSuffix(s, "gib"):
+		mul = 1024 * 1024 * 1024
+		s = strings.TrimSuffix(s, "gib")
+	case strings.HasSuffix(s, "kb"):
+		mul = 1000
+		s = strings.TrimSuffix(s, "kb")
+	case strings.HasSuffix(s, "mb"):
+		mul = 1000 * 1000
+		s = strings.TrimSuffix(s, "mb")
+	case strings.HasSuffix(s, "gb"):
+		mul = 1000 * 1000 * 1000
+		s = strings.TrimSuffix(s, "gb")
+	case strings.HasSuffix(s, "b"):
+		mul = 1
+		s = strings.TrimSuffix(s, "b")
+	}
+	s = strings.TrimSpace(s)
+	n, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return n * mul, true
 }

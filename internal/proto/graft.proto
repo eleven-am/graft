@@ -73,8 +73,11 @@ message LoadUpdate {
   double total_weight = 3;
   double recent_latency_ms = 4;
   double recent_error_rate = 5;
+  // Deprecated: capacity was previously used; keep for backward compatibility
   double capacity = 6;
   int64 timestamp = 7;
+  // Preferred: normalized pressure (cpu+mem) in range [0..2]
+  double pressure = 8;
 }
 
 message Ack {

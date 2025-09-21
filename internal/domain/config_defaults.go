@@ -23,7 +23,6 @@ func DefaultConfig() *Config {
 		Engine:         DefaultEngineConfig(),
 		Orchestrator:   DefaultOrchestratorConfig(),
 		Cluster:        DefaultClusterConfig(),
-		LoadBalancer:   DefaultLoadBalancerConfig(),
 		Observability:  DefaultObservabilityConfig(),
 		CircuitBreaker: DefaultCircuitBreakerSettings(),
 		RateLimiter:    DefaultRateLimiterSettings(),
@@ -117,28 +116,7 @@ func DefaultClusterConfig() ClusterConfig {
 	}
 }
 
-func DefaultLoadBalancerConfig() LoadBalancerConfig {
-	return LoadBalancerConfig{
-		ScoreCacheTTL:   1 * time.Second,
-		FailurePolicy:   "fail-open",
-		DefaultCapacity: 10.0,
-		Algorithm:       AlgorithmAdaptive,
-		WeightedConfig: WeightedRoundRobinConfig{
-			DefaultWeight:   1,
-			NodeWeights:     make(map[string]int),
-			SmoothWeighting: true,
-		},
-		AdaptiveConfig: AdaptiveLoadBalancerConfig{
-			ResponseTimeWeight:    0.3,
-			CpuUsageWeight:        0.2,
-			MemoryUsageWeight:     0.15,
-			ConnectionCountWeight: 0.2,
-			ErrorRateWeight:       0.15,
-			AdaptationInterval:    30 * time.Second,
-			HistoryWindow:         5 * time.Minute,
-		},
-	}
-}
+// DefaultLoadBalancerConfig removed in minimal mode
 
 func DefaultObservabilityConfig() ObservabilityConfig {
 	return ObservabilityConfig{

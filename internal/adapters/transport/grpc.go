@@ -7,7 +7,6 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"log/slog"
-	"math"
 	"net"
 	"strconv"
 	"time"
@@ -394,13 +393,19 @@ func (t *GRPCTransport) PublishLoad(ctx context.Context, req *pb.LoadUpdate) (*p
 		return &pb.Ack{Ok: false, Message: "no sink registered"}, nil
 	}
 
+	pressure := clampFloat(req.Pressure, 0.0, 2.0)
+	if pressure == 0 {
+
+		pressure = clampFloat(req.Capacity, 0.0, 2.0)
+	}
+
 	update := ports.LoadUpdate{
 		NodeID:          req.NodeId,
 		ActiveWorkflows: int(req.ActiveWorkflows),
 		TotalWeight:     req.TotalWeight,
 		RecentLatencyMs: req.RecentLatencyMs,
 		RecentErrorRate: clampFloat(req.RecentErrorRate, 0.0, 1.0),
-		Capacity:        clampFloat(req.Capacity, 0.0, math.MaxFloat64),
+		Pressure:        pressure,
 		Timestamp:       req.Timestamp,
 	}
 
@@ -488,8 +493,10 @@ func (t *GRPCTransport) SendPublishLoad(ctx context.Context, nodeAddr string, up
 		TotalWeight:     update.TotalWeight,
 		RecentLatencyMs: update.RecentLatencyMs,
 		RecentErrorRate: update.RecentErrorRate,
-		Capacity:        update.Capacity,
-		Timestamp:       update.Timestamp,
+		Pressure:        update.Pressure,
+
+		Capacity:  update.Pressure,
+		Timestamp: update.Timestamp,
 	}
 
 	timeoutCtx := ctx

@@ -187,6 +187,22 @@ Graft is a distributed workflow orchestration framework built on modern distribu
 
 ### 11. Ports (`internal/ports/`)
 
+### 12. Load Balancer (`internal/adapters/load_balancer/`)
+
+Purpose: Evenly distribute work across nodes with zero configuration.
+
+Design (minimal, always-on):
+- Least-active selection: the node with the fewest active executions runs the next item.
+- Tie-breakers: lower pressure (cpu+mem) wins; if still tied, lexicographic NodeID.
+- Pressure: a normalized local metric (cpu usage + memory pressure) in [0..2]. Memory pressure uses `GOMEMLIMIT` if set.
+- Telemetry: nodes periodically publish `{active_workflows, pressure}` via gRPC; peers use this for consistent decisions.
+
+Rationale:
+- Zero knobs: no algorithms to choose, no weights to maintain.
+- Predictable fairness: defaults to count-based balancing; pressure only nudges ties.
+- Deterministic cluster-wide behavior: all nodes see the same peer telemetry.
+
+
 **Purpose**: Interface definitions for dependency inversion and testing.
 
 **Key Interfaces**:

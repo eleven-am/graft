@@ -19,7 +19,6 @@ type Config struct {
 	Engine         EngineConfig         `json:"engine" yaml:"engine"`
 	Orchestrator   OrchestratorConfig   `json:"orchestrator" yaml:"orchestrator"`
 	Cluster        ClusterConfig        `json:"cluster" yaml:"cluster"`
-	LoadBalancer   LoadBalancerConfig   `json:"load_balancer" yaml:"load_balancer"`
 	Observability  ObservabilityConfig  `json:"observability" yaml:"observability"`
 	CircuitBreaker CircuitBreakerConfig `json:"circuit_breaker" yaml:"circuit_breaker"`
 	RateLimiter    RateLimiterConfig    `json:"rate_limiter" yaml:"rate_limiter"`
@@ -126,45 +125,6 @@ type ClusterConfig struct {
 	Policy          ClusterPolicy `json:"policy" yaml:"policy"`
 	PersistenceFile string        `json:"persistence_file,omitempty" yaml:"persistence_file,omitempty"`
 	AllowRecovery   bool          `json:"allow_recovery" yaml:"allow_recovery"`
-}
-
-type LoadBalancerConfig struct {
-	ScoreCacheTTL      time.Duration              `json:"score_cache_ttl" yaml:"score_cache_ttl"`
-	FailurePolicy      string                     `json:"failure_policy" yaml:"failure_policy"` // "fail-open" or "fail-closed"
-	DefaultCapacity    float64                    `json:"default_capacity" yaml:"default_capacity"`
-	Algorithm          LoadBalancingAlgorithm     `json:"algorithm" yaml:"algorithm"`
-	WeightedConfig     WeightedRoundRobinConfig   `json:"weighted_config" yaml:"weighted_config"`
-	AdaptiveConfig     AdaptiveLoadBalancerConfig `json:"adaptive_config" yaml:"adaptive_config"`
-	PublishInterval    time.Duration              `json:"publish_interval" yaml:"publish_interval"`
-	PublishDebounce    time.Duration              `json:"publish_debounce" yaml:"publish_debounce"`
-	AvailabilityWindow time.Duration              `json:"availability_window" yaml:"availability_window"`
-}
-
-type LoadBalancingAlgorithm string
-
-const (
-	AlgorithmRoundRobin         LoadBalancingAlgorithm = "round_robin"
-	AlgorithmWeightedRoundRobin LoadBalancingAlgorithm = "weighted_round_robin"
-	AlgorithmLeastConnections   LoadBalancingAlgorithm = "least_connections"
-	AlgorithmLeastResponseTime  LoadBalancingAlgorithm = "least_response_time"
-	AlgorithmAdaptive           LoadBalancingAlgorithm = "adaptive"
-	AlgorithmConsistentHash     LoadBalancingAlgorithm = "consistent_hash"
-)
-
-type WeightedRoundRobinConfig struct {
-	DefaultWeight   int            `json:"default_weight" yaml:"default_weight"`
-	NodeWeights     map[string]int `json:"node_weights,omitempty" yaml:"node_weights,omitempty"`
-	SmoothWeighting bool           `json:"smooth_weighting" yaml:"smooth_weighting"`
-}
-
-type AdaptiveLoadBalancerConfig struct {
-	ResponseTimeWeight    float64       `json:"response_time_weight" yaml:"response_time_weight"`
-	CpuUsageWeight        float64       `json:"cpu_usage_weight" yaml:"cpu_usage_weight"`
-	MemoryUsageWeight     float64       `json:"memory_usage_weight" yaml:"memory_usage_weight"`
-	ConnectionCountWeight float64       `json:"connection_count_weight" yaml:"connection_count_weight"`
-	ErrorRateWeight       float64       `json:"error_rate_weight" yaml:"error_rate_weight"`
-	AdaptationInterval    time.Duration `json:"adaptation_interval" yaml:"adaptation_interval"`
-	HistoryWindow         time.Duration `json:"history_window" yaml:"history_window"`
 }
 
 type ObservabilityConfig struct {

@@ -34,8 +34,8 @@ func TestMDNSProvider_BasicLifecycle(t *testing.T) {
 		t.Errorf("Expected name 'mdns', got '%s'", provider.Name())
 	}
 
-	if provider.Events() != nil {
-		t.Error("Expected Events() to return nil")
+	if provider.Events() == nil {
+		t.Error("Expected Events() to return a channel, got nil")
 	}
 
 	err = provider.Stop()

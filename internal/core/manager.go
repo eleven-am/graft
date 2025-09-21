@@ -191,18 +191,7 @@ func NewWithConfig(config *domain.Config) *Manager {
 
 	clusterManager := prov.newClusterManager(raftAdapter, 1, logger)
 
-	loadBalancerConfig := &load_balancer.Config{
-		ScoreCacheTTL:      config.LoadBalancer.ScoreCacheTTL,
-		FailurePolicy:      config.LoadBalancer.FailurePolicy,
-		DefaultCapacity:    config.LoadBalancer.DefaultCapacity,
-		Algorithm:          config.LoadBalancer.Algorithm,
-		WeightedConfig:     config.LoadBalancer.WeightedConfig,
-		AdaptiveConfig:     config.LoadBalancer.AdaptiveConfig,
-		PublishInterval:    config.LoadBalancer.PublishInterval,
-		PublishDebounce:    config.LoadBalancer.PublishDebounce,
-		AvailabilityWindow: config.LoadBalancer.AvailabilityWindow,
-	}
-	loadBalancerManager := prov.newLoadBalancer(eventManager, config.NodeID, clusterManager, loadBalancerConfig, logger)
+	loadBalancerManager := prov.newLoadBalancer(eventManager, config.NodeID, clusterManager, nil, logger)
 
 	if lb, ok := loadBalancerManager.(interface {
 		SetTransport(ports.TransportPort)

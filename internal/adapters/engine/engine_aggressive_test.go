@@ -95,6 +95,7 @@ func setupAggressiveEngine(t *testing.T) (*Engine, *TestNodeRegistry, func()) {
 	require.NoError(t, err)
 
 	mockRaftNode := new(mocks.MockRaftNode)
+	mockRaftNode.On("IsLeader").Return(true).Maybe()
 	mockRaftNode.On("Apply", mock.Anything, mock.Anything).Return(func(cmd domain.Command, timeout time.Duration) *domain.CommandResult {
 
 		result := &domain.CommandResult{
@@ -204,6 +205,9 @@ func setupAggressiveEngine(t *testing.T) (*Engine, *TestNodeRegistry, func()) {
 	mockEventManager := &mocks.MockEventManager{}
 	mockEventManager.On("Subscribe", mock.AnythingOfType("string"), mock.AnythingOfType("func(string, interface {})")).Return(nil).Maybe()
 	mockEventManager.On("Broadcast", mock.AnythingOfType("domain.Event")).Return(nil).Maybe()
+
+	ch := make(chan ports.StorageEvent, 1)
+	mockEventManager.On("SubscribeToChannel", mock.AnythingOfType("string")).Return((<-chan ports.StorageEvent)(ch), func() {}, nil).Maybe()
 	testQueue := queue.NewQueue("aggressive-test-queue", appStorage, mockEventManager, logger)
 	nodeRegistry := NewTestNodeRegistry()
 
@@ -404,6 +408,7 @@ func TestEngine_RapidStartStop(t *testing.T) {
 		require.NoError(t, err)
 
 		mockRaftNode := new(mocks.MockRaftNode)
+		mockRaftNode.On("IsLeader").Return(true).Maybe()
 		mockRaftNode.On("Apply", mock.Anything, mock.Anything).Return(func(cmd domain.Command, timeout time.Duration) *domain.CommandResult {
 
 			result := &domain.CommandResult{
@@ -513,6 +518,9 @@ func TestEngine_RapidStartStop(t *testing.T) {
 		mockEventManager := &mocks.MockEventManager{}
 		mockEventManager.On("Subscribe", mock.AnythingOfType("string"), mock.AnythingOfType("func(string, interface {})")).Return(nil).Maybe()
 		mockEventManager.On("Broadcast", mock.AnythingOfType("domain.Event")).Return(nil).Maybe()
+
+		ch := make(chan ports.StorageEvent, 1)
+		mockEventManager.On("SubscribeToChannel", mock.AnythingOfType("string")).Return((<-chan ports.StorageEvent)(ch), func() {}, nil).Maybe()
 		testQueue := queue.NewQueue(fmt.Sprintf("rapid-test-%d", i), appStorage, mockEventManager, logger)
 		nodeRegistry := NewTestNodeRegistry()
 

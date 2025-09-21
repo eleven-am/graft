@@ -584,10 +584,13 @@ type LoadUpdate struct {
 	TotalWeight     float64                `protobuf:"fixed64,3,opt,name=total_weight,json=totalWeight,proto3" json:"total_weight,omitempty"`
 	RecentLatencyMs float64                `protobuf:"fixed64,4,opt,name=recent_latency_ms,json=recentLatencyMs,proto3" json:"recent_latency_ms,omitempty"`
 	RecentErrorRate float64                `protobuf:"fixed64,5,opt,name=recent_error_rate,json=recentErrorRate,proto3" json:"recent_error_rate,omitempty"`
-	Capacity        float64                `protobuf:"fixed64,6,opt,name=capacity,proto3" json:"capacity,omitempty"`
-	Timestamp       int64                  `protobuf:"varint,7,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Deprecated: capacity was previously used; keep for backward compatibility
+	Capacity  float64 `protobuf:"fixed64,6,opt,name=capacity,proto3" json:"capacity,omitempty"`
+	Timestamp int64   `protobuf:"varint,7,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	// Preferred: normalized pressure (cpu+mem) in range [0..2]
+	Pressure      float64 `protobuf:"fixed64,8,opt,name=pressure,proto3" json:"pressure,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *LoadUpdate) Reset() {
@@ -665,6 +668,13 @@ func (x *LoadUpdate) GetCapacity() float64 {
 func (x *LoadUpdate) GetTimestamp() int64 {
 	if x != nil {
 		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *LoadUpdate) GetPressure() float64 {
+	if x != nil {
+		return x.Pressure
 	}
 	return 0
 }
@@ -773,7 +783,7 @@ const file_graft_proto_rawDesc = "" +
 	"\x06events\x18\x04 \x03(\v2\f.graft.EventR\x06events\x12\x1b\n" +
 	"\tleader_id\x18\x05 \x01(\tR\bleaderId\x12\x1f\n" +
 	"\vleader_addr\x18\x06 \x01(\tR\n" +
-	"leaderAddr\"\x85\x02\n" +
+	"leaderAddr\"\xa1\x02\n" +
 	"\n" +
 	"LoadUpdate\x12\x17\n" +
 	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12)\n" +
@@ -782,7 +792,8 @@ const file_graft_proto_rawDesc = "" +
 	"\x11recent_latency_ms\x18\x04 \x01(\x01R\x0frecentLatencyMs\x12*\n" +
 	"\x11recent_error_rate\x18\x05 \x01(\x01R\x0frecentErrorRate\x12\x1a\n" +
 	"\bcapacity\x18\x06 \x01(\x01R\bcapacity\x12\x1c\n" +
-	"\ttimestamp\x18\a \x01(\x03R\ttimestamp\"/\n" +
+	"\ttimestamp\x18\a \x01(\x03R\ttimestamp\x12\x1a\n" +
+	"\bpressure\x18\b \x01(\x01R\bpressure\"/\n" +
 	"\x03Ack\x12\x0e\n" +
 	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
 	"\amessage\x18\x02 \x01(\tR\amessage2\xed\x01\n" +
