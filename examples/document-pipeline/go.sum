@@ -54,6 +54,7 @@ github.com/eleven-am/graft v0.1.14 h1:wXZjvB5ZHpNaKzKpNq8h5ulntU18nO7KVz4XlMvmif
 github.com/eleven-am/graft v0.1.14/go.mod h1:HxgcmKI40dzin3O97lC5Pu+VMucrsj+hV5W0P1PXIRY=
 github.com/eleven-am/graft v0.1.25 h1:oDTRIDbMT0N2vrRJE4iOi+CWPIyp9efQP20tf8F7U+s=
 github.com/eleven-am/graft v0.1.25/go.mod h1:JqwXmn1VspJlXsv376oa0AMZ97vs3reI5iCTWBrsaes=
+github.com/eleven-am/graft v0.3.0/go.mod h1:QD2zw5dCgv5E/G7FJiYu+bP+n1iFcyy3zrooaR7B7vM=
 github.com/emicklei/go-restful/v3 v3.9.0 h1:XwGDlfxEnQZzuopoqxwSEllNcCOM9DhhFyhFIIGKwxE=
 github.com/emicklei/go-restful/v3 v3.9.0/go.mod h1:6n3XBCmQQb25CM2LCACGz8ukIrRry+4bhvbpWn3mrbc=
 github.com/fatih/color v1.13.0 h1:8LOYc1KYPPmyKMuN8QV2DNRWNbLo6LZ0iLs8+mlH53w=
