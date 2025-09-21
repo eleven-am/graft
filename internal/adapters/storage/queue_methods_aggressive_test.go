@@ -92,6 +92,7 @@ func TestAtomicIncrement_ConcurrencyRaceConditions(t *testing.T) {
 	defer cleanup()
 
 	mockRaft := mocks.NewMockRaftNode(t)
+	mockRaft.On("IsLeader").Return(true).Maybe()
 	storage := NewAppStorage(mockRaft, db, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 
 	counterKey := "sequence:test-counter"
