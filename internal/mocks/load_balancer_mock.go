@@ -5,7 +5,6 @@ package mocks
 import (
 	context "context"
 
-	ports "github.com/eleven-am/graft/internal/ports"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -20,121 +19,6 @@ type MockLoadBalancer_Expecter struct {
 
 func (_m *MockLoadBalancer) EXPECT() *MockLoadBalancer_Expecter {
 	return &MockLoadBalancer_Expecter{mock: &_m.Mock}
-}
-
-// GetClusterLoad provides a mock function with no fields
-func (_m *MockLoadBalancer) GetClusterLoad() (map[string]*ports.NodeLoad, error) {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetClusterLoad")
-	}
-
-	var r0 map[string]*ports.NodeLoad
-	var r1 error
-	if rf, ok := ret.Get(0).(func() (map[string]*ports.NodeLoad, error)); ok {
-		return rf()
-	}
-	if rf, ok := ret.Get(0).(func() map[string]*ports.NodeLoad); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(map[string]*ports.NodeLoad)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func() error); ok {
-		r1 = rf()
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockLoadBalancer_GetClusterLoad_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetClusterLoad'
-type MockLoadBalancer_GetClusterLoad_Call struct {
-	*mock.Call
-}
-
-// GetClusterLoad is a helper method to define mock.On call
-func (_e *MockLoadBalancer_Expecter) GetClusterLoad() *MockLoadBalancer_GetClusterLoad_Call {
-	return &MockLoadBalancer_GetClusterLoad_Call{Call: _e.mock.On("GetClusterLoad")}
-}
-
-func (_c *MockLoadBalancer_GetClusterLoad_Call) Run(run func()) *MockLoadBalancer_GetClusterLoad_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockLoadBalancer_GetClusterLoad_Call) Return(_a0 map[string]*ports.NodeLoad, _a1 error) *MockLoadBalancer_GetClusterLoad_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockLoadBalancer_GetClusterLoad_Call) RunAndReturn(run func() (map[string]*ports.NodeLoad, error)) *MockLoadBalancer_GetClusterLoad_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// GetNodeLoad provides a mock function with given fields: nodeID
-func (_m *MockLoadBalancer) GetNodeLoad(nodeID string) (*ports.NodeLoad, error) {
-	ret := _m.Called(nodeID)
-
-	if len(ret) == 0 {
-		panic("no return value specified for GetNodeLoad")
-	}
-
-	var r0 *ports.NodeLoad
-	var r1 error
-	if rf, ok := ret.Get(0).(func(string) (*ports.NodeLoad, error)); ok {
-		return rf(nodeID)
-	}
-	if rf, ok := ret.Get(0).(func(string) *ports.NodeLoad); ok {
-		r0 = rf(nodeID)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*ports.NodeLoad)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(string) error); ok {
-		r1 = rf(nodeID)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockLoadBalancer_GetNodeLoad_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetNodeLoad'
-type MockLoadBalancer_GetNodeLoad_Call struct {
-	*mock.Call
-}
-
-// GetNodeLoad is a helper method to define mock.On call
-//   - nodeID string
-func (_e *MockLoadBalancer_Expecter) GetNodeLoad(nodeID interface{}) *MockLoadBalancer_GetNodeLoad_Call {
-	return &MockLoadBalancer_GetNodeLoad_Call{Call: _e.mock.On("GetNodeLoad", nodeID)}
-}
-
-func (_c *MockLoadBalancer_GetNodeLoad_Call) Run(run func(nodeID string)) *MockLoadBalancer_GetNodeLoad_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
-	})
-	return _c
-}
-
-func (_c *MockLoadBalancer_GetNodeLoad_Call) Return(_a0 *ports.NodeLoad, _a1 error) *MockLoadBalancer_GetNodeLoad_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockLoadBalancer_GetNodeLoad_Call) RunAndReturn(run func(string) (*ports.NodeLoad, error)) *MockLoadBalancer_GetNodeLoad_Call {
-	_c.Call.Return(run)
-	return _c
 }
 
 // IsDraining provides a mock function with no fields

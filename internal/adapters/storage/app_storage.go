@@ -79,17 +79,29 @@ func (s *AppStorage) Put(key string, value []byte, version int64) error {
 		return errors.New(result.Error)
 	}
 
-	s.broadcast(result.Events)
+	s.waitForVersionsAndBroadcast(result.Events)
 
 	return nil
 }
 
 func (s *AppStorage) PutWithTTL(key string, value []byte, version int64, ttl time.Duration) error {
-	if err := s.Put(key, value, version); err != nil {
+	if s.raftNode == nil {
+		return domain.ErrNotStarted
+	}
+
+	cmd := domain.NewPutWithTTLCommand(key, value, version, ttl)
+	result, err := s.raftNode.Apply(*cmd, 5*time.Second)
+	if err != nil {
 		return err
 	}
 
-	return s.ExpireAt(key, time.Now().Add(ttl))
+	if !result.Success {
+		return errors.New(result.Error)
+	}
+
+	s.waitForVersionsAndBroadcast(result.Events)
+
+	return nil
 }
 
 func (s *AppStorage) Delete(key string) error {
@@ -107,7 +119,7 @@ func (s *AppStorage) Delete(key string) error {
 		return errors.New(result.Error)
 	}
 
-	s.broadcast(result.Events)
+	s.waitForVersionsAndBroadcast(result.Events)
 
 	return nil
 }
@@ -183,7 +195,7 @@ func (s *AppStorage) BatchWrite(ops []ports.WriteOp) error {
 		return errors.New(result.Error)
 	}
 
-	s.broadcast(result.Events)
+	s.waitForVersionsAndBroadcast(result.Events)
 
 	return nil
 }
@@ -346,7 +358,7 @@ func (s *AppStorage) AtomicIncrement(key string) (newValue int64, err error) {
 		return 0, fmt.Errorf("atomic increment failed: %s", result.Error)
 	}
 
-	s.broadcast(result.Events)
+	s.waitForVersionsAndBroadcast(result.Events)
 
 	value, _, exists, err := s.Get(key)
 	if err != nil {
@@ -714,4 +726,34 @@ func (t *transaction) Commit() error {
 func (t *transaction) Rollback() error {
 	t.txn.Discard()
 	return nil
+}
+
+func (s *AppStorage) waitForVersionsAndBroadcast(events []domain.Event) {
+	if s.raftNode == nil || s.raftNode.IsLeader() {
+		s.broadcast(events)
+		return
+	}
+
+	timeout := time.NewTimer(200 * time.Millisecond)
+	defer timeout.Stop()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+
+	for _, event := range events {
+		for {
+			select {
+			case <-timeout.C:
+				s.broadcast(events)
+				return
+			case <-ticker.C:
+				currentVersion, err := s.GetVersion(event.Key)
+				if err == nil && currentVersion >= event.Version {
+					goto nextEvent
+				}
+			}
+		}
+	nextEvent:
+	}
+
+	s.broadcast(events)
 }

@@ -122,7 +122,20 @@ func (f *FSM) applyPut(cmd domain.Command) *domain.CommandResult {
 		if err := txn.Set([]byte(cmd.Key), cmd.Value); err != nil {
 			return err
 		}
-		return txn.Set([]byte(versionKey), versionBytes)
+		if err := txn.Set([]byte(versionKey), versionBytes); err != nil {
+			return err
+		}
+
+		if cmd.TTLSeconds > 0 {
+			ttlKey := fmt.Sprintf("ttl:%s", cmd.Key)
+			expireAt := time.Now().Add(time.Duration(cmd.TTLSeconds) * time.Second)
+			ttlBytes, _ := json.Marshal(expireAt)
+			if err := txn.Set([]byte(ttlKey), ttlBytes); err != nil {
+				return err
+			}
+		}
+
+		return nil
 	})
 
 	if err != nil {
@@ -410,6 +423,15 @@ func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 				}
 				if err := txn.Set([]byte(versionKey), versionBytes); err != nil {
 					return err
+				}
+
+				if op.TTLSeconds > 0 {
+					ttlKey := fmt.Sprintf("ttl:%s", op.Key)
+					expireAt := time.Now().Add(time.Duration(op.TTLSeconds) * time.Second)
+					ttlBytes, _ := json.Marshal(expireAt)
+					if err := txn.Set([]byte(ttlKey), ttlBytes); err != nil {
+						return err
+					}
 				}
 
 				f.versions[op.Key] = newVersion

@@ -7,13 +7,15 @@ type LoadBalancer interface {
 	Stop() error
 
 	ShouldExecuteNode(nodeID string, workflowID string, nodeName string) (bool, error)
-	GetClusterLoad() (map[string]*NodeLoad, error)
-	GetNodeLoad(nodeID string) (*NodeLoad, error)
 
 	StartDraining() error
 	StopDraining() error
 	IsDraining() bool
 	WaitForDraining(ctx context.Context) error
+}
+
+type LoadSink interface {
+	ReceiveLoadUpdate(update LoadUpdate) error
 }
 
 type NodeLoad struct {

@@ -57,11 +57,11 @@ type Manager struct {
 type managerProviders struct {
 	newEventManager   func(*slog.Logger) ports.EventManager
 	newRaftStorage    func(dataDir string, logger *slog.Logger) (*raft.Storage, error)
-	newRaftNode       func(cfg *raft.Config, storage *raft.Storage, events ports.EventManager, logger *slog.Logger) (ports.RaftNode, error)
+	newRaftNode       func(cfg *raft.Config, storage *raft.Storage, events ports.EventManager, appTransport ports.TransportPort, logger *slog.Logger) (ports.RaftNode, error)
 	newAppStorage     func(raft ports.RaftNode, db *badger.DB, logger *slog.Logger) ports.StoragePort
 	newNodeRegistry   func(*slog.Logger) ports.NodeRegistryPort
 	newClusterManager func(ports.RaftNode, int, *slog.Logger) ports.ClusterManager
-	newLoadBalancer   func(ports.StoragePort, ports.EventManager, string, ports.ClusterManager, *load_balancer.Config, *slog.Logger) ports.LoadBalancer
+	newLoadBalancer   func(ports.EventManager, string, ports.ClusterManager, *load_balancer.Config, *slog.Logger) ports.LoadBalancer
 	newQueue          func(name string, storage ports.StoragePort, events ports.EventManager, logger *slog.Logger) ports.QueuePort
 	newEngine         func(domain.EngineConfig, string, ports.NodeRegistryPort, ports.QueuePort, ports.StoragePort, ports.EventManager, ports.LoadBalancer, *slog.Logger) ports.EnginePort
 	newTransport      func(*slog.Logger, domain.TransportConfig) ports.TransportPort
@@ -71,8 +71,8 @@ func defaultProviders() managerProviders {
 	return managerProviders{
 		newEventManager: func(l *slog.Logger) ports.EventManager { return events.NewManager(l) },
 		newRaftStorage:  func(dataDir string, l *slog.Logger) (*raft.Storage, error) { return raft.NewStorage(dataDir, l) },
-		newRaftNode: func(cfg *raft.Config, st *raft.Storage, ev ports.EventManager, l *slog.Logger) (ports.RaftNode, error) {
-			return raft.NewNode(cfg, st, ev, l)
+		newRaftNode: func(cfg *raft.Config, st *raft.Storage, ev ports.EventManager, t ports.TransportPort, l *slog.Logger) (ports.RaftNode, error) {
+			return raft.NewNode(cfg, st, ev, t, l)
 		},
 		newAppStorage: func(r ports.RaftNode, db *badger.DB, l *slog.Logger) ports.StoragePort {
 			return storage.NewAppStorage(r, db, l)
@@ -81,8 +81,8 @@ func defaultProviders() managerProviders {
 		newClusterManager: func(r ports.RaftNode, min int, l *slog.Logger) ports.ClusterManager {
 			return cluster.NewRaftClusterManager(r, min, l)
 		},
-		newLoadBalancer: func(s ports.StoragePort, ev ports.EventManager, nodeID string, cm ports.ClusterManager, cfg *load_balancer.Config, l *slog.Logger) ports.LoadBalancer {
-			return load_balancer.NewManager(s, ev, nodeID, cm, cfg, l)
+		newLoadBalancer: func(ev ports.EventManager, nodeID string, cm ports.ClusterManager, cfg *load_balancer.Config, l *slog.Logger) ports.LoadBalancer {
+			return load_balancer.NewManager(ev, nodeID, cm, cfg, l)
 		},
 		newQueue: func(name string, s ports.StoragePort, ev ports.EventManager, l *slog.Logger) ports.QueuePort {
 			return queue.NewQueue(name, s, ev, l)
@@ -171,7 +171,8 @@ func NewWithConfig(config *domain.Config) *Manager {
 		return nil
 	})
 
-	raftAdapter, err := prov.newRaftNode(raftConfig, raftStorage, eventManager, logger)
+	appTransport := prov.newTransport(logger, config.Transport)
+	raftAdapter, err := prov.newRaftNode(raftConfig, raftStorage, eventManager, appTransport, logger)
 	if err != nil {
 		logger.Error("failed to create raft node", "error", err)
 		return nil
@@ -191,14 +192,32 @@ func NewWithConfig(config *domain.Config) *Manager {
 	clusterManager := prov.newClusterManager(raftAdapter, 1, logger)
 
 	loadBalancerConfig := &load_balancer.Config{
-		ScoreCacheTTL:   config.LoadBalancer.ScoreCacheTTL,
-		FailurePolicy:   config.LoadBalancer.FailurePolicy,
-		DefaultCapacity: config.LoadBalancer.DefaultCapacity,
-		Algorithm:       config.LoadBalancer.Algorithm,
-		WeightedConfig:  config.LoadBalancer.WeightedConfig,
-		AdaptiveConfig:  config.LoadBalancer.AdaptiveConfig,
+		ScoreCacheTTL:      config.LoadBalancer.ScoreCacheTTL,
+		FailurePolicy:      config.LoadBalancer.FailurePolicy,
+		DefaultCapacity:    config.LoadBalancer.DefaultCapacity,
+		Algorithm:          config.LoadBalancer.Algorithm,
+		WeightedConfig:     config.LoadBalancer.WeightedConfig,
+		AdaptiveConfig:     config.LoadBalancer.AdaptiveConfig,
+		PublishInterval:    config.LoadBalancer.PublishInterval,
+		PublishDebounce:    config.LoadBalancer.PublishDebounce,
+		AvailabilityWindow: config.LoadBalancer.AvailabilityWindow,
 	}
-	loadBalancerManager := prov.newLoadBalancer(appStorage, eventManager, config.NodeID, clusterManager, loadBalancerConfig, logger)
+	loadBalancerManager := prov.newLoadBalancer(eventManager, config.NodeID, clusterManager, loadBalancerConfig, logger)
+	// Wire transport and peer provider into load balancer if supported
+	if lb, ok := loadBalancerManager.(interface {
+		SetTransport(ports.TransportPort)
+		SetPeerAddrProvider(func() []string)
+	}); ok {
+		lb.SetTransport(appTransport)
+		lb.SetPeerAddrProvider(func() []string {
+			peers := discoveryManager.GetPeers()
+			addrs := make([]string, 0, len(peers))
+			for _, p := range peers {
+				addrs = append(addrs, net.JoinHostPort(p.Address, strconv.Itoa(p.Port)))
+			}
+			return addrs
+		})
+	}
 	cleanup = append(cleanup, func() error {
 		if loadBalancerManager != nil {
 			return loadBalancerManager.Stop()
@@ -256,6 +275,7 @@ func NewWithConfig(config *domain.Config) *Manager {
 		circuitBreakers: circuitBreakerProvider,
 		rateLimiters:    rateLimiterProvider,
 		tracing:         tracingProvider,
+		transport:       appTransport,
 	}
 
 	if config.Observability.Enabled {
@@ -374,9 +394,10 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 		}()
 	}
 
-	m.transport = transport.NewGRPCTransport(m.logger, m.config.Transport)
 	m.transport.RegisterRaft(m.raftAdapter)
-
+	if sink, ok := m.loadBalancer.(ports.LoadSink); ok {
+		m.transport.RegisterLoadSink(sink)
+	}
 	if err := m.transport.Start(m.ctx, m.config.BindAddr, grpcPort); err != nil {
 		return err
 	}

@@ -7,6 +7,7 @@ import (
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 	"log/slog"
+	"math"
 	"net"
 	"strconv"
 	"time"
@@ -21,10 +22,11 @@ import (
 
 type GRPCTransport struct {
 	pb.UnimplementedGraftNodeServer
-	logger *slog.Logger
-	server *grpc.Server
-	engine ports.EnginePort
-	raft   ports.RaftNode
+	logger   *slog.Logger
+	server   *grpc.Server
+	engine   ports.EnginePort
+	raft     ports.RaftNode
+	loadSink ports.LoadSink
 
 	address string
 	port    int
@@ -112,6 +114,10 @@ func (t *GRPCTransport) RegisterEngine(engine ports.EnginePort) {
 
 func (t *GRPCTransport) RegisterRaft(raft ports.RaftNode) {
 	t.raft = raft
+}
+
+func (t *GRPCTransport) RegisterLoadSink(sink ports.LoadSink) {
+	t.loadSink = sink
 }
 
 func (t *GRPCTransport) ProcessTrigger(ctx context.Context, req *pb.TriggerRequest) (*pb.TriggerResponse, error) {
@@ -313,4 +319,211 @@ func (t *GRPCTransport) getConnection(ctx context.Context, nodeAddr string) (*gr
 	}
 
 	return conn, nil
+}
+
+func (t *GRPCTransport) ApplyCommand(ctx context.Context, req *pb.ApplyRequest) (*pb.ApplyResponse, error) {
+	if t.raft == nil {
+		return &pb.ApplyResponse{
+			Success: false,
+			Error:   "raft not available",
+		}, nil
+	}
+
+	if !t.raft.IsLeader() {
+		leaderAddr := t.raft.LeaderAddr()
+		clusterInfo := t.raft.GetClusterInfo()
+		leaderID := ""
+		if clusterInfo.Leader != nil {
+			leaderID = clusterInfo.Leader.ID
+		}
+
+		return &pb.ApplyResponse{
+			Success:    false,
+			LeaderAddr: leaderAddr,
+			LeaderId:   leaderID,
+		}, nil
+	}
+
+	cmd, err := domain.UnmarshalCommand(req.Command)
+	if err != nil {
+		return &pb.ApplyResponse{
+			Success: false,
+			Error:   err.Error(),
+		}, nil
+	}
+
+	timeout := 5 * time.Second
+	if t.cfg.ConnectionTimeout > 0 {
+		timeout = t.cfg.ConnectionTimeout
+	}
+
+	res, err := t.raft.Apply(*cmd, timeout)
+	if err != nil {
+		return &pb.ApplyResponse{
+			Success: false,
+			Error:   err.Error(),
+		}, nil
+	}
+
+	pbEvents := make([]*pb.Event, len(res.Events))
+	for i, event := range res.Events {
+		pbEvents[i] = &pb.Event{
+			Type:      uint32(event.Type),
+			Key:       event.Key,
+			Version:   event.Version,
+			NodeId:    event.NodeID,
+			Timestamp: event.Timestamp.Unix(),
+			RequestId: event.RequestID,
+		}
+	}
+
+	return &pb.ApplyResponse{
+		Success: res.Success,
+		Error:   res.Error,
+		Version: res.Version,
+		Events:  pbEvents,
+	}, nil
+}
+
+func (t *GRPCTransport) PublishLoad(ctx context.Context, req *pb.LoadUpdate) (*pb.Ack, error) {
+	if req.NodeId == "" {
+		return &pb.Ack{Ok: false, Message: "node_id is required"}, nil
+	}
+
+	if t.loadSink == nil {
+		return &pb.Ack{Ok: false, Message: "no sink registered"}, nil
+	}
+
+	update := ports.LoadUpdate{
+		NodeID:          req.NodeId,
+		ActiveWorkflows: int(req.ActiveWorkflows),
+		TotalWeight:     req.TotalWeight,
+		RecentLatencyMs: req.RecentLatencyMs,
+		RecentErrorRate: clampFloat(req.RecentErrorRate, 0.0, 1.0),
+		Capacity:        clampFloat(req.Capacity, 0.0, math.MaxFloat64),
+		Timestamp:       req.Timestamp,
+	}
+
+	if update.TotalWeight < 0 {
+		update.TotalWeight = 0
+	}
+	if update.RecentLatencyMs < 0 {
+		update.RecentLatencyMs = 0
+	}
+
+	err := t.loadSink.ReceiveLoadUpdate(update)
+	if err != nil {
+		t.logger.Error("failed to process load update",
+			"node_id", req.NodeId,
+			"error", err)
+		return &pb.Ack{Ok: false, Message: err.Error()}, nil
+	}
+
+	return &pb.Ack{Ok: true}, nil
+}
+
+func (t *GRPCTransport) SendApplyCommand(ctx context.Context, nodeAddr string, cmd *domain.Command) (*domain.CommandResult, string, error) {
+	cmdBytes, err := cmd.Marshal()
+	if err != nil {
+		return nil, "", domain.ErrInvalidInput
+	}
+
+	conn, err := t.getConnection(ctx, nodeAddr)
+	if err != nil {
+		return nil, "", domain.ErrConnection
+	}
+	defer conn.Close()
+
+	client := pb.NewGraftNodeClient(conn)
+	req := &pb.ApplyRequest{
+		Command: cmdBytes,
+	}
+
+	resp, err := client.ApplyCommand(ctx, req)
+	if err != nil {
+		return nil, "", domain.ErrTimeout
+	}
+
+	if resp.Success {
+		events := make([]domain.Event, len(resp.Events))
+		for i, pbEvent := range resp.Events {
+			events[i] = domain.Event{
+				Type:      domain.EventType(pbEvent.Type),
+				Key:       pbEvent.Key,
+				Version:   pbEvent.Version,
+				NodeID:    pbEvent.NodeId,
+				Timestamp: time.Unix(pbEvent.Timestamp, 0),
+				RequestID: pbEvent.RequestId,
+			}
+		}
+
+		result := &domain.CommandResult{
+			Success: resp.Success,
+			Error:   resp.Error,
+			Version: resp.Version,
+			Events:  events,
+		}
+		return result, "", nil
+	}
+
+	if resp.LeaderAddr != "" {
+		return nil, resp.LeaderAddr, nil
+	}
+
+	return nil, "", domain.ErrConnection
+}
+
+func (t *GRPCTransport) SendPublishLoad(ctx context.Context, nodeAddr string, update ports.LoadUpdate) error {
+	conn, err := t.getConnection(ctx, nodeAddr)
+	if err != nil {
+		return domain.ErrConnection
+	}
+	defer conn.Close()
+
+	client := pb.NewGraftNodeClient(conn)
+
+	req := &pb.LoadUpdate{
+		NodeId:          update.NodeID,
+		ActiveWorkflows: int32(update.ActiveWorkflows),
+		TotalWeight:     update.TotalWeight,
+		RecentLatencyMs: update.RecentLatencyMs,
+		RecentErrorRate: update.RecentErrorRate,
+		Capacity:        update.Capacity,
+		Timestamp:       update.Timestamp,
+	}
+
+	timeoutCtx := ctx
+	if t.cfg.ConnectionTimeout > 0 {
+		var cancel context.CancelFunc
+		timeoutCtx, cancel = context.WithTimeout(ctx, t.cfg.ConnectionTimeout)
+		defer cancel()
+	} else {
+		var cancel context.CancelFunc
+		timeoutCtx, cancel = context.WithTimeout(ctx, 500*time.Millisecond)
+		defer cancel()
+	}
+
+	resp, err := client.PublishLoad(timeoutCtx, req)
+	if err != nil {
+		return domain.ErrTimeout
+	}
+
+	if !resp.Ok {
+		t.logger.Debug("load update rejected",
+			"node_addr", nodeAddr,
+			"message", resp.Message)
+		return fmt.Errorf("load update rejected: %s", resp.Message)
+	}
+
+	return nil
+}
+
+func clampFloat(value, min, max float64) float64 {
+	if value < min {
+		return min
+	}
+	if value > max {
+		return max
+	}
+	return value
 }

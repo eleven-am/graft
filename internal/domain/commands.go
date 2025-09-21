@@ -19,22 +19,24 @@ const (
 )
 
 type Command struct {
-	Type      CommandType `json:"type"`
-	Key       string      `json:"key,omitempty"`
-	Value     []byte      `json:"value,omitempty"`
-	Expected  []byte      `json:"expected,omitempty"`
-	Version   int64       `json:"version,omitempty"`
-	Batch     []BatchOp   `json:"batch,omitempty"`
-	RequestID string      `json:"request_id,omitempty"`
-	Timestamp time.Time   `json:"timestamp"`
+	Type       CommandType `json:"type"`
+	Key        string      `json:"key,omitempty"`
+	Value      []byte      `json:"value,omitempty"`
+	Expected   []byte      `json:"expected,omitempty"`
+	Version    int64       `json:"version,omitempty"`
+	Batch      []BatchOp   `json:"batch,omitempty"`
+	RequestID  string      `json:"request_id,omitempty"`
+	Timestamp  time.Time   `json:"timestamp"`
+	TTLSeconds int64       `json:"ttl_seconds,omitempty"`
 }
 
 type BatchOp struct {
-	Type     CommandType `json:"type"`
-	Key      string      `json:"key"`
-	Value    []byte      `json:"value,omitempty"`
-	Expected []byte      `json:"expected,omitempty"`
-	Version  int64       `json:"version,omitempty"`
+	Type       CommandType `json:"type"`
+	Key        string      `json:"key"`
+	Value      []byte      `json:"value,omitempty"`
+	Expected   []byte      `json:"expected,omitempty"`
+	Version    int64       `json:"version,omitempty"`
+	TTLSeconds int64       `json:"ttl_seconds,omitempty"`
 }
 
 type CommandResult struct {
@@ -79,6 +81,18 @@ func NewPutCommand(key string, value []byte, version int64) *Command {
 		Version:   version,
 		Timestamp: time.Now(),
 		RequestID: generateRequestID(),
+	}
+}
+
+func NewPutWithTTLCommand(key string, value []byte, version int64, ttl time.Duration) *Command {
+	return &Command{
+		Type:       CommandPut,
+		Key:        key,
+		Value:      value,
+		Version:    version,
+		TTLSeconds: int64(ttl.Seconds()),
+		Timestamp:  time.Now(),
+		RequestID:  generateRequestID(),
 	}
 }
 

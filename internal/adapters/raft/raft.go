@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -86,9 +87,10 @@ type Node struct {
 	eventManager ports.EventManager
 	observer     *raft.Observer
 	observerChan chan raft.Observation
+	appTransport ports.TransportPort
 }
 
-func NewNode(config *Config, storage *Storage, eventManager ports.EventManager, logger *slog.Logger) (*Node, error) {
+func NewNode(config *Config, storage *Storage, eventManager ports.EventManager, appTransport ports.TransportPort, logger *slog.Logger) (*Node, error) {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -107,6 +109,7 @@ func NewNode(config *Config, storage *Storage, eventManager ports.EventManager, 
 		eventManager: eventManager,
 		observer:     observer,
 		observerChan: observerChan,
+		appTransport: appTransport,
 	}, nil
 }
 
@@ -200,26 +203,55 @@ func (r *Node) Apply(cmd domain.Command, timeout time.Duration) (*domain.Command
 	if r.raft == nil {
 		return nil, domain.ErrNotFound
 	}
-	if r.raft.State() != raft.Leader {
-		return nil, domain.ErrNotFound
+
+	if r.raft.State() == raft.Leader {
+		data, err := cmd.Marshal()
+		if err != nil {
+			return nil, domain.ErrInvalidInput
+		}
+
+		future := r.raft.Apply(data, timeout)
+		if err := future.Error(); err != nil {
+			return nil, domain.ErrTimeout
+		}
+
+		result, ok := future.Response().(*domain.CommandResult)
+		if !ok {
+			return nil, domain.ErrInvalidInput
+		}
+
+		return result, nil
 	}
 
-	data, err := cmd.Marshal()
-	if err != nil {
-		return nil, domain.ErrInvalidInput
+	r.mu.Lock()
+	appTransport := r.appTransport
+	r.mu.Unlock()
+
+	if appTransport != nil {
+		leader := r.LeaderAddr()
+		if leader == "" {
+			return nil, domain.ErrConnection
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+
+		res, redirect, err := appTransport.SendApplyCommand(ctx, leader, &cmd)
+		if err != nil {
+			return nil, err
+		}
+
+		if redirect != "" {
+			res, _, err = appTransport.SendApplyCommand(ctx, redirect, &cmd)
+			if err != nil {
+				return nil, err
+			}
+		}
+
+		return res, nil
 	}
 
-	future := r.raft.Apply(data, timeout)
-	if err := future.Error(); err != nil {
-		return nil, domain.ErrTimeout
-	}
-
-	result, ok := future.Response().(*domain.CommandResult)
-	if !ok {
-		return nil, domain.ErrInvalidInput
-	}
-
-	return result, nil
+	return nil, domain.ErrNotLeader{LeaderAddr: r.LeaderAddr()}
 }
 
 func (r *Node) IsLeader() bool {
@@ -853,18 +885,39 @@ func (r *Node) RequestJoin(leaderURL string, request JoinRequest) (*JoinResponse
 
 func (r *Node) JoinViaRPC(leaderAddr, nodeID, joinAddr string) error {
 	if !r.IsLeader() {
-		request := JoinRequest{
-			NodeID:  nodeID,
-			Address: joinAddr,
+		r.mu.Lock()
+		appTransport := r.appTransport
+		r.mu.Unlock()
+
+		if appTransport == nil {
+			return fmt.Errorf("transport not available")
 		}
 
-		leaderURL := fmt.Sprintf("http://%s", leaderAddr)
-		resp, err := r.RequestJoin(leaderURL, request)
+		host, portStr, err := net.SplitHostPort(joinAddr)
+		if err != nil {
+			return fmt.Errorf("invalid join address format: %w", err)
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			return fmt.Errorf("invalid port in join address: %w", err)
+		}
+
+		request := &ports.JoinRequest{
+			NodeID:   nodeID,
+			Address:  host,
+			Port:     port,
+			Metadata: map[string]string{},
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		resp, err := appTransport.SendJoinRequest(ctx, leaderAddr, request)
 		if err != nil {
 			return fmt.Errorf("failed to request join via RPC: %w", err)
 		}
 
-		if !resp.Success {
+		if !resp.Accepted {
 			return fmt.Errorf("join request rejected: %s", resp.Message)
 		}
 

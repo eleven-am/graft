@@ -439,13 +439,20 @@ func (as *AdaptiveStrategy) getAverageErrorRate(history *nodeHistory) float64 {
 
 func (as *AdaptiveStrategy) updateAllScores(nodes []NodeMetrics, now time.Time) {
 	for i := range nodes {
-		as.UpdateMetrics(nodes[i].NodeID, nodes[i])
+		as.updateMetricsLocked(nodes[i].NodeID, nodes[i])
 	}
 
 	as.cleanupOldHistory(now)
 }
 
 func (as *AdaptiveStrategy) UpdateMetrics(nodeID string, metrics NodeMetrics) {
+	as.mu.Lock()
+	defer as.mu.Unlock()
+
+	as.updateMetricsLocked(nodeID, metrics)
+}
+
+func (as *AdaptiveStrategy) updateMetricsLocked(nodeID string, metrics NodeMetrics) {
 	history := as.getOrCreateHistory(nodeID)
 	now := time.Now()
 
@@ -458,6 +465,9 @@ func (as *AdaptiveStrategy) UpdateMetrics(nodeID string, metrics NodeMetrics) {
 }
 
 func (as *AdaptiveStrategy) trimHistoryToWindow(history *nodeHistory, cutoff time.Time) {
+	if len(history.timestamps) == 0 {
+		return
+	}
 
 	start := 0
 	for i, ts := range history.timestamps {
@@ -468,9 +478,53 @@ func (as *AdaptiveStrategy) trimHistoryToWindow(history *nodeHistory, cutoff tim
 	}
 
 	if start > 0 {
-		history.responseTimeHistory = history.responseTimeHistory[start:]
-		history.errorRateHistory = history.errorRateHistory[start:]
-		history.timestamps = history.timestamps[start:]
+		// Ensure all slices have the same length to avoid race conditions
+		minLen := len(history.timestamps)
+		if len(history.responseTimeHistory) < minLen {
+			minLen = len(history.responseTimeHistory)
+		}
+		if len(history.errorRateHistory) < minLen {
+			minLen = len(history.errorRateHistory)
+		}
+
+		// Adjust start if it's beyond the minimum length
+		if start >= minLen {
+			// Clear all if start is beyond bounds
+			history.responseTimeHistory = history.responseTimeHistory[:0]
+			history.errorRateHistory = history.errorRateHistory[:0]
+			history.timestamps = history.timestamps[:0]
+		} else {
+			// Safely slice each array within its own bounds
+			if start < len(history.responseTimeHistory) {
+				endIdx := minLen
+				if endIdx > len(history.responseTimeHistory) {
+					endIdx = len(history.responseTimeHistory)
+				}
+				history.responseTimeHistory = history.responseTimeHistory[start:endIdx]
+			} else {
+				history.responseTimeHistory = history.responseTimeHistory[:0]
+			}
+
+			if start < len(history.errorRateHistory) {
+				endIdx := minLen
+				if endIdx > len(history.errorRateHistory) {
+					endIdx = len(history.errorRateHistory)
+				}
+				history.errorRateHistory = history.errorRateHistory[start:endIdx]
+			} else {
+				history.errorRateHistory = history.errorRateHistory[:0]
+			}
+
+			if start < len(history.timestamps) {
+				endIdx := minLen
+				if endIdx > len(history.timestamps) {
+					endIdx = len(history.timestamps)
+				}
+				history.timestamps = history.timestamps[start:endIdx]
+			} else {
+				history.timestamps = history.timestamps[:0]
+			}
+		}
 	}
 }
 

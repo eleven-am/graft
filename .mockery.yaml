@@ -18,6 +18,8 @@ packages:
       Transaction:
       EventManager:
       LoadBalancer:
+      LoadSink:
+      TransportPort:
       NodeRegistryPort:
       RaftNode:
       QueuePort:

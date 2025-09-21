@@ -467,3 +467,14 @@ func NewPermissionError(message string, cause error) *DomainError {
 func NewResourceError(message string, cause error) *DomainError {
 	return NewDomainErrorWithCategory(CategoryResource, message, cause)
 }
+
+type ErrNotLeader struct {
+	LeaderAddr string
+}
+
+func (e ErrNotLeader) Error() string {
+	if e.LeaderAddr != "" {
+		return fmt.Sprintf("not leader, leader is at: %s", e.LeaderAddr)
+	}
+	return "not leader, no known leader"
+}

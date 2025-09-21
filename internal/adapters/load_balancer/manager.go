@@ -2,8 +2,6 @@ package load_balancer
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 	"math"
@@ -15,16 +13,18 @@ import (
 )
 
 type Config struct {
-	ScoreCacheTTL   time.Duration                     `json:"score_cache_ttl"`
-	FailurePolicy   string                            `json:"failure_policy"` // "fail-open" or "fail-closed"
-	DefaultCapacity float64                           `json:"default_capacity"`
-	Algorithm       domain.LoadBalancingAlgorithm     `json:"algorithm"`
-	WeightedConfig  domain.WeightedRoundRobinConfig   `json:"weighted_config"`
-	AdaptiveConfig  domain.AdaptiveLoadBalancerConfig `json:"adaptive_config"`
+	ScoreCacheTTL      time.Duration                     `json:"score_cache_ttl"`
+	FailurePolicy      string                            `json:"failure_policy"` // "fail-open" or "fail-closed"
+	DefaultCapacity    float64                           `json:"default_capacity"`
+	Algorithm          domain.LoadBalancingAlgorithm     `json:"algorithm"`
+	WeightedConfig     domain.WeightedRoundRobinConfig   `json:"weighted_config"`
+	AdaptiveConfig     domain.AdaptiveLoadBalancerConfig `json:"adaptive_config"`
+	PublishInterval    time.Duration                     `json:"publish_interval"`
+	PublishDebounce    time.Duration                     `json:"publish_debounce"`
+	AvailabilityWindow time.Duration                     `json:"availability_window"`
 }
 
 type Manager struct {
-	storage        ports.StoragePort
 	events         ports.EventManager
 	nodeID         string
 	logger         *slog.Logger
@@ -49,6 +49,14 @@ type Manager struct {
 	// Advanced load balancing
 	strategy    LoadBalancingStrategy
 	nodeMetrics map[string]NodeMetrics
+
+	// RPC telemetry publishing
+	transport          ports.TransportPort
+	getPeerAddrs       func() []string
+	publishDebounce    time.Duration
+	publishInterval    time.Duration
+	availabilityWindow time.Duration
+	publishCh          chan struct{}
 }
 
 type scoreCacheEntry struct {
@@ -56,7 +64,7 @@ type scoreCacheEntry struct {
 	timestamp int64
 }
 
-func NewManager(storage ports.StoragePort, events ports.EventManager, nodeID string, clusterManager ports.ClusterManager, config *Config, logger *slog.Logger) *Manager {
+func NewManager(events ports.EventManager, nodeID string, clusterManager ports.ClusterManager, config *Config, logger *slog.Logger) *Manager {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -74,7 +82,6 @@ func NewManager(storage ports.StoragePort, events ports.EventManager, nodeID str
 	}
 
 	manager := &Manager{
-		storage:        storage,
 		events:         events,
 		nodeID:         nodeID,
 		clusterManager: clusterManager,
@@ -86,6 +93,22 @@ func NewManager(storage ports.StoragePort, events ports.EventManager, nodeID str
 		scoreCache:     make(map[string]scoreCacheEntry),
 		scoreCacheTTL:  config.ScoreCacheTTL,
 		nodeMetrics:    make(map[string]NodeMetrics),
+		// reasonable defaults for telemetry
+		publishInterval:    2 * time.Second,
+		publishDebounce:    250 * time.Millisecond,
+		availabilityWindow: 30 * time.Second,
+		publishCh:          make(chan struct{}, 1),
+	}
+
+	// Override telemetry defaults from config if provided
+	if config.PublishInterval > 0 {
+		manager.publishInterval = config.PublishInterval
+	}
+	if config.PublishDebounce > 0 {
+		manager.publishDebounce = config.PublishDebounce
+	}
+	if config.AvailabilityWindow > 0 {
+		manager.availabilityWindow = config.AvailabilityWindow
 	}
 
 	manager.initializeStrategy()
@@ -148,6 +171,9 @@ func (m *Manager) Start(ctx context.Context) error {
 	if m.clusterManager != nil {
 		go m.monitorClusterHealth()
 	}
+
+	// start telemetry publisher
+	go m.publisherLoop()
 
 	return nil
 }
@@ -231,20 +257,7 @@ func (m *Manager) subscribeToEvents() error {
 }
 
 func (m *Manager) initializeNodeLoad() error {
-	load := &ports.NodeLoad{
-		NodeID:          m.nodeID,
-		TotalWeight:     0,
-		ExecutionUnits:  make(map[string]float64),
-		RecentLatencyMs: 0,
-		RecentErrorRate: 0,
-		LastUpdated:     time.Now().Unix(),
-	}
-
-	err := m.updateNodeLoad(load)
-	if err != nil && errors.Is(err, domain.ErrNotFound) {
-		return nil
-	}
-	return err
+	return nil
 }
 
 func (m *Manager) onNodeStarted(event *domain.NodeStartedEvent) {
@@ -257,30 +270,13 @@ func (m *Manager) onNodeStarted(event *domain.NodeStartedEvent) {
 	m.executionUnits[event.WorkflowID] = weight
 	m.totalWeight += weight
 
-	executionUnitsCopy := make(map[string]float64, len(m.executionUnits))
-	for k, v := range m.executionUnits {
-		executionUnitsCopy[k] = v
-	}
-
-	load := &ports.NodeLoad{
-		NodeID:          m.nodeID,
-		TotalWeight:     m.totalWeight,
-		ExecutionUnits:  executionUnitsCopy,
-		RecentLatencyMs: m.recentLatencyMs,
-		RecentErrorRate: m.errorWindow.GetErrorRate(),
-		LastUpdated:     time.Now().Unix(),
-	}
 	m.mu.Unlock()
-
-	if err := m.updateNodeLoad(load); err != nil {
-		m.logger.Error("failed to update node load on start", "error", err,
-			"workflow_id", event.WorkflowID,
-			"weight", weight)
-	}
 
 	m.mu.Lock()
 	m.cleanupScoreCacheIfNeeded()
 	m.mu.Unlock()
+
+	m.requestPublish()
 }
 
 func (m *Manager) onNodeCompleted(event *domain.NodeCompletedEvent) {
@@ -298,24 +294,9 @@ func (m *Manager) onNodeCompleted(event *domain.NodeCompletedEvent) {
 
 	m.errorWindow.Record(true)
 
-	executionUnitsCopy := make(map[string]float64, len(m.executionUnits))
-	for k, v := range m.executionUnits {
-		executionUnitsCopy[k] = v
-	}
-
-	load := &ports.NodeLoad{
-		NodeID:          m.nodeID,
-		TotalWeight:     m.totalWeight,
-		ExecutionUnits:  executionUnitsCopy,
-		RecentLatencyMs: m.recentLatencyMs,
-		RecentErrorRate: m.errorWindow.GetErrorRate(),
-		LastUpdated:     time.Now().Unix(),
-	}
 	m.mu.Unlock()
 
-	if err := m.updateNodeLoad(load); err != nil {
-		m.logger.Error("failed to update load in storage", "error", err)
-	}
+	m.requestPublish()
 }
 
 func (m *Manager) onNodeError(event *domain.NodeErrorEvent) {
@@ -328,34 +309,9 @@ func (m *Manager) onNodeError(event *domain.NodeErrorEvent) {
 
 	m.errorWindow.Record(false)
 
-	executionUnitsCopy := make(map[string]float64, len(m.executionUnits))
-	for k, v := range m.executionUnits {
-		executionUnitsCopy[k] = v
-	}
-
-	load := &ports.NodeLoad{
-		NodeID:          m.nodeID,
-		TotalWeight:     m.totalWeight,
-		ExecutionUnits:  executionUnitsCopy,
-		RecentLatencyMs: m.recentLatencyMs,
-		RecentErrorRate: m.errorWindow.GetErrorRate(),
-		LastUpdated:     time.Now().Unix(),
-	}
 	m.mu.Unlock()
 
-	if err := m.updateNodeLoad(load); err != nil {
-		m.logger.Error("failed to update load in storage", "error", err)
-	}
-}
-
-func (m *Manager) updateNodeLoad(load *ports.NodeLoad) error {
-	data, err := json.Marshal(load)
-	if err != nil {
-		return domain.ErrInvalidInput
-	}
-
-	key := fmt.Sprintf("cluster:load:%s", load.NodeID)
-	return m.storage.Put(key, data, 0)
+	m.requestPublish()
 }
 
 func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName string) (bool, error) {
@@ -391,10 +347,7 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 		}
 	}
 
-	clusterLoad, err := m.GetClusterLoad()
-	if err != nil {
-		return m.handleFailurePolicy("failed to get cluster load", err), nil
-	}
+	clusterLoad := m.getInMemoryClusterLoad()
 
 	if len(clusterLoad) == 0 {
 		return m.handleFailurePolicy("no valid cluster load data found", nil), nil
@@ -428,9 +381,200 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 	return shouldExecute, nil
 }
 
-func (m *Manager) convertToNodeMetrics(clusterLoad map[string]*ports.NodeLoad) []NodeMetrics {
+func (m *Manager) getInMemoryClusterLoad() map[string]*ports.NodeLoad {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	clusterLoad := make(map[string]*ports.NodeLoad)
+
+	// Add current node data
+	clusterLoad[m.nodeID] = &ports.NodeLoad{
+		NodeID:          m.nodeID,
+		TotalWeight:     m.totalWeight,
+		ExecutionUnits:  make(map[string]float64),
+		RecentLatencyMs: m.recentLatencyMs,
+		RecentErrorRate: m.errorWindow.GetErrorRate(),
+		LastUpdated:     time.Now().Unix(),
+	}
+
+	// Copy execution units for current node
+	for k, v := range m.executionUnits {
+		clusterLoad[m.nodeID].ExecutionUnits[k] = v
+	}
+
+	// Add received node metrics from other nodes
+	now := time.Now()
+
+	// Make a copy of nodeMetrics to avoid race conditions during iteration
+	nodeMetricsCopy := make(map[string]NodeMetrics)
+	for nodeID, metrics := range m.nodeMetrics {
+		nodeMetricsCopy[nodeID] = metrics
+	}
+
+	for nodeID, metrics := range nodeMetricsCopy {
+		// Skip current node (already added above)
+		if nodeID == m.nodeID {
+			continue
+		}
+
+		// Apply freshness filter - ignore stale data (older than configured window)
+		window := m.availabilityWindow
+		if window <= 0 {
+			window = 30 * time.Second
+		}
+		if now.Sub(metrics.LastUpdated) > window {
+			continue
+		}
+
+		clusterLoad[nodeID] = &ports.NodeLoad{
+			NodeID:          nodeID,
+			TotalWeight:     float64(metrics.ActiveWorkflows), // Use active workflows as proxy for weight
+			ExecutionUnits:  make(map[string]float64),         // Remote nodes don't share execution unit details
+			RecentLatencyMs: metrics.ResponseTime,
+			RecentErrorRate: metrics.ErrorRate,
+			LastUpdated:     metrics.LastUpdated.Unix(),
+		}
+	}
+
+	return clusterLoad
+}
+
+// GetClusterLoad returns in-memory cluster load data (interface compatibility)
+// (compat methods removed) Cluster load is internal-only and derived from in-memory telemetry.
+
+// ReceiveLoadUpdate processes incoming load updates from other nodes
+func (m *Manager) ReceiveLoadUpdate(update ports.LoadUpdate) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	// Update or create node metrics entry
+	if m.nodeMetrics == nil {
+		m.nodeMetrics = make(map[string]NodeMetrics)
+	}
+
+	// Convert LoadUpdate to NodeMetrics and store (use local receipt time for freshness)
+	m.nodeMetrics[update.NodeID] = NodeMetrics{
+		NodeID:          update.NodeID,
+		ResponseTime:    update.RecentLatencyMs,
+		CpuUsage:        0, // Not provided in LoadUpdate
+		MemoryUsage:     0, // Not provided in LoadUpdate
+		ConnectionCount: update.ActiveWorkflows,
+		ErrorRate:       update.RecentErrorRate,
+		Capacity:        update.Capacity,
+		ActiveWorkflows: update.ActiveWorkflows,
+		LastUpdated:     time.Now(),
+		Available:       true, // Assume available if we received an update
+	}
+
+	m.logger.Debug("received load update",
+		"node_id", update.NodeID,
+		"active_workflows", update.ActiveWorkflows,
+		"total_weight", update.TotalWeight,
+		"latency_ms", update.RecentLatencyMs,
+		"error_rate", update.RecentErrorRate,
+		"capacity", update.Capacity)
+
+	// Clean up stale metrics periodically
+	m.cleanupStaleNodeMetrics()
+
+	return nil
+}
+
+// cleanupStaleNodeMetrics removes outdated node metrics entries
+func (m *Manager) cleanupStaleNodeMetrics() {
+	now := time.Now()
+	window := m.availabilityWindow
+	if window <= 0 {
+		window = 30 * time.Second
+	}
+	for nodeID, metrics := range m.nodeMetrics {
+		// Remove entries older than window
+		if now.Sub(metrics.LastUpdated) > window {
+			delete(m.nodeMetrics, nodeID)
+			m.logger.Debug("removed stale node metrics", "node_id", nodeID)
+		}
+	}
+}
+
+// SetTransport injects the transport used to publish load updates to peers.
+func (m *Manager) SetTransport(tp ports.TransportPort) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.transport = tp
+}
+
+// SetPeerAddrProvider injects a provider to discover peer gRPC addresses.
+func (m *Manager) SetPeerAddrProvider(provider func() []string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.getPeerAddrs = provider
+}
+
+// requestPublish triggers a debounced publish of local metrics.
+func (m *Manager) requestPublish() {
+	select {
+	case m.publishCh <- struct{}{}:
+	default:
+	}
+}
+
+func (m *Manager) publisherLoop() {
+	// Periodic ticker
+	interval := m.publishInterval
+	if interval <= 0 {
+		interval = 2 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case <-ticker.C:
+			m.publishLocalMetrics()
+		case <-m.publishCh:
+			// debounce short bursts
+			debounce := m.publishDebounce
+			if debounce <= 0 {
+				debounce = 250 * time.Millisecond
+			}
+			time.Sleep(debounce)
+			m.publishLocalMetrics()
+		}
+	}
+}
+
+func (m *Manager) publishLocalMetrics() {
+	m.mu.RLock()
+	tp := m.transport
+	provider := m.getPeerAddrs
+	update := ports.LoadUpdate{
+		NodeID:          m.nodeID,
+		ActiveWorkflows: int(len(m.executionUnits)),
+		TotalWeight:     m.totalWeight,
+		RecentLatencyMs: m.recentLatencyMs,
+		RecentErrorRate: m.errorWindow.GetErrorRate(),
+		Capacity:        m.config.DefaultCapacity,
+		Timestamp:       time.Now().Unix(),
+	}
+	m.mu.RUnlock()
+
+	if tp == nil || provider == nil {
+		return
+	}
+
+	// publish to peers with a short timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
+	defer cancel()
+	for _, addr := range provider() {
+		_ = tp.SendPublishLoad(ctx, addr, update)
+	}
+}
+
+func (m *Manager) convertToNodeMetrics(clusterLoad map[string]*ports.NodeLoad) []NodeMetrics {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	metrics := make([]NodeMetrics, 0, len(clusterLoad))
 	now := time.Now()
@@ -649,59 +793,6 @@ func (m *Manager) cleanupScoreCacheIfNeeded() {
 		now := time.Now().Unix()
 		m.cleanupScoreCache(now)
 	}
-}
-
-func (m *Manager) GetClusterLoad() (map[string]*ports.NodeLoad, error) {
-	keys, err := m.storage.ListByPrefix("cluster:load:")
-	if err != nil {
-		return nil, domain.ErrConnection
-	}
-
-	clusterLoad := make(map[string]*ports.NodeLoad)
-	for _, kv := range keys {
-		var load ports.NodeLoad
-		if err := json.Unmarshal(kv.Value, &load); err != nil {
-			m.logger.Warn("failed to unmarshal node load", "key", kv.Key, "error", err)
-			continue
-		}
-
-		if load.ExecutionUnits == nil {
-			load.ExecutionUnits = make(map[string]float64)
-		}
-
-		clusterLoad[load.NodeID] = &load
-	}
-
-	return clusterLoad, nil
-}
-
-func (m *Manager) GetNodeLoad(nodeID string) (*ports.NodeLoad, error) {
-	key := fmt.Sprintf("cluster:load:%s", nodeID)
-	data, _, exists, err := m.storage.Get(key)
-	if err != nil {
-		return nil, domain.ErrConnection
-	}
-	if !exists {
-		return &ports.NodeLoad{
-			NodeID:          nodeID,
-			TotalWeight:     0,
-			ExecutionUnits:  make(map[string]float64),
-			RecentLatencyMs: 0,
-			RecentErrorRate: 0,
-			LastUpdated:     0,
-		}, nil
-	}
-
-	var load ports.NodeLoad
-	if err := json.Unmarshal(data, &load); err != nil {
-		return nil, domain.ErrInvalidInput
-	}
-
-	if load.ExecutionUnits == nil {
-		load.ExecutionUnits = make(map[string]float64)
-	}
-
-	return &load, nil
 }
 
 func (m *Manager) GetLoadBalancingMetrics() map[string]interface{} {

@@ -365,6 +365,362 @@ func (x *JoinResponse) GetMessage() string {
 	return ""
 }
 
+type ApplyRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Command       []byte                 `protobuf:"bytes,1,opt,name=command,proto3" json:"command,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApplyRequest) Reset() {
+	*x = ApplyRequest{}
+	mi := &file_graft_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApplyRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApplyRequest) ProtoMessage() {}
+
+func (x *ApplyRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_graft_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApplyRequest.ProtoReflect.Descriptor instead.
+func (*ApplyRequest) Descriptor() ([]byte, []int) {
+	return file_graft_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ApplyRequest) GetCommand() []byte {
+	if x != nil {
+		return x.Command
+	}
+	return nil
+}
+
+type Event struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Type          uint32                 `protobuf:"varint,1,opt,name=type,proto3" json:"type,omitempty"`
+	Key           string                 `protobuf:"bytes,2,opt,name=key,proto3" json:"key,omitempty"`
+	Version       int64                  `protobuf:"varint,3,opt,name=version,proto3" json:"version,omitempty"`
+	NodeId        string                 `protobuf:"bytes,4,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Timestamp     int64                  `protobuf:"varint,5,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	RequestId     string                 `protobuf:"bytes,6,opt,name=request_id,json=requestId,proto3" json:"request_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Event) Reset() {
+	*x = Event{}
+	mi := &file_graft_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Event) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Event) ProtoMessage() {}
+
+func (x *Event) ProtoReflect() protoreflect.Message {
+	mi := &file_graft_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Event.ProtoReflect.Descriptor instead.
+func (*Event) Descriptor() ([]byte, []int) {
+	return file_graft_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *Event) GetType() uint32 {
+	if x != nil {
+		return x.Type
+	}
+	return 0
+}
+
+func (x *Event) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *Event) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *Event) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *Event) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+func (x *Event) GetRequestId() string {
+	if x != nil {
+		return x.RequestId
+	}
+	return ""
+}
+
+type ApplyResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Success       bool                   `protobuf:"varint,1,opt,name=success,proto3" json:"success,omitempty"`
+	Error         string                 `protobuf:"bytes,2,opt,name=error,proto3" json:"error,omitempty"`
+	Version       int64                  `protobuf:"varint,3,opt,name=version,proto3" json:"version,omitempty"`
+	Events        []*Event               `protobuf:"bytes,4,rep,name=events,proto3" json:"events,omitempty"`
+	LeaderId      string                 `protobuf:"bytes,5,opt,name=leader_id,json=leaderId,proto3" json:"leader_id,omitempty"`
+	LeaderAddr    string                 `protobuf:"bytes,6,opt,name=leader_addr,json=leaderAddr,proto3" json:"leader_addr,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ApplyResponse) Reset() {
+	*x = ApplyResponse{}
+	mi := &file_graft_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ApplyResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ApplyResponse) ProtoMessage() {}
+
+func (x *ApplyResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_graft_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ApplyResponse.ProtoReflect.Descriptor instead.
+func (*ApplyResponse) Descriptor() ([]byte, []int) {
+	return file_graft_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ApplyResponse) GetSuccess() bool {
+	if x != nil {
+		return x.Success
+	}
+	return false
+}
+
+func (x *ApplyResponse) GetError() string {
+	if x != nil {
+		return x.Error
+	}
+	return ""
+}
+
+func (x *ApplyResponse) GetVersion() int64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *ApplyResponse) GetEvents() []*Event {
+	if x != nil {
+		return x.Events
+	}
+	return nil
+}
+
+func (x *ApplyResponse) GetLeaderId() string {
+	if x != nil {
+		return x.LeaderId
+	}
+	return ""
+}
+
+func (x *ApplyResponse) GetLeaderAddr() string {
+	if x != nil {
+		return x.LeaderAddr
+	}
+	return ""
+}
+
+type LoadUpdate struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	NodeId          string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	ActiveWorkflows int32                  `protobuf:"varint,2,opt,name=active_workflows,json=activeWorkflows,proto3" json:"active_workflows,omitempty"`
+	TotalWeight     float64                `protobuf:"fixed64,3,opt,name=total_weight,json=totalWeight,proto3" json:"total_weight,omitempty"`
+	RecentLatencyMs float64                `protobuf:"fixed64,4,opt,name=recent_latency_ms,json=recentLatencyMs,proto3" json:"recent_latency_ms,omitempty"`
+	RecentErrorRate float64                `protobuf:"fixed64,5,opt,name=recent_error_rate,json=recentErrorRate,proto3" json:"recent_error_rate,omitempty"`
+	Capacity        float64                `protobuf:"fixed64,6,opt,name=capacity,proto3" json:"capacity,omitempty"`
+	Timestamp       int64                  `protobuf:"varint,7,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *LoadUpdate) Reset() {
+	*x = LoadUpdate{}
+	mi := &file_graft_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *LoadUpdate) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*LoadUpdate) ProtoMessage() {}
+
+func (x *LoadUpdate) ProtoReflect() protoreflect.Message {
+	mi := &file_graft_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use LoadUpdate.ProtoReflect.Descriptor instead.
+func (*LoadUpdate) Descriptor() ([]byte, []int) {
+	return file_graft_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *LoadUpdate) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *LoadUpdate) GetActiveWorkflows() int32 {
+	if x != nil {
+		return x.ActiveWorkflows
+	}
+	return 0
+}
+
+func (x *LoadUpdate) GetTotalWeight() float64 {
+	if x != nil {
+		return x.TotalWeight
+	}
+	return 0
+}
+
+func (x *LoadUpdate) GetRecentLatencyMs() float64 {
+	if x != nil {
+		return x.RecentLatencyMs
+	}
+	return 0
+}
+
+func (x *LoadUpdate) GetRecentErrorRate() float64 {
+	if x != nil {
+		return x.RecentErrorRate
+	}
+	return 0
+}
+
+func (x *LoadUpdate) GetCapacity() float64 {
+	if x != nil {
+		return x.Capacity
+	}
+	return 0
+}
+
+func (x *LoadUpdate) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
+type Ack struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Ack) Reset() {
+	*x = Ack{}
+	mi := &file_graft_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Ack) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Ack) ProtoMessage() {}
+
+func (x *Ack) ProtoReflect() protoreflect.Message {
+	mi := &file_graft_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Ack.ProtoReflect.Descriptor instead.
+func (*Ack) Descriptor() ([]byte, []int) {
+	return file_graft_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *Ack) GetOk() bool {
+	if x != nil {
+		return x.Ok
+	}
+	return false
+}
+
+func (x *Ack) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
 var File_graft_proto protoreflect.FileDescriptor
 
 const file_graft_proto_rawDesc = "" +
@@ -399,10 +755,43 @@ const file_graft_proto_rawDesc = "" +
 	"\fJoinResponse\x12\x1a\n" +
 	"\baccepted\x18\x01 \x01(\bR\baccepted\x12\x17\n" +
 	"\anode_id\x18\x02 \x01(\tR\x06nodeId\x12\x18\n" +
-	"\amessage\x18\x03 \x01(\tR\amessage2\x84\x01\n" +
+	"\amessage\x18\x03 \x01(\tR\amessage\"(\n" +
+	"\fApplyRequest\x12\x18\n" +
+	"\acommand\x18\x01 \x01(\fR\acommand\"\x9d\x01\n" +
+	"\x05Event\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\rR\x04type\x12\x10\n" +
+	"\x03key\x18\x02 \x01(\tR\x03key\x12\x18\n" +
+	"\aversion\x18\x03 \x01(\x03R\aversion\x12\x17\n" +
+	"\anode_id\x18\x04 \x01(\tR\x06nodeId\x12\x1c\n" +
+	"\ttimestamp\x18\x05 \x01(\x03R\ttimestamp\x12\x1d\n" +
+	"\n" +
+	"request_id\x18\x06 \x01(\tR\trequestId\"\xbd\x01\n" +
+	"\rApplyResponse\x12\x18\n" +
+	"\asuccess\x18\x01 \x01(\bR\asuccess\x12\x14\n" +
+	"\x05error\x18\x02 \x01(\tR\x05error\x12\x18\n" +
+	"\aversion\x18\x03 \x01(\x03R\aversion\x12$\n" +
+	"\x06events\x18\x04 \x03(\v2\f.graft.EventR\x06events\x12\x1b\n" +
+	"\tleader_id\x18\x05 \x01(\tR\bleaderId\x12\x1f\n" +
+	"\vleader_addr\x18\x06 \x01(\tR\n" +
+	"leaderAddr\"\x85\x02\n" +
+	"\n" +
+	"LoadUpdate\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12)\n" +
+	"\x10active_workflows\x18\x02 \x01(\x05R\x0factiveWorkflows\x12!\n" +
+	"\ftotal_weight\x18\x03 \x01(\x01R\vtotalWeight\x12*\n" +
+	"\x11recent_latency_ms\x18\x04 \x01(\x01R\x0frecentLatencyMs\x12*\n" +
+	"\x11recent_error_rate\x18\x05 \x01(\x01R\x0frecentErrorRate\x12\x1a\n" +
+	"\bcapacity\x18\x06 \x01(\x01R\bcapacity\x12\x1c\n" +
+	"\ttimestamp\x18\a \x01(\x03R\ttimestamp\"/\n" +
+	"\x03Ack\x12\x0e\n" +
+	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage2\xed\x01\n" +
 	"\tGraftNode\x12?\n" +
 	"\x0eProcessTrigger\x12\x15.graft.TriggerRequest\x1a\x16.graft.TriggerResponse\x126\n" +
-	"\vRequestJoin\x12\x12.graft.JoinRequest\x1a\x13.graft.JoinResponseB+Z)github.com/eleven-am/graft/internal/protob\x06proto3"
+	"\vRequestJoin\x12\x12.graft.JoinRequest\x1a\x13.graft.JoinResponse\x129\n" +
+	"\fApplyCommand\x12\x13.graft.ApplyRequest\x1a\x14.graft.ApplyResponse\x12,\n" +
+	"\vPublishLoad\x12\x11.graft.LoadUpdate\x1a\n" +
+	".graft.AckB+Z)github.com/eleven-am/graft/internal/protob\x06proto3"
 
 var (
 	file_graft_proto_rawDescOnce sync.Once
@@ -416,7 +805,7 @@ func file_graft_proto_rawDescGZIP() []byte {
 	return file_graft_proto_rawDescData
 }
 
-var file_graft_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_graft_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
 var file_graft_proto_goTypes = []any{
 	(*NodeConfig)(nil),      // 0: graft.NodeConfig
 	(*WorkflowTrigger)(nil), // 1: graft.WorkflowTrigger
@@ -424,23 +813,33 @@ var file_graft_proto_goTypes = []any{
 	(*TriggerResponse)(nil), // 3: graft.TriggerResponse
 	(*JoinRequest)(nil),     // 4: graft.JoinRequest
 	(*JoinResponse)(nil),    // 5: graft.JoinResponse
-	nil,                     // 6: graft.WorkflowTrigger.MetadataEntry
-	nil,                     // 7: graft.JoinRequest.MetadataEntry
+	(*ApplyRequest)(nil),    // 6: graft.ApplyRequest
+	(*Event)(nil),           // 7: graft.Event
+	(*ApplyResponse)(nil),   // 8: graft.ApplyResponse
+	(*LoadUpdate)(nil),      // 9: graft.LoadUpdate
+	(*Ack)(nil),             // 10: graft.Ack
+	nil,                     // 11: graft.WorkflowTrigger.MetadataEntry
+	nil,                     // 12: graft.JoinRequest.MetadataEntry
 }
 var file_graft_proto_depIdxs = []int32{
-	0, // 0: graft.WorkflowTrigger.initial_nodes:type_name -> graft.NodeConfig
-	6, // 1: graft.WorkflowTrigger.metadata:type_name -> graft.WorkflowTrigger.MetadataEntry
-	1, // 2: graft.TriggerRequest.trigger:type_name -> graft.WorkflowTrigger
-	7, // 3: graft.JoinRequest.metadata:type_name -> graft.JoinRequest.MetadataEntry
-	2, // 4: graft.GraftNode.ProcessTrigger:input_type -> graft.TriggerRequest
-	4, // 5: graft.GraftNode.RequestJoin:input_type -> graft.JoinRequest
-	3, // 6: graft.GraftNode.ProcessTrigger:output_type -> graft.TriggerResponse
-	5, // 7: graft.GraftNode.RequestJoin:output_type -> graft.JoinResponse
-	6, // [6:8] is the sub-list for method output_type
-	4, // [4:6] is the sub-list for method input_type
-	4, // [4:4] is the sub-list for extension type_name
-	4, // [4:4] is the sub-list for extension extendee
-	0, // [0:4] is the sub-list for field type_name
+	0,  // 0: graft.WorkflowTrigger.initial_nodes:type_name -> graft.NodeConfig
+	11, // 1: graft.WorkflowTrigger.metadata:type_name -> graft.WorkflowTrigger.MetadataEntry
+	1,  // 2: graft.TriggerRequest.trigger:type_name -> graft.WorkflowTrigger
+	12, // 3: graft.JoinRequest.metadata:type_name -> graft.JoinRequest.MetadataEntry
+	7,  // 4: graft.ApplyResponse.events:type_name -> graft.Event
+	2,  // 5: graft.GraftNode.ProcessTrigger:input_type -> graft.TriggerRequest
+	4,  // 6: graft.GraftNode.RequestJoin:input_type -> graft.JoinRequest
+	6,  // 7: graft.GraftNode.ApplyCommand:input_type -> graft.ApplyRequest
+	9,  // 8: graft.GraftNode.PublishLoad:input_type -> graft.LoadUpdate
+	3,  // 9: graft.GraftNode.ProcessTrigger:output_type -> graft.TriggerResponse
+	5,  // 10: graft.GraftNode.RequestJoin:output_type -> graft.JoinResponse
+	8,  // 11: graft.GraftNode.ApplyCommand:output_type -> graft.ApplyResponse
+	10, // 12: graft.GraftNode.PublishLoad:output_type -> graft.Ack
+	9,  // [9:13] is the sub-list for method output_type
+	5,  // [5:9] is the sub-list for method input_type
+	5,  // [5:5] is the sub-list for extension type_name
+	5,  // [5:5] is the sub-list for extension extendee
+	0,  // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_graft_proto_init() }
@@ -454,7 +853,7 @@ func file_graft_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_graft_proto_rawDesc), len(file_graft_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   8,
+			NumMessages:   13,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -129,12 +129,15 @@ type ClusterConfig struct {
 }
 
 type LoadBalancerConfig struct {
-	ScoreCacheTTL   time.Duration              `json:"score_cache_ttl" yaml:"score_cache_ttl"`
-	FailurePolicy   string                     `json:"failure_policy" yaml:"failure_policy"` // "fail-open" or "fail-closed"
-	DefaultCapacity float64                    `json:"default_capacity" yaml:"default_capacity"`
-	Algorithm       LoadBalancingAlgorithm     `json:"algorithm" yaml:"algorithm"`
-	WeightedConfig  WeightedRoundRobinConfig   `json:"weighted_config" yaml:"weighted_config"`
-	AdaptiveConfig  AdaptiveLoadBalancerConfig `json:"adaptive_config" yaml:"adaptive_config"`
+	ScoreCacheTTL      time.Duration              `json:"score_cache_ttl" yaml:"score_cache_ttl"`
+	FailurePolicy      string                     `json:"failure_policy" yaml:"failure_policy"` // "fail-open" or "fail-closed"
+	DefaultCapacity    float64                    `json:"default_capacity" yaml:"default_capacity"`
+	Algorithm          LoadBalancingAlgorithm     `json:"algorithm" yaml:"algorithm"`
+	WeightedConfig     WeightedRoundRobinConfig   `json:"weighted_config" yaml:"weighted_config"`
+	AdaptiveConfig     AdaptiveLoadBalancerConfig `json:"adaptive_config" yaml:"adaptive_config"`
+	PublishInterval    time.Duration              `json:"publish_interval" yaml:"publish_interval"`
+	PublishDebounce    time.Duration              `json:"publish_debounce" yaml:"publish_debounce"`
+	AvailabilityWindow time.Duration              `json:"availability_window" yaml:"availability_window"`
 }
 
 type LoadBalancingAlgorithm string

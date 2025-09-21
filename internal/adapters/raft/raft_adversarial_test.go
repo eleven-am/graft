@@ -2,6 +2,7 @@ package raft
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"net"
@@ -48,7 +49,7 @@ func TestNode_ConcurrentOperations(t *testing.T) {
 	require.NoError(t, err)
 	defer storage.Close()
 
-	node, err := NewNode(config, storage, nil, slog.Default())
+	node, err := NewNode(config, storage, nil, nil, slog.Default())
 	require.NoError(t, err)
 
 	err = node.Start(context.Background(), nil)
@@ -158,7 +159,7 @@ func TestNode_LeaderElection(t *testing.T) {
 		require.NoError(t, err)
 		storages = append(storages, storage)
 
-		node, err := NewNode(config, storage, nil, slog.Default())
+		node, err := NewNode(config, storage, nil, nil, slog.Default())
 		require.NoError(t, err)
 		nodes = append(nodes, node)
 
@@ -237,7 +238,7 @@ func TestNode_SnapshotRestore(t *testing.T) {
 	storage, err := NewStorage(tempDir, slog.Default())
 	require.NoError(t, err)
 
-	node, err := NewNode(config, storage, nil, slog.Default())
+	node, err := NewNode(config, storage, nil, nil, slog.Default())
 	require.NoError(t, err)
 
 	err = node.Start(context.Background(), nil)
@@ -268,7 +269,7 @@ func TestNode_SnapshotRestore(t *testing.T) {
 	require.NoError(t, err)
 	defer storage2.Close()
 
-	node2, err := NewNode(config, storage2, nil, slog.Default())
+	node2, err := NewNode(config, storage2, nil, nil, slog.Default())
 	require.NoError(t, err)
 
 	err = node2.Start(context.Background(), nil)
@@ -319,7 +320,7 @@ func TestNode_DataPersistence(t *testing.T) {
 	storage1, err := NewStorage(tempDir, slog.Default())
 	require.NoError(t, err)
 
-	node1, err := NewNode(config, storage1, nil, slog.Default())
+	node1, err := NewNode(config, storage1, nil, nil, slog.Default())
 	require.NoError(t, err)
 
 	err = node1.Start(context.Background(), nil)
@@ -352,7 +353,7 @@ func TestNode_DataPersistence(t *testing.T) {
 	require.NoError(t, err)
 	defer storage2.Close()
 
-	node2, err := NewNode(config, storage2, nil, slog.Default())
+	node2, err := NewNode(config, storage2, nil, nil, slog.Default())
 	require.NoError(t, err)
 
 	err = node2.Start(context.Background(), nil)
@@ -375,4 +376,76 @@ func TestNode_DataPersistence(t *testing.T) {
 		})
 		assert.NoError(t, err)
 	}
+}
+
+func TestNode_TTLReplication(t *testing.T) {
+	tempDir := t.TempDir()
+
+	storage, err := NewStorage(tempDir, slog.Default())
+	require.NoError(t, err)
+	defer storage.Close()
+
+	config := DefaultRaftConfig("node1", "cluster1", "127.0.0.1:0", tempDir, domain.ClusterPolicyStrict)
+
+	node, err := NewNode(config, storage, nil, nil, slog.Default())
+	require.NoError(t, err)
+
+	err = node.Start(context.Background(), nil)
+	require.NoError(t, err)
+	defer node.Shutdown()
+
+	time.Sleep(2 * time.Second)
+
+	key := "ttl-test-key"
+	value := []byte("ttl-test-value")
+	ttlSeconds := int64(30)
+
+	cmd := domain.Command{
+		Type:       domain.CommandPut,
+		Key:        key,
+		Value:      value,
+		TTLSeconds: ttlSeconds,
+		RequestID:  "req-ttl-test",
+		Timestamp:  time.Now(),
+	}
+
+	result, err := node.Apply(cmd, 5*time.Second)
+	require.NoError(t, err)
+	require.True(t, result.Success)
+
+	db := node.StateDB()
+
+	err = db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(key))
+		if err != nil {
+			return err
+		}
+		return item.Value(func(val []byte) error {
+			assert.Equal(t, value, val)
+			return nil
+		})
+	})
+	require.NoError(t, err)
+
+	ttlKey := "ttl:" + key
+	err = db.View(func(txn *badger.Txn) error {
+		item, err := txn.Get([]byte(ttlKey))
+		if err != nil {
+			return err
+		}
+		return item.Value(func(val []byte) error {
+			var expireAt time.Time
+			err := json.Unmarshal(val, &expireAt)
+			require.NoError(t, err)
+
+			expectedDuration := time.Duration(ttlSeconds) * time.Second
+			actualDuration := expireAt.Sub(cmd.Timestamp)
+
+			tolerance := 2 * time.Second
+			assert.InDelta(t, expectedDuration.Seconds(), actualDuration.Seconds(), tolerance.Seconds())
+
+			return nil
+		})
+	})
+	require.NoError(t, err)
 }

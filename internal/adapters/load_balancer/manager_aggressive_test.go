@@ -2,9 +2,7 @@ package load_balancer
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"math"
 	"runtime"
@@ -20,15 +18,13 @@ import (
 )
 
 func TestLoadBalancer_ConcurrentEventStorm(t *testing.T) {
-	storage := &mocks.MockStoragePort{}
 	events := &mocks.MockEventManager{}
 
-	storage.On("Put", mock.AnythingOfType("string"), mock.MatchedBy(func(data []byte) bool { return true }), int64(0)).Return(nil)
 	events.On("OnNodeStarted", mock.AnythingOfType("func(*domain.NodeStartedEvent)")).Return(nil)
 	events.On("OnNodeCompleted", mock.AnythingOfType("func(*domain.NodeCompletedEvent)")).Return(nil)
 	events.On("OnNodeError", mock.AnythingOfType("func(*domain.NodeErrorEvent)")).Return(nil)
 
-	manager := NewManager(storage, events, "stress-node", nil, &Config{FailurePolicy: "fail-open"}, nil)
+	manager := NewManager(events, "stress-node", nil, &Config{FailurePolicy: "fail-open"}, nil)
 	ctx := context.Background()
 	err := manager.Start(ctx)
 	assert.NoError(t, err)
@@ -79,16 +75,13 @@ func TestLoadBalancer_ConcurrentEventStorm(t *testing.T) {
 }
 
 func TestLoadBalancer_RaceConditionDetection(t *testing.T) {
-	storage := &mocks.MockStoragePort{}
 	events := &mocks.MockEventManager{}
 
-	storage.On("Put", mock.AnythingOfType("string"), mock.MatchedBy(func(data []byte) bool { return true }), int64(0)).Return(nil)
-	storage.On("ListByPrefix", "cluster:load:").Return([]ports.KeyValueVersion{}, nil)
 	events.On("OnNodeStarted", mock.AnythingOfType("func(*domain.NodeStartedEvent)")).Return(nil)
 	events.On("OnNodeCompleted", mock.AnythingOfType("func(*domain.NodeCompletedEvent)")).Return(nil)
 	events.On("OnNodeError", mock.AnythingOfType("func(*domain.NodeErrorEvent)")).Return(nil)
 
-	manager := NewManager(storage, events, "race-node", nil, &Config{FailurePolicy: "fail-open"}, nil)
+	manager := NewManager(events, "race-node", nil, &Config{FailurePolicy: "fail-open"}, nil)
 	ctx := context.Background()
 	err := manager.Start(ctx)
 	assert.NoError(t, err)
@@ -138,17 +131,7 @@ func TestLoadBalancer_RaceConditionDetection(t *testing.T) {
 
 func TestLoadBalancer_MemoryLeakDetection(t *testing.T) {
 
-	manager := &Manager{
-		storage:        &memoryEfficientStorage{},
-		events:         &memoryEfficientEvents{},
-		nodeID:         "leak-node",
-		logger:         slog.Default(),
-		executionUnits: make(map[string]float64),
-		errorWindow:    NewRollingWindow(100),
-		nodeCapacities: make(map[string]float64),
-		scoreCache:     make(map[string]scoreCacheEntry),
-		scoreCacheTTL:  1 * time.Second,
-	}
+	manager := NewManager(&memoryEfficientEvents{}, "leak-node", nil, &Config{FailurePolicy: "fail-open", ScoreCacheTTL: time.Second}, slog.Default())
 
 	runtime.GC()
 	var m1 runtime.MemStats
@@ -163,18 +146,7 @@ func TestLoadBalancer_MemoryLeakDetection(t *testing.T) {
 		manager.executionUnits[workflowID] = weight
 		manager.totalWeight += weight
 
-		load := &ports.NodeLoad{
-			NodeID:          manager.nodeID,
-			TotalWeight:     manager.totalWeight,
-			ExecutionUnits:  manager.executionUnits,
-			RecentLatencyMs: manager.recentLatencyMs,
-			RecentErrorRate: manager.errorWindow.GetErrorRate(),
-			LastUpdated:     time.Now().Unix(),
-		}
 		manager.mu.Unlock()
-
-		err := manager.updateNodeLoad(load)
-		assert.NoError(t, err)
 
 		manager.mu.Lock()
 		if weight, exists := manager.executionUnits[workflowID]; exists {
@@ -214,48 +186,7 @@ func TestLoadBalancer_MemoryLeakDetection(t *testing.T) {
 	}
 }
 
-// Memory-efficient stub implementations that don't retain data
-type memoryEfficientStorage struct{}
-
-func (s *memoryEfficientStorage) Put(key string, value []byte, ttl int64) error { return nil }
-func (s *memoryEfficientStorage) Get(key string) ([]byte, int64, bool, error) {
-	return nil, 0, false, nil
-}
-func (s *memoryEfficientStorage) Delete(key string) error { return nil }
-func (s *memoryEfficientStorage) ListByPrefix(prefix string) ([]ports.KeyValueVersion, error) {
-	return nil, nil
-}
-func (s *memoryEfficientStorage) Close() error                                       { return nil }
-func (s *memoryEfficientStorage) Exists(key string) (bool, error)                    { return false, nil }
-func (s *memoryEfficientStorage) GetMetadata(key string) (*ports.KeyMetadata, error) { return nil, nil }
-func (s *memoryEfficientStorage) BatchWrite(ops []ports.WriteOp) error               { return nil }
-func (s *memoryEfficientStorage) GetNext(prefix string) (string, []byte, bool, error) {
-	return "", nil, false, nil
-}
-func (s *memoryEfficientStorage) GetNextAfter(prefix string, afterKey string) (string, []byte, bool, error) {
-	return "", nil, false, nil
-}
-func (s *memoryEfficientStorage) CountPrefix(prefix string) (int, error)                  { return 0, nil }
-func (s *memoryEfficientStorage) AtomicIncrement(key string) (int64, error)               { return 0, nil }
-func (s *memoryEfficientStorage) DeleteByPrefix(prefix string) (int, error)               { return 0, nil }
-func (s *memoryEfficientStorage) GetVersion(key string) (int64, error)                    { return 0, nil }
-func (s *memoryEfficientStorage) IncrementVersion(key string) (int64, error)              { return 0, nil }
-func (s *memoryEfficientStorage) ExpireAt(key string, expireTime time.Time) error         { return nil }
-func (s *memoryEfficientStorage) GetTTL(key string) (time.Duration, error)                { return 0, nil }
-func (s *memoryEfficientStorage) CleanExpired() (int, error)                              { return 0, nil }
-func (s *memoryEfficientStorage) RunInTransaction(fn func(ports.Transaction) error) error { return nil }
-func (s *memoryEfficientStorage) CreateSnapshot() (io.ReadCloser, error)                  { return nil, nil }
-func (s *memoryEfficientStorage) CreateCompressedSnapshot() (io.ReadCloser, error)        { return nil, nil }
-func (s *memoryEfficientStorage) RestoreSnapshot(snapshot io.Reader) error                { return nil }
-func (s *memoryEfficientStorage) RestoreCompressedSnapshot(snapshot io.Reader) error      { return nil }
-func (s *memoryEfficientStorage) SetRaftNode(node ports.RaftNode)                         {}
-func (s *memoryEfficientStorage) PutWithTTL(key string, value []byte, version int64, ttl time.Duration) error {
-	return nil
-}
-func (s *memoryEfficientStorage) Subscribe(prefix string) (<-chan ports.StorageEvent, func(), error) {
-	return nil, func() {}, nil
-}
-
+// Memory-efficient stub events that don't retain data
 type memoryEfficientEvents struct{}
 
 func (e *memoryEfficientEvents) Start(ctx context.Context) error    { return nil }
@@ -325,29 +256,16 @@ func (e *memoryEfficientEvents) BroadcastNodeCompleted(event *domain.NodeComplet
 func (e *memoryEfficientEvents) BroadcastNodeError(event *domain.NodeErrorEvent) error { return nil }
 
 func TestLoadBalancer_CorruptedDataHandling(t *testing.T) {
-	storage := &mocks.MockStoragePort{}
 	events := &mocks.MockEventManager{}
 
-	corruptedData := []ports.KeyValueVersion{
-		{Key: "cluster:load:corrupt1", Value: []byte(`{"invalid":"json"malformed`)},
-		{Key: "cluster:load:corrupt2", Value: []byte(`{"node_id":"","total_weight":"not_a_number"}`)},
-		{Key: "cluster:load:corrupt3", Value: []byte(`null`)},
-		{Key: "cluster:load:corrupt4", Value: []byte(`{"execution_units":null}`)},
-		{Key: "cluster:load:corrupt5", Value: []byte(`{"recent_latency_ms":-999999,"recent_error_rate":2.5}`)},
-	}
-
-	storage.On("ListByPrefix", "cluster:load:").Return(corruptedData, nil)
 	events.On("OnNodeStarted", mock.AnythingOfType("func(*domain.NodeStartedEvent)")).Return(nil)
 	events.On("OnNodeCompleted", mock.AnythingOfType("func(*domain.NodeCompletedEvent)")).Return(nil)
 	events.On("OnNodeError", mock.AnythingOfType("func(*domain.NodeErrorEvent)")).Return(nil)
 
-	manager := NewManager(storage, events, "corrupt-node", nil, &Config{FailurePolicy: "fail-open"}, nil)
+	manager := NewManager(events, "corrupt-node", nil, &Config{FailurePolicy: "fail-open"}, nil)
 	_ = manager
 
-	clusterLoad, err := manager.GetClusterLoad()
-	assert.NoError(t, err)
-
-	t.Logf("Cluster load from corrupted data: %+v", clusterLoad)
+	// In RPC/in-memory mode, cluster load is maintained internally; no storage-backed view to fetch.
 
 	shouldExecute, err := manager.ShouldExecuteNode("corrupt-node", "test-workflow", "test-node")
 	assert.NoError(t, err, "Should handle corrupted data gracefully")
@@ -355,14 +273,13 @@ func TestLoadBalancer_CorruptedDataHandling(t *testing.T) {
 }
 
 func TestLoadBalancer_ExtremeValues(t *testing.T) {
-	storage := &mocks.MockStoragePort{}
 	events := &mocks.MockEventManager{}
 
 	events.On("OnNodeStarted", mock.AnythingOfType("func(*domain.NodeStartedEvent)")).Return(nil)
 	events.On("OnNodeCompleted", mock.AnythingOfType("func(*domain.NodeCompletedEvent)")).Return(nil)
 	events.On("OnNodeError", mock.AnythingOfType("func(*domain.NodeErrorEvent)")).Return(nil)
 
-	manager := NewManager(storage, events, "extreme-node", nil, &Config{FailurePolicy: "fail-open"}, nil)
+	manager := NewManager(events, "extreme-node", nil, &Config{FailurePolicy: "fail-open"}, nil)
 	_ = manager
 
 	testCases := []struct {
@@ -439,16 +356,13 @@ func TestLoadBalancer_ExtremeValues(t *testing.T) {
 }
 
 func TestLoadBalancer_DeadlockPrevention(t *testing.T) {
-	storage := &mocks.MockStoragePort{}
 	events := &mocks.MockEventManager{}
 
-	storage.On("Put", mock.AnythingOfType("string"), mock.MatchedBy(func(data []byte) bool { return true }), int64(0)).Return(nil).Maybe()
-	storage.On("ListByPrefix", "cluster:load:").Return([]ports.KeyValueVersion{}, nil).Maybe()
 	events.On("OnNodeStarted", mock.AnythingOfType("func(*domain.NodeStartedEvent)")).Return(nil)
 	events.On("OnNodeCompleted", mock.AnythingOfType("func(*domain.NodeCompletedEvent)")).Return(nil)
 	events.On("OnNodeError", mock.AnythingOfType("func(*domain.NodeErrorEvent)")).Return(nil)
 
-	manager := NewManager(storage, events, "deadlock-node", nil, &Config{FailurePolicy: "fail-open"}, nil)
+	manager := NewManager(events, "deadlock-node", nil, &Config{FailurePolicy: "fail-open"}, nil)
 	ctx := context.Background()
 	err := manager.Start(ctx)
 	assert.NoError(t, err)
@@ -474,7 +388,6 @@ func TestLoadBalancer_DeadlockPrevention(t *testing.T) {
 						NodeID:     "deadlock-node",
 					})
 
-					_, _ = manager.GetClusterLoad()
 					_, _ = manager.ShouldExecuteNode("deadlock-node", workflowID, "test")
 
 					manager.onNodeCompleted(&domain.NodeCompletedEvent{
@@ -523,37 +436,13 @@ func TestLoadBalancer_FloatOverflowHandling(t *testing.T) {
 }
 
 func TestLoadBalancer_PerformanceDegradation(t *testing.T) {
-	storage := &mocks.MockStoragePort{}
 	events := &mocks.MockEventManager{}
 
-	nodeLoads := make([]ports.KeyValueVersion, 1000)
-	for i := 0; i < 1000; i++ {
-		load := ports.NodeLoad{
-			NodeID:          fmt.Sprintf("perf-node-%d", i),
-			TotalWeight:     float64(i % 50),
-			RecentLatencyMs: float64(i % 200),
-			RecentErrorRate: float64(i%10) / 100.0,
-			LastUpdated:     time.Now().Unix(),
-			ExecutionUnits:  make(map[string]float64),
-		}
-
-		for j := 0; j < i%20; j++ {
-			load.ExecutionUnits[fmt.Sprintf("wf-%d-%d", i, j)] = float64(j % 5)
-		}
-
-		data, _ := json.Marshal(load)
-		nodeLoads[i] = ports.KeyValueVersion{
-			Key:   fmt.Sprintf("cluster:load:perf-node-%d", i),
-			Value: data,
-		}
-	}
-
-	storage.On("ListByPrefix", "cluster:load:").Return(nodeLoads, nil)
 	events.On("OnNodeStarted", mock.AnythingOfType("func(*domain.NodeStartedEvent)")).Return(nil)
 	events.On("OnNodeCompleted", mock.AnythingOfType("func(*domain.NodeCompletedEvent)")).Return(nil)
 	events.On("OnNodeError", mock.AnythingOfType("func(*domain.NodeErrorEvent)")).Return(nil)
 
-	manager := NewManager(storage, events, "perf-test-node", nil, &Config{FailurePolicy: "fail-open"}, nil)
+	manager := NewManager(events, "perf-test-node", nil, &Config{FailurePolicy: "fail-open"}, nil)
 
 	iterations := 1000
 	totalDuration := time.Duration(0)
@@ -580,15 +469,13 @@ func TestLoadBalancer_PerformanceDegradation(t *testing.T) {
 }
 
 func TestLoadBalancer_EventLeakage(t *testing.T) {
-	storage := &mocks.MockStoragePort{}
 	events := &mocks.MockEventManager{}
 
-	storage.On("Put", mock.AnythingOfType("string"), mock.MatchedBy(func(data []byte) bool { return true }), int64(0)).Return(nil)
 	events.On("OnNodeStarted", mock.AnythingOfType("func(*domain.NodeStartedEvent)")).Return(nil)
 	events.On("OnNodeCompleted", mock.AnythingOfType("func(*domain.NodeCompletedEvent)")).Return(nil)
 	events.On("OnNodeError", mock.AnythingOfType("func(*domain.NodeErrorEvent)")).Return(nil)
 
-	manager := NewManager(storage, events, "leak-test", nil, &Config{FailurePolicy: "fail-open"}, nil)
+	manager := NewManager(events, "leak-test", nil, &Config{FailurePolicy: "fail-open"}, nil)
 	ctx := context.Background()
 	err := manager.Start(ctx)
 	assert.NoError(t, err)

@@ -3,6 +3,7 @@ package raft
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eleven-am/graft/internal/adapters/transport"
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/mocks"
 	"github.com/stretchr/testify/assert"
@@ -24,7 +26,7 @@ func TestJoinViaTransportRPC(t *testing.T) {
 	defer storage.Close()
 
 	config := DefaultRaftConfig("node1", "cluster1", "127.0.0.1:0", "/tmp/rafttest-join-rpc", domain.ClusterPolicyStrict)
-	node, err := NewNode(config, storage, eventManager, nil)
+	node, err := NewNode(config, storage, eventManager, nil, nil)
 	assert.NoError(t, err)
 
 	err = node.Start(ctx, nil)
@@ -92,34 +94,70 @@ func TestRaftJoinLogicFix(t *testing.T) {
 	eventManager1 := mocks.NewMockEventManager(t)
 	eventManager2 := mocks.NewMockEventManager(t)
 
-	storage1, err := NewStorage("/tmp/rafttest-join-1", nil)
+	tempDir1 := t.TempDir()
+	tempDir2 := t.TempDir()
+
+	storage1, err := NewStorage(tempDir1, nil)
 	assert.NoError(t, err)
 	defer storage1.Close()
 
-	storage2, err := NewStorage("/tmp/rafttest-join-2", nil)
+	storage2, err := NewStorage(tempDir2, nil)
 	assert.NoError(t, err)
 	defer storage2.Close()
 
-	config1 := DefaultRaftConfig("node1", "cluster1", "127.0.0.1:0", "/tmp/rafttest-join-1", domain.ClusterPolicyStrict)
-	node1, err := NewNode(config1, storage1, eventManager1, nil)
+	addr1 := getAvailablePort(t)
+	config1 := DefaultRaftConfig("node1", "cluster1", addr1, tempDir1, domain.ClusterPolicyStrict)
+
+	addr2 := getAvailablePort(t)
+	config2 := DefaultRaftConfig("node2", "cluster1", addr2, tempDir2, domain.ClusterPolicyStrict)
+
+	transport1 := transport.NewGRPCTransport(nil, domain.TransportConfig{})
+	transport2 := transport.NewGRPCTransport(nil, domain.TransportConfig{})
+
+	node1, err := NewNode(config1, storage1, eventManager1, transport1, nil)
 	assert.NoError(t, err)
 
-	config2 := DefaultRaftConfig("node2", "cluster1", "127.0.0.1:0", "/tmp/rafttest-join-2", domain.ClusterPolicyStrict)
-	node2, err := NewNode(config2, storage2, eventManager2, nil)
+	node2, err := NewNode(config2, storage2, eventManager2, transport2, nil)
 	assert.NoError(t, err)
+
+	transport1.RegisterRaft(node1)
+	transport2.RegisterRaft(node2)
+
+	grpcPort1 := 8001
+	grpcPort2 := 8002
+
+	err = transport1.Start(ctx, addr1, grpcPort1)
+	assert.NoError(t, err)
+	defer transport1.Stop()
+
+	err = transport2.Start(ctx, addr2, grpcPort2)
+	assert.NoError(t, err)
+	defer transport2.Stop()
 
 	err = node1.Start(ctx, nil)
 	assert.NoError(t, err)
 	defer node1.Stop()
 
-	time.Sleep(100 * time.Millisecond)
-	assert.True(t, node1.IsLeader(), "Node1 should become leader")
+	timeout := time.NewTimer(5 * time.Second)
+	defer timeout.Stop()
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	var isLeader bool
+	for !isLeader {
+		select {
+		case <-timeout.C:
+			t.Fatal("Timeout waiting for node1 to become leader")
+		case <-ticker.C:
+			isLeader = node1.IsLeader()
+		}
+	}
 
 	err = node2.Start(ctx, nil)
 	assert.NoError(t, err)
 	defer node2.Stop()
 
-	leaderAddr := node1.GetLocalAddress()
+	leaderAddr := fmt.Sprintf("127.0.0.1:%d", grpcPort1)
 	nodeID := config2.NodeID
 	joinAddr := node2.GetLocalAddress()
 

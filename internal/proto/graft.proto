@@ -7,6 +7,8 @@ option go_package = "github.com/eleven-am/graft/internal/proto";
 service GraftNode {
   rpc ProcessTrigger(TriggerRequest) returns (TriggerResponse);
   rpc RequestJoin(JoinRequest) returns (JoinResponse);
+  rpc ApplyCommand(ApplyRequest) returns (ApplyResponse);
+  rpc PublishLoad(LoadUpdate) returns (Ack);
 }
 
 message NodeConfig {
@@ -41,4 +43,41 @@ message JoinResponse {
   bool accepted = 1;
   string node_id = 2;
   string message = 3;
+}
+
+message ApplyRequest {
+  bytes command = 1;
+}
+
+message Event {
+  uint32 type = 1;
+  string key = 2;
+  int64 version = 3;
+  string node_id = 4;
+  int64 timestamp = 5;
+  string request_id = 6;
+}
+
+message ApplyResponse {
+  bool success = 1;
+  string error = 2;
+  int64 version = 3;
+  repeated Event events = 4;
+  string leader_id = 5;
+  string leader_addr = 6;
+}
+
+message LoadUpdate {
+  string node_id = 1;
+  int32 active_workflows = 2;
+  double total_weight = 3;
+  double recent_latency_ms = 4;
+  double recent_error_rate = 5;
+  double capacity = 6;
+  int64 timestamp = 7;
+}
+
+message Ack {
+  bool ok = 1;
+  string message = 2;
 }
