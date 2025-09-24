@@ -5,7 +5,6 @@ import (
 	"errors"
 	"log/slog"
 	"testing"
-	"time"
 
 	"github.com/eleven-am/graft/internal/domain"
 )
@@ -238,10 +237,7 @@ func TestProviderShutdown(t *testing.T) {
 		t.Errorf("Expected 2 spans created, got %d", metrics.SpansCreated)
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	if err := provider.Shutdown(ctx); err != nil {
+	if err := provider.Shutdown(); err != nil {
 		t.Errorf("Expected shutdown to succeed: %v", err)
 	}
 
@@ -270,10 +266,7 @@ func TestForceFlush(t *testing.T) {
 
 	span := tracer.StartSpan("test-operation")
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-	defer cancel()
-
-	if err := provider.ForceFlush(ctx); err != nil {
+	if err := provider.ForceFlush(); err != nil {
 		t.Errorf("Expected force flush to succeed: %v", err)
 	}
 

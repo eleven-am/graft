@@ -114,6 +114,6 @@ type Tracer interface {
 
 type TracingProvider interface {
 	GetTracer(name string) Tracer
-	Shutdown(ctx context.Context) error
-	ForceFlush(ctx context.Context) error
+	Shutdown() error
+	ForceFlush() error
 }
