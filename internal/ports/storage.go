@@ -1,10 +1,7 @@
 package ports
 
 import (
-	"io"
 	"time"
-
-	"github.com/eleven-am/graft/internal/domain"
 )
 
 type StoragePort interface {
@@ -27,7 +24,6 @@ type StoragePort interface {
 	DeleteByPrefix(prefix string) (deletedCount int, err error)
 
 	GetVersion(key string) (int64, error)
-	IncrementVersion(key string) (newVersion int64, err error)
 
 	ExpireAt(key string, expireTime time.Time) error
 	GetTTL(key string) (time.Duration, error)
@@ -35,24 +31,8 @@ type StoragePort interface {
 
 	RunInTransaction(fn func(tx Transaction) error) error
 
-	Subscribe(prefix string) (<-chan StorageEvent, func(), error)
-
-	CreateSnapshot() (io.ReadCloser, error)
-	CreateCompressedSnapshot() (io.ReadCloser, error)
-	RestoreSnapshot(snapshot io.Reader) error
-	RestoreCompressedSnapshot(snapshot io.Reader) error
-
 	SetRaftNode(node RaftNode)
 	Close() error
-}
-
-type StorageEvent struct {
-	Type      domain.EventType
-	Key       string
-	Version   int64
-	NodeID    string
-	Timestamp time.Time
-	RequestID string
 }
 
 type Transaction interface {

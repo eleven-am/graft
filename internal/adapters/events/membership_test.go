@@ -8,11 +8,13 @@ import (
 	"time"
 
 	"github.com/eleven-am/graft/internal/domain"
+	"github.com/eleven-am/graft/internal/mocks"
 )
 
 func TestManager_OnNodeJoined(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	manager := NewManager(logger)
+	storage := &mocks.MockStoragePort{}
+	manager := NewManager(storage, "test-node", logger)
 
 	var receivedEvent *domain.NodeJoinedEvent
 	var wg sync.WaitGroup
@@ -59,7 +61,8 @@ func TestManager_OnNodeJoined(t *testing.T) {
 
 func TestManager_OnNodeLeft(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	manager := NewManager(logger)
+	storage := &mocks.MockStoragePort{}
+	manager := NewManager(storage, "test-node", logger)
 
 	var receivedEvent *domain.NodeLeftEvent
 	var wg sync.WaitGroup
@@ -106,7 +109,8 @@ func TestManager_OnNodeLeft(t *testing.T) {
 
 func TestManager_OnLeaderChanged(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	manager := NewManager(logger)
+	storage := &mocks.MockStoragePort{}
+	manager := NewManager(storage, "test-node", logger)
 
 	var receivedEvent *domain.LeaderChangedEvent
 	var wg sync.WaitGroup
@@ -158,7 +162,8 @@ func TestManager_OnLeaderChanged(t *testing.T) {
 
 func TestManager_MultipleHandlers(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	manager := NewManager(logger)
+	storage := &mocks.MockStoragePort{}
+	manager := NewManager(storage, "test-node", logger)
 
 	var handler1Called, handler2Called bool
 	var wg sync.WaitGroup
@@ -196,7 +201,8 @@ func TestManager_MultipleHandlers(t *testing.T) {
 
 func TestManager_ConcurrentNotifications(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	manager := NewManager(logger)
+	storage := &mocks.MockStoragePort{}
+	manager := NewManager(storage, "test-node", logger)
 
 	const numNotifications = 100
 	var receivedCount int
@@ -236,7 +242,8 @@ func TestManager_ConcurrentNotifications(t *testing.T) {
 
 func TestManager_EventsWithEmptyMetadata(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	manager := NewManager(logger)
+	storage := &mocks.MockStoragePort{}
+	manager := NewManager(storage, "test-node", logger)
 
 	var receivedEvent *domain.NodeJoinedEvent
 	var wg sync.WaitGroup
@@ -273,7 +280,8 @@ func TestManager_EventsWithEmptyMetadata(t *testing.T) {
 
 func TestManager_EventsWithNilMetadata(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	manager := NewManager(logger)
+	storage := &mocks.MockStoragePort{}
+	manager := NewManager(storage, "test-node", logger)
 
 	var receivedEvent *domain.NodeJoinedEvent
 	var wg sync.WaitGroup
@@ -306,7 +314,8 @@ func TestManager_EventsWithNilMetadata(t *testing.T) {
 
 func TestManager_HandlerPanic(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	manager := NewManager(logger)
+	storage := &mocks.MockStoragePort{}
+	manager := NewManager(storage, "test-node", logger)
 
 	var normalHandlerCalled bool
 	var wg sync.WaitGroup
@@ -339,7 +348,8 @@ func TestManager_HandlerPanic(t *testing.T) {
 
 func TestManager_EventSequence(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	manager := NewManager(logger)
+	storage := &mocks.MockStoragePort{}
+	manager := NewManager(storage, "test-node", logger)
 
 	var events []string
 	var mu sync.Mutex

@@ -9,29 +9,19 @@ import (
 
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/mocks"
-	"github.com/eleven-am/graft/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
 
 func TestBroadcastCommand_DispatchesOnceViaStorage(t *testing.T) {
 	storage := &mocks.MockStoragePort{}
-	mgr := NewManager(nil)
-	mgr.SetStorage(storage, "node-1")
+	mgr := NewManager(storage, "node-1", nil)
 
 	var called int32
 	_ = mgr.RegisterCommandHandler("deploy", func(ctx context.Context, from string, params interface{}) error {
 		atomic.AddInt32(&called, 1)
 		return nil
 	})
-
-	workflowCh := make(chan ports.StorageEvent, 1)
-	nodeCh := make(chan ports.StorageEvent, 1)
-	devcmdCh := make(chan ports.StorageEvent, 1)
-
-	storage.On("Subscribe", "workflow:").Return((<-chan ports.StorageEvent)(workflowCh), func() {}, nil).Maybe()
-	storage.On("Subscribe", "node:").Return((<-chan ports.StorageEvent)(nodeCh), func() {}, nil).Maybe()
-	storage.On("Subscribe", "dev-cmd:").Return((<-chan ports.StorageEvent)(devcmdCh), func() {}, nil).Once()
 
 	storage.On("PutWithTTL", mock.AnythingOfType("string"), mock.Anything, int64(0), mock.Anything).Return(nil).Once()
 
@@ -45,8 +35,8 @@ func TestBroadcastCommand_DispatchesOnceViaStorage(t *testing.T) {
 	assert.NoError(t, err)
 
 	_ = mgr.BroadcastCommand(ctx, &dev)
-
-	devcmdCh <- ports.StorageEvent{Type: domain.EventPut, Key: "dev-cmd:deploy", NodeID: "node-1"}
+	// Simulate storage-published event
+	_ = mgr.PublishStorageEvents([]domain.Event{{Type: domain.EventPut, Key: "dev-cmd:deploy", NodeID: "node-1", Timestamp: time.Now()}})
 
 	deadline := time.Now().Add(500 * time.Millisecond)
 	for time.Now().Before(deadline) {
@@ -63,20 +53,12 @@ func TestBroadcastCommand_DispatchesOnceViaStorage(t *testing.T) {
 
 func TestEventPipelineUnification_NoDuplicateProcessing(t *testing.T) {
 	storage := &mocks.MockStoragePort{}
-	mgr := NewManagerWithStorage(storage, "node-1", nil)
+	mgr := NewManager(storage, "node-1", nil)
 
 	var workflowStartedCount int32
 	mgr.OnWorkflowStarted(func(event *domain.WorkflowStartedEvent) {
 		atomic.AddInt32(&workflowStartedCount, 1)
 	})
-
-	workflowCh := make(chan ports.StorageEvent, 10)
-	nodeCh := make(chan ports.StorageEvent, 10)
-	devcmdCh := make(chan ports.StorageEvent, 10)
-
-	storage.On("Subscribe", "workflow:").Return((<-chan ports.StorageEvent)(workflowCh), func() {}, nil).Maybe()
-	storage.On("Subscribe", "node:").Return((<-chan ports.StorageEvent)(nodeCh), func() {}, nil).Maybe()
-	storage.On("Subscribe", "dev-cmd:").Return((<-chan ports.StorageEvent)(devcmdCh), func() {}, nil).Once()
 
 	workflowEvent := domain.WorkflowStartedEvent{
 		WorkflowID: "test-wf",
@@ -101,15 +83,7 @@ func TestEventPipelineUnification_NoDuplicateProcessing(t *testing.T) {
 
 	err = mgr.Broadcast(domainEvent)
 	assert.NoError(t, err)
-
-	storageEvent := ports.StorageEvent{
-		Type:      domain.EventPut,
-		Key:       "workflow:test-wf:started",
-		Version:   1,
-		NodeID:    "node-1",
-		Timestamp: time.Now(),
-	}
-	workflowCh <- storageEvent
+	_ = mgr.PublishStorageEvents([]domain.Event{domainEvent})
 
 	time.Sleep(200 * time.Millisecond)
 

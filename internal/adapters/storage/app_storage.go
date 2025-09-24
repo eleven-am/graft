@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"sync"
 	"time"
@@ -18,11 +17,10 @@ type AppStorage struct {
 	raftNode ports.RaftNode
 	db       *badger.DB
 	logger   *slog.Logger
+	events   ports.EventManager
 
 	mu     sync.RWMutex
 	closed bool
-
-	subs map[string][]chan ports.StorageEvent
 }
 
 func NewAppStorage(raftNode ports.RaftNode, db *badger.DB, logger *slog.Logger) *AppStorage {
@@ -30,46 +28,127 @@ func NewAppStorage(raftNode ports.RaftNode, db *badger.DB, logger *slog.Logger) 
 		raftNode: raftNode,
 		db:       db,
 		logger:   logger.With("component", "app-storage"),
-		subs:     make(map[string][]chan ports.StorageEvent),
 	}
+}
+
+// SetEventManager injects the event manager as the single event hub
+func (s *AppStorage) SetEventManager(ev ports.EventManager) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.events = ev
+}
+
+// iterate to the first non-metadata key under prefix, optionally after a given key
+func (s *AppStorage) firstNonMeta(txn *badger.Txn, prefix []byte, afterKey string) (key string, value []byte, exists bool, err error) {
+	opts := badger.DefaultIteratorOptions
+	opts.Prefix = prefix
+	opts.PrefetchValues = true
+	it := txn.NewIterator(opts)
+	defer it.Close()
+
+	if afterKey != "" {
+		it.Seek([]byte(afterKey))
+		if !it.Valid() {
+			return "", nil, false, nil
+		}
+		it.Next()
+	} else {
+		it.Rewind()
+	}
+
+	for ; it.Valid(); it.Next() {
+		item := it.Item()
+		keyBytes := item.Key()
+		if s.isMetadataKey(keyBytes) {
+			continue
+		}
+		key = string(keyBytes)
+		value, err = item.ValueCopy(nil)
+		if err != nil {
+			return "", nil, false, err
+		}
+		return key, value, true, nil
+	}
+	return "", nil, false, nil
+}
+
+// helper to iterate all non-metadata keys for a prefix
+func (s *AppStorage) forEachNonMeta(txn *badger.Txn, prefix []byte, prefetchValues bool, fn func(item *badger.Item) error) error {
+	opts := badger.DefaultIteratorOptions
+	opts.Prefix = prefix
+	opts.PrefetchValues = prefetchValues
+	it := txn.NewIterator(opts)
+	defer it.Close()
+
+	for it.Rewind(); it.Valid(); it.Next() {
+		item := it.Item()
+		if s.isMetadataKey(item.Key()) {
+			continue
+		}
+		if err := fn(item); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// readTTL reads ttl:<key> from the metadata store and returns the expiration time if present
+func readTTL(txn *badger.Txn, key string) (*time.Time, error) {
+	ttlKey := fmt.Sprintf("ttl:%s", key)
+	item, err := txn.Get([]byte(ttlKey))
+	if err != nil {
+		if errors.Is(err, badger.ErrKeyNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	ttlBytes, err := item.ValueCopy(nil)
+	if err != nil {
+		return nil, err
+	}
+	var expireAt time.Time
+	if json.Unmarshal(ttlBytes, &expireAt) == nil {
+		return &expireAt, nil
+	}
+	return nil, nil
 }
 
 func (s *AppStorage) Get(key string) (value []byte, version int64, exists bool, err error) {
 	err = s.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(key))
-		if err != nil {
-			if errors.Is(err, badger.ErrKeyNotFound) {
-				exists = false
-				return nil
-			}
-			return err
-		}
-
-		exists = true
-		value, err = item.ValueCopy(nil)
-		if err != nil {
-			return err
-		}
-
-		versionKey := fmt.Sprintf("v:%s", key)
-		vItem, err := txn.Get([]byte(versionKey))
-		if err == nil {
-			versionBytes, _ := vItem.ValueCopy(nil)
-			json.Unmarshal(versionBytes, &version)
-		}
-
-		return nil
+		value, version, exists, err = readValueAndVersion(txn, key)
+		return err
 	})
 
 	return value, version, exists, err
 }
 
 func (s *AppStorage) Put(key string, value []byte, version int64) error {
+	return s.putInternal(key, value, version, 0)
+}
+
+func (s *AppStorage) PutWithTTL(key string, value []byte, version int64, ttl time.Duration) error {
+	return s.putInternal(key, value, version, ttl)
+}
+
+func (s *AppStorage) putInternal(key string, value []byte, version int64, ttl time.Duration) error {
+	s.mu.RLock()
+	if s.closed {
+		s.mu.RUnlock()
+		return &domain.StorageError{Type: domain.ErrClosed, Message: "storage is closed"}
+	}
+	s.mu.RUnlock()
+
 	if s.raftNode == nil {
 		return domain.ErrNotStarted
 	}
 
-	cmd := domain.NewPutCommand(key, value, version)
+	var cmd *domain.Command
+	if ttl > 0 {
+		cmd = domain.NewPutWithTTLCommand(key, value, version, ttl)
+	} else {
+		cmd = domain.NewPutCommand(key, value, version)
+	}
+
 	result, err := s.raftNode.Apply(*cmd, 5*time.Second)
 	if err != nil {
 		return err
@@ -84,24 +163,27 @@ func (s *AppStorage) Put(key string, value []byte, version int64) error {
 	return nil
 }
 
-func (s *AppStorage) PutWithTTL(key string, value []byte, version int64, ttl time.Duration) error {
-	if s.raftNode == nil {
-		return domain.ErrNotStarted
-	}
+func (s *AppStorage) putDirect(key string, value []byte, version int64, ttl time.Duration) error {
+	return s.db.Update(func(txn *badger.Txn) error {
+		versionKey := fmt.Sprintf("v:%s", key)
+		versionBytes, _ := json.Marshal(version)
 
-	cmd := domain.NewPutWithTTLCommand(key, value, version, ttl)
-	result, err := s.raftNode.Apply(*cmd, 5*time.Second)
-	if err != nil {
-		return err
-	}
-
-	if !result.Success {
-		return errors.New(result.Error)
-	}
-
-	s.waitForVersionsAndBroadcast(result.Events)
-
-	return nil
+		if err := txn.Set([]byte(key), value); err != nil {
+			return err
+		}
+		if err := txn.Set([]byte(versionKey), versionBytes); err != nil {
+			return err
+		}
+		if ttl > 0 {
+			ttlKey := fmt.Sprintf("ttl:%s", key)
+			expireAt := time.Now().Add(ttl)
+			ttlBytes, _ := json.Marshal(expireAt)
+			if err := txn.Set([]byte(ttlKey), ttlBytes); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *AppStorage) Delete(key string) error {
@@ -145,15 +227,9 @@ func (s *AppStorage) GetMetadata(key string) (*ports.KeyMetadata, error) {
 		Updated: time.Now(),
 	}
 
-	ttlKey := fmt.Sprintf("ttl:%s", key)
 	err = s.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(ttlKey))
-		if err == nil {
-			ttlBytes, _ := item.ValueCopy(nil)
-			var expireAt time.Time
-			if json.Unmarshal(ttlBytes, &expireAt) == nil {
-				metadata.ExpireAt = &expireAt
-			}
+		if exp, e := readTTL(txn, key); e == nil {
+			metadata.ExpireAt = exp
 		}
 		return nil
 	})
@@ -204,43 +280,18 @@ func (s *AppStorage) ListByPrefix(prefix string) ([]ports.KeyValueVersion, error
 	var results []ports.KeyValueVersion
 
 	err := s.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.Prefix = []byte(prefix)
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
+		return s.forEachNonMeta(txn, []byte(prefix), false, func(item *badger.Item) error {
 			key := string(item.Key())
-
-			if len(key) > 2 && key[:2] == "v:" {
-				continue
-			}
-			if len(key) > 4 && key[:4] == "ttl:" {
-				continue
-			}
-
-			value, err := item.ValueCopy(nil)
+			value, version, exists, err := readValueAndVersion(txn, key)
 			if err != nil {
 				return err
 			}
-
-			var version int64
-			versionKey := fmt.Sprintf("v:%s", key)
-			vItem, err := txn.Get([]byte(versionKey))
-			if err == nil {
-				versionBytes, _ := vItem.ValueCopy(nil)
-				json.Unmarshal(versionBytes, &version)
+			if !exists {
+				return nil
 			}
-
-			results = append(results, ports.KeyValueVersion{
-				Key:     key,
-				Value:   value,
-				Version: version,
-			})
-		}
-
-		return nil
+			results = append(results, ports.KeyValueVersion{Key: key, Value: value, Version: version})
+			return nil
+		})
 	})
 
 	return results, err
@@ -248,27 +299,11 @@ func (s *AppStorage) ListByPrefix(prefix string) ([]ports.KeyValueVersion, error
 
 func (s *AppStorage) GetNext(prefix string) (key string, value []byte, exists bool, err error) {
 	err = s.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.Prefix = []byte(prefix)
-		opts.PrefetchValues = true
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			item := it.Item()
-			keyBytes := item.Key()
-			key = string(keyBytes)
-
-			if s.isMetadataKey(keyBytes) {
-				continue
-			}
-
-			exists = true
-			value, err = item.ValueCopy(nil)
-			return err
+		k, v, ok, e := s.firstNonMeta(txn, []byte(prefix), "")
+		if e != nil {
+			return e
 		}
-
-		exists = false
+		key, value, exists = k, v, ok
 		return nil
 	})
 
@@ -277,36 +312,11 @@ func (s *AppStorage) GetNext(prefix string) (key string, value []byte, exists bo
 
 func (s *AppStorage) GetNextAfter(prefix string, afterKey string) (key string, value []byte, exists bool, err error) {
 	err = s.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.Prefix = []byte(prefix)
-		opts.PrefetchValues = true
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		it.Seek([]byte(afterKey))
-		if !it.Valid() {
-			exists = false
-			return nil
+		k, v, ok, e := s.firstNonMeta(txn, []byte(prefix), afterKey)
+		if e != nil {
+			return e
 		}
-
-		it.Next()
-
-		for it.Valid() {
-			item := it.Item()
-			keyBytes := item.Key()
-			key = string(keyBytes)
-
-			if s.isMetadataKey(keyBytes) {
-				it.Next()
-				continue
-			}
-
-			exists = true
-			value, err = item.ValueCopy(nil)
-			return err
-		}
-
-		exists = false
+		key, value, exists = k, v, ok
 		return nil
 	})
 
@@ -315,24 +325,10 @@ func (s *AppStorage) GetNextAfter(prefix string, afterKey string) (key string, v
 
 func (s *AppStorage) CountPrefix(prefix string) (count int, err error) {
 	err = s.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.Prefix = []byte(prefix)
-		opts.PrefetchValues = false
-		opts.PrefetchSize = 1
-		it := txn.NewIterator(opts)
-		defer it.Close()
-
-		for it.Rewind(); it.Valid(); it.Next() {
-			keyBytes := it.Item().Key()
-
-			if s.isMetadataKey(keyBytes) {
-				continue
-			}
-
+		return s.forEachNonMeta(txn, []byte(prefix), false, func(item *badger.Item) error {
 			count++
-		}
-
-		return nil
+			return nil
+		})
 	})
 
 	return count, err
@@ -377,49 +373,7 @@ func (s *AppStorage) AtomicIncrement(key string) (newValue int64, err error) {
 	return counterValue, nil
 }
 
-func (s *AppStorage) Subscribe(prefix string) (<-chan ports.StorageEvent, func(), error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.closed {
-		return nil, nil, &domain.StorageError{Type: domain.ErrClosed, Message: "storage already closed"}
-	}
-	ch := make(chan ports.StorageEvent, 100)
-	s.subs[prefix] = append(s.subs[prefix], ch)
-	unsub := func() {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		subs := s.subs[prefix]
-		for i, c := range subs {
-			if c == ch {
-				s.subs[prefix] = append(subs[:i], subs[i+1:]...)
-				break
-			}
-		}
-		close(ch)
-	}
-	return ch, unsub, nil
-}
-
-func (s *AppStorage) broadcast(events []domain.Event) {
-	if len(events) == 0 {
-		return
-	}
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	for _, ev := range events {
-		for prefix, list := range s.subs {
-			if len(ev.Key) >= len(prefix) && ev.Key[:len(prefix)] == prefix {
-				evt := ports.StorageEvent{Type: domain.EventType(ev.Type), Key: ev.Key, Version: ev.Version, NodeID: ev.NodeID, Timestamp: ev.Timestamp, RequestID: ev.RequestID}
-				for _, ch := range list {
-					select {
-					case ch <- evt:
-					default:
-					}
-				}
-			}
-		}
-	}
-}
+// legacy Subscribe/broadcast removed in favor of EventManager hub
 
 func (s *AppStorage) DeleteByPrefix(prefix string) (deletedCount int, err error) {
 	keys, err := s.ListByPrefix(prefix)
@@ -454,58 +408,51 @@ func (s *AppStorage) GetVersion(key string) (int64, error) {
 	return version, nil
 }
 
-func (s *AppStorage) IncrementVersion(key string) (newVersion int64, err error) {
-	value, currentVersion, exists, err := s.Get(key)
-	if err != nil {
-		return 0, err
-	}
-	if !exists {
-		return 0, domain.NewKeyNotFoundError(key)
-	}
-
-	newVersion = currentVersion + 1
-	return newVersion, s.Put(key, value, newVersion)
-}
+// IncrementVersion deprecated and removed. Use Put with expected version or higher-level managers.
 
 func (s *AppStorage) ExpireAt(key string, expireTime time.Time) error {
+	// Prefer Raft path for cluster consistency: re-PUT current value with TTL
+	if s.raftNode != nil {
+		value, version, exists, err := s.Get(key)
+		if err != nil {
+			return err
+		}
+		if !exists {
+			return domain.NewKeyNotFoundError(key)
+		}
+		ttl := time.Until(expireTime)
+		if ttl < 0 {
+			ttl = 0
+		}
+		return s.PutWithTTL(key, value, version, ttl)
+	}
+
+	// Fallback to direct DB write if Raft is not active
 	ttlKey := fmt.Sprintf("ttl:%s", key)
 	ttlBytes, _ := json.Marshal(expireTime)
-
-	return s.db.Update(func(txn *badger.Txn) error {
-		return txn.Set([]byte(ttlKey), ttlBytes)
-	})
+	return s.db.Update(func(txn *badger.Txn) error { return txn.Set([]byte(ttlKey), ttlBytes) })
 }
 
 func (s *AppStorage) GetTTL(key string) (time.Duration, error) {
-	ttlKey := fmt.Sprintf("ttl:%s", key)
-	var expireAt time.Time
-
+	var expireAt *time.Time
 	err := s.db.View(func(txn *badger.Txn) error {
-		item, err := txn.Get([]byte(ttlKey))
-		if err != nil {
-			if errors.Is(err, badger.ErrKeyNotFound) {
-				return nil
-			}
-			return err
+		exp, e := readTTL(txn, key)
+		if e != nil {
+			return e
 		}
-
-		ttlBytes, err := item.ValueCopy(nil)
-		if err != nil {
-			return err
-		}
-
-		return json.Unmarshal(ttlBytes, &expireAt)
+		expireAt = exp
+		return nil
 	})
 
 	if err != nil {
 		return 0, err
 	}
 
-	if expireAt.IsZero() {
+	if expireAt == nil || expireAt.IsZero() {
 		return 0, nil
 	}
 
-	return time.Until(expireAt), nil
+	return time.Until(*expireAt), nil
 }
 
 func (s *AppStorage) CleanExpired() (cleanedCount int, err error) {
@@ -568,22 +515,6 @@ func (s *AppStorage) RunInTransaction(fn func(tx ports.Transaction) error) error
 	return txn.Commit()
 }
 
-func (s *AppStorage) CreateSnapshot() (io.ReadCloser, error) {
-	return nil, domain.ErrNotFound
-}
-
-func (s *AppStorage) CreateCompressedSnapshot() (io.ReadCloser, error) {
-	return nil, domain.ErrNotFound
-}
-
-func (s *AppStorage) RestoreSnapshot(snapshot io.Reader) error {
-	return domain.ErrNotFound
-}
-
-func (s *AppStorage) RestoreCompressedSnapshot(snapshot io.Reader) error {
-	return domain.ErrNotFound
-}
-
 func (s *AppStorage) SetRaftNode(node ports.RaftNode) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -600,13 +531,6 @@ func (s *AppStorage) Close() error {
 
 	s.closed = true
 
-	for _, list := range s.subs {
-		for _, ch := range list {
-			close(ch)
-		}
-	}
-	s.subs = make(map[string][]chan ports.StorageEvent)
-
 	return nil
 }
 
@@ -616,49 +540,70 @@ type transaction struct {
 }
 
 func (t *transaction) Get(key string) (value []byte, version int64, exists bool, err error) {
-	item, err := t.txn.Get([]byte(key))
+	return readValueAndVersion(t.txn, key)
+}
+
+func readValueAndVersion(txn *badger.Txn, key string) (value []byte, version int64, exists bool, err error) {
+	item, err := txn.Get([]byte(key))
 	if err != nil {
-		if errors.Is(err, badger.ErrKeyNotFound) {
+		if err == badger.ErrKeyNotFound {
 			return nil, 0, false, nil
 		}
 		return nil, 0, false, err
 	}
 
-	value, err = item.ValueCopy(nil)
+	exists = true
+	err = item.Value(func(val []byte) error {
+		value = append([]byte(nil), val...)
+		return nil
+	})
 	if err != nil {
 		return nil, 0, false, err
 	}
 
 	versionKey := fmt.Sprintf("v:%s", key)
-	vItem, err := t.txn.Get([]byte(versionKey))
-	if err == nil {
-		versionBytes, _ := vItem.ValueCopy(nil)
-		json.Unmarshal(versionBytes, &version)
+	versionItem, err := txn.Get([]byte(versionKey))
+	if err != nil {
+		if err == badger.ErrKeyNotFound {
+			version = 0
+		} else {
+			return nil, 0, false, err
+		}
+	} else {
+		err = versionItem.Value(func(val []byte) error {
+			return json.Unmarshal(val, &version)
+		})
+		if err != nil {
+			return nil, 0, false, err
+		}
 	}
 
-	return value, version, true, nil
+	return value, version, exists, nil
 }
 
 func (t *transaction) Put(key string, value []byte, version int64) error {
+	return t.PutWithTTL(key, value, version, 0)
+}
+
+func (t *transaction) PutWithTTL(key string, value []byte, version int64, ttl time.Duration) error {
 	versionKey := fmt.Sprintf("v:%s", key)
 	versionBytes, _ := json.Marshal(version)
 
 	if err := t.txn.Set([]byte(key), value); err != nil {
 		return err
 	}
-	return t.txn.Set([]byte(versionKey), versionBytes)
-}
-
-func (t *transaction) PutWithTTL(key string, value []byte, version int64, ttl time.Duration) error {
-	if err := t.Put(key, value, version); err != nil {
+	if err := t.txn.Set([]byte(versionKey), versionBytes); err != nil {
 		return err
 	}
-
-	ttlKey := fmt.Sprintf("ttl:%s", key)
-	expireAt := time.Now().Add(ttl)
-	ttlBytes, _ := json.Marshal(expireAt)
-
-	return t.txn.Set([]byte(ttlKey), ttlBytes)
+	if ttl > 0 {
+		ttlKey := fmt.Sprintf("ttl:%s", key)
+		expireAt := time.Now().Add(ttl)
+		ttlBytes, _ := json.Marshal(expireAt)
+		if err := t.txn.Set([]byte(ttlKey), ttlBytes); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (t *transaction) Delete(key string) error {
@@ -696,14 +641,8 @@ func (t *transaction) GetMetadata(key string) (*ports.KeyMetadata, error) {
 		Updated: time.Now(),
 	}
 
-	ttlKey := fmt.Sprintf("ttl:%s", key)
-	item, err := t.txn.Get([]byte(ttlKey))
-	if err == nil {
-		ttlBytes, _ := item.ValueCopy(nil)
-		var expireAt time.Time
-		if json.Unmarshal(ttlBytes, &expireAt) == nil {
-			metadata.ExpireAt = &expireAt
-		}
+	if exp, e := readTTL(t.txn, key); e == nil {
+		metadata.ExpireAt = exp
 	}
 
 	return metadata, nil
@@ -730,7 +669,9 @@ func (t *transaction) Rollback() error {
 
 func (s *AppStorage) waitForVersionsAndBroadcast(events []domain.Event) {
 	if s.raftNode == nil || s.raftNode.IsLeader() {
-		s.broadcast(events)
+		if s.events != nil {
+			_ = s.events.PublishStorageEvents(events)
+		}
 		return
 	}
 
@@ -743,7 +684,9 @@ func (s *AppStorage) waitForVersionsAndBroadcast(events []domain.Event) {
 		for {
 			select {
 			case <-timeout.C:
-				s.broadcast(events)
+				if s.events != nil {
+					_ = s.events.PublishStorageEvents(events)
+				}
 				return
 			case <-ticker.C:
 				currentVersion, err := s.GetVersion(event.Key)
@@ -755,5 +698,7 @@ func (s *AppStorage) waitForVersionsAndBroadcast(events []domain.Event) {
 	nextEvent:
 	}
 
-	s.broadcast(events)
+	if s.events != nil {
+		_ = s.events.PublishStorageEvents(events)
+	}
 }

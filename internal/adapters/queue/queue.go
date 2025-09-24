@@ -284,7 +284,7 @@ func (q *Queue) WaitForItem(ctx context.Context) <-chan struct{} {
 		prefix := fmt.Sprintf("queue:%s:pending:", q.name)
 
 		type channelSubscriber interface {
-			SubscribeToChannel(prefix string) (<-chan ports.StorageEvent, func(), error)
+			SubscribeToChannel(prefix string) (<-chan domain.Event, func(), error)
 		}
 
 		if sub, ok := q.eventManager.(channelSubscriber); ok {

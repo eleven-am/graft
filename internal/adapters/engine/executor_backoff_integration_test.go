@@ -110,7 +110,7 @@ func TestExecutor_RequeueNodeWithBackoff_DelayClampingAndJitter(t *testing.T) {
 	ctx := context.Background()
 
 	queueMock := &mocks.MockQueuePort{}
-	stateManagerMock := &mocks.MockStateManagerInterface{}
+	stateManagerMock := &mocks.MockStateManagerPort{}
 	nodeRegistryMock := &mocks.MockNodeRegistryPort{}
 	storageMock := &mocks.MockStoragePort{}
 	eventManagerMock := &mocks.MockEventManager{}
@@ -165,7 +165,7 @@ func TestExecutor_RequeueNodeWithBackoff_MaxRetriesExceeded(t *testing.T) {
 	ctx := context.Background()
 
 	queueMock := &mocks.MockQueuePort{}
-	stateManagerMock := &mocks.MockStateManagerInterface{}
+	stateManagerMock := &mocks.MockStateManagerPort{}
 	nodeRegistryMock := &mocks.MockNodeRegistryPort{}
 	storageMock := &mocks.MockStoragePort{}
 	eventManagerMock := &mocks.MockEventManager{}

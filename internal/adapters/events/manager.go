@@ -11,7 +11,6 @@ import (
 
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/ports"
-	"github.com/google/uuid"
 )
 
 type Manager struct {
@@ -19,11 +18,10 @@ type Manager struct {
 	logger  *slog.Logger
 	nodeID  string
 
-	mu            sync.RWMutex
-	subscriptions map[string]*subscription
-	running       bool
-	ctx           context.Context
-	cancel        context.CancelFunc
+	mu      sync.RWMutex
+	running bool
+	ctx     context.Context
+	cancel  context.CancelFunc
 
 	workflowStartedHandlers   []func(*domain.WorkflowStartedEvent)
 	workflowCompletedHandlers []func(*domain.WorkflowCompletedEvent)
@@ -33,78 +31,64 @@ type Manager struct {
 	nodeStartedHandlers       []func(*domain.NodeStartedEvent)
 	nodeCompletedHandlers     []func(*domain.NodeCompletedEvent)
 	nodeErrorHandlers         []func(*domain.NodeErrorEvent)
-	genericHandlers           []genericSubscription
 
 	nodeJoinedHandlers    []func(*domain.NodeJoinedEvent)
 	nodeLeftHandlers      []func(*domain.NodeLeftEvent)
 	leaderChangedHandlers []func(*domain.LeaderChangedEvent)
 
 	commandHandlers      map[string]domain.CommandHandler
-	channelSubscriptions map[string][]chan ports.StorageEvent
-
-	storageUnsubs []func()
+	channelSubscriptions map[string][]chan domain.Event
+	processedEvents      map[string]time.Time
 }
 
-type genericSubscription struct {
-	id      string
-	pattern string
-	handler func(string, interface{})
-}
-
-type subscription struct {
-	id      string
-	pattern string
-	channel <-chan ports.StorageEvent
-	cleanup func()
-}
-
-func NewManager(logger *slog.Logger) *Manager {
+func NewManager(storage ports.StoragePort, nodeID string, logger *slog.Logger) *Manager {
 	if logger == nil {
 		logger = slog.Default()
 	}
 
 	return &Manager{
 		logger:               logger.With("component", "event-manager"),
-		subscriptions:        make(map[string]*subscription),
-		commandHandlers:      make(map[string]domain.CommandHandler),
-		channelSubscriptions: make(map[string][]chan ports.StorageEvent),
-	}
-}
-
-func NewManagerWithStorage(storage ports.StoragePort, nodeID string, logger *slog.Logger) *Manager {
-	if logger == nil {
-		logger = slog.Default()
-	}
-
-	return &Manager{
 		storage:              storage,
 		nodeID:               nodeID,
-		logger:               logger.With("component", "event-manager"),
-		subscriptions:        make(map[string]*subscription),
 		commandHandlers:      make(map[string]domain.CommandHandler),
-		channelSubscriptions: make(map[string][]chan ports.StorageEvent),
+		channelSubscriptions: make(map[string][]chan domain.Event),
+		processedEvents:      make(map[string]time.Time),
 	}
 }
 
-func (m *Manager) SetStorage(storage ports.StoragePort, nodeID string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.storage = storage
-	m.nodeID = nodeID
+// PublishStorageEvents allows storage to publish persisted events to the event hub.
+// It broadcasts to channel subscribers and triggers typed handlers.
+func (m *Manager) PublishStorageEvents(events []domain.Event) error {
+	for _, ev := range events {
+		m.routeEvent(ev)
+	}
+	return nil
 }
 
 func (m *Manager) Broadcast(event domain.Event) error {
-	storageEvent := ports.StorageEvent{
-		Type:      domain.EventType(event.Type),
-		Key:       event.Key,
-		Version:   event.Version,
-		NodeID:    event.NodeID,
-		Timestamp: event.Timestamp,
-		RequestID: event.RequestID,
-	}
-
-	m.broadcastToChannels(storageEvent)
+	m.routeEvent(event)
 	return nil
+}
+
+// routeEvent fans out to channels and invokes typed handlers for any event origin
+func (m *Manager) routeEvent(event domain.Event) {
+	eventKey := m.eventKey(event)
+
+	m.mu.Lock()
+	if _, processed := m.processedEvents[eventKey]; processed {
+		m.mu.Unlock()
+		return
+	}
+	m.processedEvents[eventKey] = time.Now()
+	m.mu.Unlock()
+
+	m.broadcastToChannels(event)
+	_ = m.processStorageEvent(&event)
+}
+
+// eventKey generates a unique key for an event to enable deduplication
+func (m *Manager) eventKey(event domain.Event) string {
+	return fmt.Sprintf("%s:%d:%s:%d", event.Key, event.Version, event.NodeID, event.Timestamp.UnixNano())
 }
 
 func (m *Manager) Start(ctx context.Context) error {
@@ -118,35 +102,8 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.running = true
 
-	if m.storage != nil {
-		type subscriber interface {
-			Subscribe(prefix string) (<-chan ports.StorageEvent, func(), error)
-		}
-		s, ok := interface{}(m.storage).(subscriber)
-		if ok {
-			prefixes := []string{"workflow:", "node:", "dev-cmd:"}
-			for _, prefix := range prefixes {
-				ch, unsub, err := s.Subscribe(prefix)
-				if err != nil {
-					continue
-				}
-				m.storageUnsubs = append(m.storageUnsubs, unsub)
-				go func(eventsCh <-chan ports.StorageEvent) {
-					for {
-						select {
-						case <-m.ctx.Done():
-							return
-						case ev, ok := <-eventsCh:
-							if !ok {
-								return
-							}
-							_ = m.processStorageEvent(&ev)
-						}
-					}
-				}(ch)
-			}
-		}
-	}
+	// Start cleanup goroutine for processed events
+	go m.cleanupProcessedEvents()
 
 	return nil
 }
@@ -161,28 +118,19 @@ func (m *Manager) Stop() error {
 
 	m.cancel()
 
-	for _, unsub := range m.storageUnsubs {
-		unsub()
-	}
-	m.storageUnsubs = nil
-
-	for _, sub := range m.subscriptions {
-		sub.cleanup()
-	}
-	m.subscriptions = make(map[string]*subscription)
-
 	for _, subs := range m.channelSubscriptions {
 		for _, ch := range subs {
 			close(ch)
 		}
 	}
-	m.channelSubscriptions = make(map[string][]chan ports.StorageEvent)
+	m.channelSubscriptions = make(map[string][]chan domain.Event)
+	m.processedEvents = make(map[string]time.Time)
 
 	m.running = false
 	return nil
 }
 
-func (m *Manager) processStorageEvent(event *ports.StorageEvent) error {
+func (m *Manager) processStorageEvent(event *domain.Event) error {
 	parts := strings.Split(event.Key, ":")
 	if len(parts) < 2 {
 		return nil
@@ -200,7 +148,7 @@ func (m *Manager) processStorageEvent(event *ports.StorageEvent) error {
 	}
 }
 
-func (m *Manager) processWorkflowEvent(event *ports.StorageEvent, keyParts []string) error {
+func (m *Manager) processWorkflowEvent(event *domain.Event, keyParts []string) error {
 	if len(keyParts) < 3 {
 		return nil
 	}
@@ -226,23 +174,26 @@ func (m *Manager) processWorkflowEvent(event *ports.StorageEvent, keyParts []str
 			if err := json.Unmarshal(data, &nodeEvent); err != nil {
 				return domain.ErrInvalidInput
 			}
+			nodeEvent.WorkflowID = workflowID
+			nodeEvent.NodeName = nodeName
 			m.notifyNodeStarted(&nodeEvent)
 		case "completed":
 			var nodeEvent domain.NodeCompletedEvent
 			if err := json.Unmarshal(data, &nodeEvent); err != nil {
 				return domain.ErrInvalidInput
 			}
+			nodeEvent.WorkflowID = workflowID
+			nodeEvent.NodeName = nodeName
 			m.notifyNodeCompleted(&nodeEvent)
 		case "error":
 			var nodeEvent domain.NodeErrorEvent
 			if err := json.Unmarshal(data, &nodeEvent); err != nil {
 				return domain.ErrInvalidInput
 			}
+			nodeEvent.WorkflowID = workflowID
+			nodeEvent.NodeName = nodeName
 			m.notifyNodeError(&nodeEvent)
 		}
-
-		eventKey := fmt.Sprintf("node:%s:%s", workflowID, nodeName)
-		m.notifyGenericHandlers(event.Key, eventKey)
 		return nil
 	}
 
@@ -283,11 +234,10 @@ func (m *Manager) processWorkflowEvent(event *ports.StorageEvent, keyParts []str
 		m.notifyWorkflowResumed(&workflowEvent)
 	}
 
-	m.notifyGenericHandlers(event.Key, workflowID)
 	return nil
 }
 
-func (m *Manager) processNodeEvent(event *ports.StorageEvent, keyParts []string) error {
+func (m *Manager) processNodeEvent(event *domain.Event, keyParts []string) error {
 	if len(keyParts) < 4 {
 		return nil
 	}
@@ -311,6 +261,8 @@ func (m *Manager) processNodeEvent(event *ports.StorageEvent, keyParts []string)
 		if err := json.Unmarshal(data, &nodeEvent); err != nil {
 			return domain.ErrInvalidInput
 		}
+		nodeEvent.WorkflowID = workflowID
+		nodeEvent.NodeName = nodeName
 		m.notifyNodeStarted(&nodeEvent)
 
 	case "completed":
@@ -318,6 +270,8 @@ func (m *Manager) processNodeEvent(event *ports.StorageEvent, keyParts []string)
 		if err := json.Unmarshal(data, &nodeEvent); err != nil {
 			return domain.ErrInvalidInput
 		}
+		nodeEvent.WorkflowID = workflowID
+		nodeEvent.NodeName = nodeName
 		m.notifyNodeCompleted(&nodeEvent)
 
 	case "error":
@@ -325,11 +279,11 @@ func (m *Manager) processNodeEvent(event *ports.StorageEvent, keyParts []string)
 		if err := json.Unmarshal(data, &nodeEvent); err != nil {
 			return domain.ErrInvalidInput
 		}
+		nodeEvent.WorkflowID = workflowID
+		nodeEvent.NodeName = nodeName
 		m.notifyNodeError(&nodeEvent)
 	}
 
-	eventKey := fmt.Sprintf("node:%s:%s", workflowID, nodeName)
-	m.notifyGenericHandlers(event.Key, eventKey)
 	return nil
 }
 
@@ -389,38 +343,17 @@ func (m *Manager) OnNodeError(handler func(*domain.NodeErrorEvent)) error {
 	return nil
 }
 
-func (m *Manager) Subscribe(pattern string, handler func(string, interface{})) error {
+// Subscribe wraps SubscribeToChannel to provide a callback API.
+// It listens to channel events for the given pattern (supports '*' suffix as prefix wildcard)
+// and invokes the handler with the matching key. The event payload is not provided; consumers
+// should fetch any needed data from storage.
+// Callback-based Subscribe/Unsubscribe removed; use SubscribeToChannel instead
+
+func (m *Manager) SubscribeToChannel(prefix string) (<-chan domain.Event, func(), error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	sub := genericSubscription{
-		id:      uuid.New().String(),
-		pattern: pattern,
-		handler: handler,
-	}
-	m.genericHandlers = append(m.genericHandlers, sub)
-	return nil
-}
-
-func (m *Manager) Unsubscribe(pattern string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	var filtered []genericSubscription
-	for _, sub := range m.genericHandlers {
-		if sub.pattern != pattern {
-			filtered = append(filtered, sub)
-		}
-	}
-	m.genericHandlers = filtered
-	return nil
-}
-
-func (m *Manager) SubscribeToChannel(prefix string) (<-chan ports.StorageEvent, func(), error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	ch := make(chan ports.StorageEvent, 100)
+	ch := make(chan domain.Event, 100)
 	m.channelSubscriptions[prefix] = append(m.channelSubscriptions[prefix], ch)
 
 	unsubscribe := func() {
@@ -440,7 +373,7 @@ func (m *Manager) SubscribeToChannel(prefix string) (<-chan ports.StorageEvent, 
 	return ch, unsubscribe, nil
 }
 
-func (m *Manager) broadcastToChannels(event ports.StorageEvent) {
+func (m *Manager) broadcastToChannels(event domain.Event) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -544,21 +477,6 @@ func (m *Manager) notifyNodeError(event *domain.NodeErrorEvent) {
 	}
 }
 
-func (m *Manager) notifyGenericHandlers(key string, eventData interface{}) {
-	m.mu.RLock()
-	var matchingHandlers []func(string, interface{})
-	for _, sub := range m.genericHandlers {
-		if m.patternMatches(sub.pattern, key) {
-			matchingHandlers = append(matchingHandlers, sub.handler)
-		}
-	}
-	m.mu.RUnlock()
-
-	for _, handler := range matchingHandlers {
-		go m.safeCall(func() { handler(key, eventData) })
-	}
-}
-
 func (m *Manager) patternMatches(pattern, key string) bool {
 	if pattern == "*" {
 		return true
@@ -592,7 +510,7 @@ func (m *Manager) RegisterCommandHandler(cmdName string, handler domain.CommandH
 	return nil
 }
 
-func (m *Manager) processDevCommand(event *ports.StorageEvent, keyParts []string) error {
+func (m *Manager) processDevCommand(event *domain.Event, keyParts []string) error {
 	if len(keyParts) < 2 {
 		return nil
 	}
@@ -692,4 +610,26 @@ func (m *Manager) safeCall(fn func()) {
 		}
 	}()
 	fn()
+}
+
+// cleanupProcessedEvents periodically removes old entries from processedEvents
+func (m *Manager) cleanupProcessedEvents() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			m.mu.Lock()
+			cutoff := time.Now().Add(-10 * time.Minute)
+			for key, timestamp := range m.processedEvents {
+				if timestamp.Before(cutoff) {
+					delete(m.processedEvents, key)
+				}
+			}
+			m.mu.Unlock()
+		case <-m.ctx.Done():
+			return
+		}
+	}
 }

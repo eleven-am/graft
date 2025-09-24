@@ -11,8 +11,10 @@ type EventManager interface {
 	Stop() error
 
 	Broadcast(event domain.Event) error
+	// PublishStorageEvents publishes storage-level events (post-persistence)
+	PublishStorageEvents(events []domain.Event) error
 
-	SubscribeToChannel(prefix string) (<-chan StorageEvent, func(), error)
+	SubscribeToChannel(prefix string) (<-chan domain.Event, func(), error)
 
 	OnWorkflowStarted(handler func(event *domain.WorkflowStartedEvent)) error
 	OnWorkflowCompleted(handler func(event *domain.WorkflowCompletedEvent)) error
@@ -24,8 +26,7 @@ type EventManager interface {
 	OnNodeCompleted(handler func(event *domain.NodeCompletedEvent)) error
 	OnNodeError(handler func(event *domain.NodeErrorEvent)) error
 
-	Subscribe(pattern string, handler func(key string, event interface{})) error
-	Unsubscribe(pattern string) error
+	// Callback-based Subscribe removed; use SubscribeToChannel instead
 
 	BroadcastCommand(ctx context.Context, devCmd *domain.DevCommand) error
 	RegisterCommandHandler(cmdName string, handler domain.CommandHandler) error

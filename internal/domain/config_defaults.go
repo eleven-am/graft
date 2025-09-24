@@ -95,7 +95,6 @@ func DefaultEngineConfig() EngineConfig {
 		StateUpdateInterval:    time.Second,
 		RetryAttempts:          3,
 		RetryBackoff:           time.Second,
-		StateOptimization:      DefaultStateOptimizationConfig(),
 	}
 }
 

@@ -206,8 +206,8 @@ func setupAggressiveEngine(t *testing.T) (*Engine, *TestNodeRegistry, func()) {
 	mockEventManager.On("Subscribe", mock.AnythingOfType("string"), mock.AnythingOfType("func(string, interface {})")).Return(nil).Maybe()
 	mockEventManager.On("Broadcast", mock.AnythingOfType("domain.Event")).Return(nil).Maybe()
 
-	ch := make(chan ports.StorageEvent, 1)
-	mockEventManager.On("SubscribeToChannel", mock.AnythingOfType("string")).Return((<-chan ports.StorageEvent)(ch), func() {}, nil).Maybe()
+	ch := make(chan domain.Event, 1)
+	mockEventManager.On("SubscribeToChannel", mock.AnythingOfType("string")).Return((<-chan domain.Event)(ch), func() {}, nil).Maybe()
 	testQueue := queue.NewQueue("aggressive-test-queue", appStorage, mockEventManager, logger)
 	nodeRegistry := NewTestNodeRegistry()
 
@@ -519,8 +519,8 @@ func TestEngine_RapidStartStop(t *testing.T) {
 		mockEventManager.On("Subscribe", mock.AnythingOfType("string"), mock.AnythingOfType("func(string, interface {})")).Return(nil).Maybe()
 		mockEventManager.On("Broadcast", mock.AnythingOfType("domain.Event")).Return(nil).Maybe()
 
-		ch := make(chan ports.StorageEvent, 1)
-		mockEventManager.On("SubscribeToChannel", mock.AnythingOfType("string")).Return((<-chan ports.StorageEvent)(ch), func() {}, nil).Maybe()
+		ch := make(chan domain.Event, 1)
+		mockEventManager.On("SubscribeToChannel", mock.AnythingOfType("string")).Return((<-chan domain.Event)(ch), func() {}, nil).Maybe()
 		testQueue := queue.NewQueue(fmt.Sprintf("rapid-test-%d", i), appStorage, mockEventManager, logger)
 		nodeRegistry := NewTestNodeRegistry()
 

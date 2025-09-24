@@ -6,18 +6,12 @@ import (
 	"testing"
 
 	"github.com/eleven-am/graft/internal/mocks"
-	"github.com/eleven-am/graft/internal/ports"
 )
 
 func TestEventManager_BasicLifecycle(t *testing.T) {
 	storage := &mocks.MockStoragePort{}
-	eventsChan := make(chan ports.StorageEvent, 10)
-	unsubscribe := func() {}
-	storage.On("Subscribe", "workflow:").Return((<-chan ports.StorageEvent)(eventsChan), unsubscribe, nil)
-	storage.On("Subscribe", "node:").Return((<-chan ports.StorageEvent)(eventsChan), unsubscribe, nil)
-	storage.On("Subscribe", "dev-cmd:").Return((<-chan ports.StorageEvent)(eventsChan), unsubscribe, nil)
 
-	manager := NewManagerWithStorage(storage, "test-node", slog.Default())
+	manager := NewManager(storage, "test-node", slog.Default())
 
 	ctx := context.Background()
 	err := manager.Start(ctx)

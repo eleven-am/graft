@@ -17,7 +17,7 @@ type Engine struct {
 	config       domain.EngineConfig
 	nodeID       string
 	nodeRegistry ports.NodeRegistryPort
-	stateManager StateManagerInterface
+	stateManager ports.StateManagerPort
 	executor     *Executor
 	queue        ports.QueuePort
 	storage      ports.StoragePort
@@ -68,13 +68,9 @@ func (b *ExponentialBackoff) Reset() {
 }
 
 func NewEngine(config domain.EngineConfig, nodeID string, nodeRegistry ports.NodeRegistryPort, queue ports.QueuePort, storage ports.StoragePort, eventManager ports.EventManager, loadBalancer ports.LoadBalancer, logger *slog.Logger) *Engine {
-	var stateManager StateManagerInterface
-
-	if config.StateOptimization.Strategy != "" {
-		stateManager = NewOptimizedStateManager(storage, config.StateOptimization, logger)
-	} else {
-		stateManager = NewStateManager(storage, logger)
-	}
+	var stateManager ports.StateManagerPort
+	// Use the unified StateManager (optimized implementation) for all configurations.
+	stateManager = NewStateManager(storage, logger)
 
 	metrics := domain.NewExecutionMetrics()
 	executor := NewExecutor(config, nodeID, nodeRegistry, stateManager, queue, storage, eventManager, loadBalancer, logger, metrics)
@@ -116,10 +112,8 @@ func (e *Engine) Stop() error {
 
 	e.wg.Wait()
 
-	if osm, ok := e.stateManager.(*OptimizedStateManager); ok {
-		if err := osm.Stop(); err != nil {
-			e.logger.Error("failed to stop optimized state manager", "error", err)
-		}
+	if err := e.stateManager.Stop(); err != nil {
+		e.logger.Error("failed to stop state manager", "error", err)
 	}
 
 	if err := e.queue.Close(); err != nil {

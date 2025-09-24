@@ -96,13 +96,12 @@ type HealthConfig struct {
 }
 
 type EngineConfig struct {
-	MaxConcurrentWorkflows int                     `json:"max_concurrent_workflows" yaml:"max_concurrent_workflows"`
-	NodeExecutionTimeout   time.Duration           `json:"node_execution_timeout" yaml:"node_execution_timeout"`
-	StateUpdateInterval    time.Duration           `json:"state_update_interval" yaml:"state_update_interval"`
-	RetryAttempts          int                     `json:"retry_attempts" yaml:"retry_attempts"`
-	RetryBackoff           time.Duration           `json:"retry_backoff" yaml:"retry_backoff"`
-	WorkerCount            int                     `json:"worker_count" yaml:"worker_count"`
-	StateOptimization      StateOptimizationConfig `json:"state_optimization" yaml:"state_optimization"`
+	MaxConcurrentWorkflows int           `json:"max_concurrent_workflows" yaml:"max_concurrent_workflows"`
+	NodeExecutionTimeout   time.Duration `json:"node_execution_timeout" yaml:"node_execution_timeout"`
+	StateUpdateInterval    time.Duration `json:"state_update_interval" yaml:"state_update_interval"`
+	RetryAttempts          int           `json:"retry_attempts" yaml:"retry_attempts"`
+	RetryBackoff           time.Duration `json:"retry_backoff" yaml:"retry_backoff"`
+	WorkerCount            int           `json:"worker_count" yaml:"worker_count"`
 }
 
 type OrchestratorConfig struct {

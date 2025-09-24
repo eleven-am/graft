@@ -55,7 +55,7 @@ type Manager struct {
 }
 
 type managerProviders struct {
-	newEventManager   func(*slog.Logger) ports.EventManager
+	newEventManager   func(ports.StoragePort, string, *slog.Logger) ports.EventManager
 	newRaftStorage    func(dataDir string, logger *slog.Logger) (*raft.Storage, error)
 	newRaftNode       func(cfg *raft.Config, storage *raft.Storage, events ports.EventManager, appTransport ports.TransportPort, logger *slog.Logger) (ports.RaftNode, error)
 	newAppStorage     func(raft ports.RaftNode, db *badger.DB, logger *slog.Logger) ports.StoragePort
@@ -69,8 +69,10 @@ type managerProviders struct {
 
 func defaultProviders() managerProviders {
 	return managerProviders{
-		newEventManager: func(l *slog.Logger) ports.EventManager { return events.NewManager(l) },
-		newRaftStorage:  func(dataDir string, l *slog.Logger) (*raft.Storage, error) { return raft.NewStorage(dataDir, l) },
+		newEventManager: func(storage ports.StoragePort, nodeID string, l *slog.Logger) ports.EventManager {
+			return events.NewManager(storage, nodeID, l)
+		},
+		newRaftStorage: func(dataDir string, l *slog.Logger) (*raft.Storage, error) { return raft.NewStorage(dataDir, l) },
 		newRaftNode: func(cfg *raft.Config, st *raft.Storage, ev ports.EventManager, t ports.TransportPort, l *slog.Logger) (ports.RaftNode, error) {
 			return raft.NewNode(cfg, st, ev, t, l)
 		},
@@ -163,7 +165,23 @@ func NewWithConfig(config *domain.Config) *Manager {
 	}
 	cleanup = append(cleanup, raftStorage.Close)
 
-	eventManager := prov.newEventManager(logger)
+	appTransport := prov.newTransport(logger, config.Transport)
+
+	// Create a temporary event manager for raft initialization
+	tempEventManager := prov.newEventManager(nil, config.NodeID, logger)
+
+	raftAdapter, err := prov.newRaftNode(raftConfig, raftStorage, tempEventManager, appTransport, logger)
+	if err != nil {
+		logger.Error("failed to create raft node", "error", err)
+		return nil
+	}
+	cleanup = append(cleanup, raftAdapter.Stop)
+
+	// Create app storage
+	appStorage := prov.newAppStorage(raftAdapter, raftStorage.StateDB(), logger)
+
+	// Now create the real event manager with storage
+	eventManager := prov.newEventManager(appStorage, config.NodeID, logger)
 	cleanup = append(cleanup, func() error {
 		if eventManager != nil {
 			return eventManager.Stop()
@@ -171,20 +189,14 @@ func NewWithConfig(config *domain.Config) *Manager {
 		return nil
 	})
 
-	appTransport := prov.newTransport(logger, config.Transport)
-	raftAdapter, err := prov.newRaftNode(raftConfig, raftStorage, eventManager, appTransport, logger)
-	if err != nil {
-		logger.Error("failed to create raft node", "error", err)
-		return nil
+	// Update the raft adapter with the real event manager
+	if updater, ok := raftAdapter.(interface{ SetEventManager(ports.EventManager) }); ok {
+		updater.SetEventManager(eventManager)
 	}
-	cleanup = append(cleanup, raftAdapter.Stop)
 
-	appStorage := prov.newAppStorage(raftAdapter, raftStorage.StateDB(), logger)
-
-	if setter, ok := eventManager.(interface {
-		SetStorage(ports.StoragePort, string)
-	}); ok {
-		setter.SetStorage(appStorage, config.NodeID)
+	// Set event manager on app storage
+	if s, ok := appStorage.(interface{ SetEventManager(ports.EventManager) }); ok {
+		s.SetEventManager(eventManager)
 	}
 
 	nodeRegistryManager := prov.newNodeRegistry(logger)
@@ -240,9 +252,7 @@ func NewWithConfig(config *domain.Config) *Manager {
 		tracingProvider = tracing.NewTracingProvider(config.Tracing, logger)
 		cleanup = append(cleanup, func() error {
 			if tracingProvider != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-				defer cancel()
-				return tracingProvider.Shutdown(ctx)
+				return tracingProvider.Shutdown()
 			}
 			return nil
 		})
@@ -581,13 +591,29 @@ func (m *Manager) OnNodeError(handler func(*NodeErrorEvent)) error {
 	return m.eventManager.OnNodeError(handler)
 }
 
+// Subscribe wraps SubscribeToChannel by deriving a prefix from the pattern and invoking the handler
+// for matching keys. Prefer SubscribeToChannel for lifecycle control.
 func (m *Manager) Subscribe(pattern string, handler func(string, interface{})) error {
-	return m.eventManager.Subscribe(pattern, handler)
+	prefix := pattern
+	if strings.HasSuffix(pattern, "*") {
+		prefix = strings.TrimSuffix(pattern, "*")
+	}
+	ch, _, err := m.eventManager.SubscribeToChannel(prefix)
+	if err != nil {
+		return err
+	}
+	go func() {
+		for ev := range ch {
+			if m.patternMatches(pattern, ev.Key) {
+				handler(ev.Key, nil)
+			}
+		}
+	}()
+	return nil
 }
 
-func (m *Manager) Unsubscribe(pattern string) error {
-	return m.eventManager.Unsubscribe(pattern)
-}
+// Unsubscribe is not supported via pattern; use SubscribeToChannel and the returned unsubscribe function.
+func (m *Manager) Unsubscribe(pattern string) error { return nil }
 
 func (m *Manager) BroadcastCommand(ctx context.Context, devCmd *DevCommand) error {
 	return m.eventManager.BroadcastCommand(ctx, devCmd)
@@ -615,40 +641,43 @@ func (m *Manager) SubscribeToWorkflowState(workflowID string) (<-chan *WorkflowS
 	}
 
 	statusChan := make(chan *WorkflowStatus, 10)
-	pattern := fmt.Sprintf("workflow:state:%s", workflowID)
+	pattern := domain.WorkflowStateKey(workflowID)
 
-	err := m.eventManager.Subscribe(pattern, func(key string, data interface{}) {
-		internalStatus, err := m.engine.GetWorkflowStatus(workflowID)
-		if err != nil {
-			m.logger.Error("failed to get workflow status for subscription",
-				"workflow_id", workflowID,
-				"error", err)
-			return
-		}
-
-		publicStatus, err := workflowStatusFromInternal(*internalStatus)
-		if err != nil {
-			m.logger.Error("failed to convert workflow status for subscription",
-				"workflow_id", workflowID,
-				"error", err)
-			return
-		}
-
-		select {
-		case statusChan <- &publicStatus:
-		default:
-			m.logger.Warn("workflow status channel full, dropping update",
-				"workflow_id", workflowID)
-		}
-	})
-
+	ch, unsub, err := m.eventManager.SubscribeToChannel(pattern)
 	if err != nil {
 		close(statusChan)
 		return nil, nil, err
 	}
 
+	go func() {
+		for range ch {
+			internalStatus, err := m.engine.GetWorkflowStatus(workflowID)
+			if err != nil {
+				m.logger.Error("failed to get workflow status for subscription",
+					"workflow_id", workflowID,
+					"error", err)
+				continue
+			}
+
+			publicStatus, err := workflowStatusFromInternal(*internalStatus)
+			if err != nil {
+				m.logger.Error("failed to convert workflow status for subscription",
+					"workflow_id", workflowID,
+					"error", err)
+				continue
+			}
+
+			select {
+			case statusChan <- &publicStatus:
+			default:
+				m.logger.Warn("workflow status channel full, dropping update",
+					"workflow_id", workflowID)
+			}
+		}
+	}()
+
 	unsubscribe := func() {
-		m.eventManager.Unsubscribe(pattern)
+		unsub()
 		close(statusChan)
 	}
 
@@ -662,7 +691,7 @@ func (m *Manager) calculateClusterMetrics() ClusterMetrics {
 	failedWorkflows := 0
 	nodesExecuted := 0
 
-	if workflowItems, err := m.storage.ListByPrefix("workflow:state:"); err == nil {
+	if workflowItems, err := m.storage.ListByPrefix(domain.WorkflowStatePrefix); err == nil {
 		totalWorkflows = len(workflowItems)
 		for _, item := range workflowItems {
 			var workflow domain.WorkflowInstance

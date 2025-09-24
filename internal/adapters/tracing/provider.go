@@ -58,24 +58,30 @@ func (tp *TracingProvider) GetTracer(name string) ports.Tracer {
 	return tracer
 }
 
-func (tp *TracingProvider) Shutdown(ctx context.Context) error {
+func (tp *TracingProvider) Shutdown() error {
 	tp.mu.Lock()
-	defer tp.mu.Unlock()
-
 	tp.logger.Info("shutting down tracing provider")
 
+	// Get a copy of spans to finish them outside the lock
+	spansToFinish := make([]*spanImpl, 0, len(tp.spans))
 	for _, span := range tp.spans {
-		span.Finish()
+		spansToFinish = append(spansToFinish, span)
 	}
 
 	tp.active = false
 	tp.tracers = make(map[string]ports.Tracer)
 	tp.spans = make(map[string]*spanImpl)
+	tp.mu.Unlock()
+
+	// Finish spans outside the lock to avoid deadlock
+	for _, span := range spansToFinish {
+		span.Finish()
+	}
 
 	return nil
 }
 
-func (tp *TracingProvider) ForceFlush(ctx context.Context) error {
+func (tp *TracingProvider) ForceFlush() error {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
 
@@ -120,7 +126,9 @@ func (tp *TracingProvider) removeSpan(spanID string) {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
 
-	delete(tp.spans, spanID)
+	if tp.active {
+		delete(tp.spans, spanID)
+	}
 	tp.metrics.SpansFinished++
 }
 
@@ -300,11 +308,11 @@ func (sc *spanContextImpl) TraceState() string {
 
 type noopSpan struct{}
 
-func (ns *noopSpan) SetTag(key string, value interface{})                    {}
-func (ns *noopSpan) SetError(err error)                                      {}
-func (ns *noopSpan) AddEvent(name string, attributes map[string]interface{}) {}
-func (ns *noopSpan) Finish()                                                 {}
-func (ns *noopSpan) Context() ports.SpanContext                              { return nil }
+func (ns *noopSpan) SetTag(_ string, _ interface{})              {}
+func (ns *noopSpan) SetError(_ error)                            {}
+func (ns *noopSpan) AddEvent(_ string, _ map[string]interface{}) {}
+func (ns *noopSpan) Finish()                                     {}
+func (ns *noopSpan) Context() ports.SpanContext                  { return nil }
 
 func generateTraceID(parent ports.SpanContext) string {
 	if parent != nil {

@@ -283,34 +283,6 @@ func (_c *MockStoragePort_CountPrefix_Call) RunAndReturn(run func(string) (int, 
 }
 
 // CreateCompressedSnapshot provides a mock function with no fields
-func (_m *MockStoragePort) CreateCompressedSnapshot() (io.ReadCloser, error) {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for CreateCompressedSnapshot")
-	}
-
-	var r0 io.ReadCloser
-	var r1 error
-	if rf, ok := ret.Get(0).(func() (io.ReadCloser, error)); ok {
-		return rf()
-	}
-	if rf, ok := ret.Get(0).(func() io.ReadCloser); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(io.ReadCloser)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func() error); ok {
-		r1 = rf()
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
 
 // MockStoragePort_CreateCompressedSnapshot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CreateCompressedSnapshot'
 type MockStoragePort_CreateCompressedSnapshot_Call struct {
@@ -318,9 +290,6 @@ type MockStoragePort_CreateCompressedSnapshot_Call struct {
 }
 
 // CreateCompressedSnapshot is a helper method to define mock.On call
-func (_e *MockStoragePort_Expecter) CreateCompressedSnapshot() *MockStoragePort_CreateCompressedSnapshot_Call {
-	return &MockStoragePort_CreateCompressedSnapshot_Call{Call: _e.mock.On("CreateCompressedSnapshot")}
-}
 
 func (_c *MockStoragePort_CreateCompressedSnapshot_Call) Run(run func()) *MockStoragePort_CreateCompressedSnapshot_Call {
 	_c.Call.Run(func(args mock.Arguments) {
@@ -340,34 +309,6 @@ func (_c *MockStoragePort_CreateCompressedSnapshot_Call) RunAndReturn(run func()
 }
 
 // CreateSnapshot provides a mock function with no fields
-func (_m *MockStoragePort) CreateSnapshot() (io.ReadCloser, error) {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for CreateSnapshot")
-	}
-
-	var r0 io.ReadCloser
-	var r1 error
-	if rf, ok := ret.Get(0).(func() (io.ReadCloser, error)); ok {
-		return rf()
-	}
-	if rf, ok := ret.Get(0).(func() io.ReadCloser); ok {
-		r0 = rf()
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(io.ReadCloser)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func() error); ok {
-		r1 = rf()
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
 
 // MockStoragePort_CreateSnapshot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CreateSnapshot'
 type MockStoragePort_CreateSnapshot_Call struct {
@@ -375,9 +316,6 @@ type MockStoragePort_CreateSnapshot_Call struct {
 }
 
 // CreateSnapshot is a helper method to define mock.On call
-func (_e *MockStoragePort_Expecter) CreateSnapshot() *MockStoragePort_CreateSnapshot_Call {
-	return &MockStoragePort_CreateSnapshot_Call{Call: _e.mock.On("CreateSnapshot")}
-}
 
 func (_c *MockStoragePort_CreateSnapshot_Call) Run(run func()) *MockStoragePort_CreateSnapshot_Call {
 	_c.Call.Run(func(args mock.Arguments) {
@@ -988,62 +926,6 @@ func (_c *MockStoragePort_GetVersion_Call) RunAndReturn(run func(string) (int64,
 	return _c
 }
 
-// IncrementVersion provides a mock function with given fields: key
-func (_m *MockStoragePort) IncrementVersion(key string) (int64, error) {
-	ret := _m.Called(key)
-
-	if len(ret) == 0 {
-		panic("no return value specified for IncrementVersion")
-	}
-
-	var r0 int64
-	var r1 error
-	if rf, ok := ret.Get(0).(func(string) (int64, error)); ok {
-		return rf(key)
-	}
-	if rf, ok := ret.Get(0).(func(string) int64); ok {
-		r0 = rf(key)
-	} else {
-		r0 = ret.Get(0).(int64)
-	}
-
-	if rf, ok := ret.Get(1).(func(string) error); ok {
-		r1 = rf(key)
-	} else {
-		r1 = ret.Error(1)
-	}
-
-	return r0, r1
-}
-
-// MockStoragePort_IncrementVersion_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'IncrementVersion'
-type MockStoragePort_IncrementVersion_Call struct {
-	*mock.Call
-}
-
-// IncrementVersion is a helper method to define mock.On call
-//   - key string
-func (_e *MockStoragePort_Expecter) IncrementVersion(key interface{}) *MockStoragePort_IncrementVersion_Call {
-	return &MockStoragePort_IncrementVersion_Call{Call: _e.mock.On("IncrementVersion", key)}
-}
-
-func (_c *MockStoragePort_IncrementVersion_Call) Run(run func(key string)) *MockStoragePort_IncrementVersion_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
-	})
-	return _c
-}
-
-func (_c *MockStoragePort_IncrementVersion_Call) Return(newVersion int64, err error) *MockStoragePort_IncrementVersion_Call {
-	_c.Call.Return(newVersion, err)
-	return _c
-}
-
-func (_c *MockStoragePort_IncrementVersion_Call) RunAndReturn(run func(string) (int64, error)) *MockStoragePort_IncrementVersion_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // ListByPrefix provides a mock function with given fields: prefix
 func (_m *MockStoragePort) ListByPrefix(prefix string) ([]ports.KeyValueVersion, error) {
 	ret := _m.Called(prefix)
@@ -1200,22 +1082,6 @@ func (_c *MockStoragePort_PutWithTTL_Call) RunAndReturn(run func(string, []byte,
 }
 
 // RestoreCompressedSnapshot provides a mock function with given fields: snapshot
-func (_m *MockStoragePort) RestoreCompressedSnapshot(snapshot io.Reader) error {
-	ret := _m.Called(snapshot)
-
-	if len(ret) == 0 {
-		panic("no return value specified for RestoreCompressedSnapshot")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(io.Reader) error); ok {
-		r0 = rf(snapshot)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
 
 // MockStoragePort_RestoreCompressedSnapshot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RestoreCompressedSnapshot'
 type MockStoragePort_RestoreCompressedSnapshot_Call struct {
@@ -1224,9 +1090,6 @@ type MockStoragePort_RestoreCompressedSnapshot_Call struct {
 
 // RestoreCompressedSnapshot is a helper method to define mock.On call
 //   - snapshot io.Reader
-func (_e *MockStoragePort_Expecter) RestoreCompressedSnapshot(snapshot interface{}) *MockStoragePort_RestoreCompressedSnapshot_Call {
-	return &MockStoragePort_RestoreCompressedSnapshot_Call{Call: _e.mock.On("RestoreCompressedSnapshot", snapshot)}
-}
 
 func (_c *MockStoragePort_RestoreCompressedSnapshot_Call) Run(run func(snapshot io.Reader)) *MockStoragePort_RestoreCompressedSnapshot_Call {
 	_c.Call.Run(func(args mock.Arguments) {
@@ -1246,22 +1109,6 @@ func (_c *MockStoragePort_RestoreCompressedSnapshot_Call) RunAndReturn(run func(
 }
 
 // RestoreSnapshot provides a mock function with given fields: snapshot
-func (_m *MockStoragePort) RestoreSnapshot(snapshot io.Reader) error {
-	ret := _m.Called(snapshot)
-
-	if len(ret) == 0 {
-		panic("no return value specified for RestoreSnapshot")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(io.Reader) error); ok {
-		r0 = rf(snapshot)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
 
 // MockStoragePort_RestoreSnapshot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RestoreSnapshot'
 type MockStoragePort_RestoreSnapshot_Call struct {
@@ -1270,9 +1117,6 @@ type MockStoragePort_RestoreSnapshot_Call struct {
 
 // RestoreSnapshot is a helper method to define mock.On call
 //   - snapshot io.Reader
-func (_e *MockStoragePort_Expecter) RestoreSnapshot(snapshot interface{}) *MockStoragePort_RestoreSnapshot_Call {
-	return &MockStoragePort_RestoreSnapshot_Call{Call: _e.mock.On("RestoreSnapshot", snapshot)}
-}
 
 func (_c *MockStoragePort_RestoreSnapshot_Call) Run(run func(snapshot io.Reader)) *MockStoragePort_RestoreSnapshot_Call {
 	_c.Call.Run(func(args mock.Arguments) {
@@ -1367,73 +1211,6 @@ func (_c *MockStoragePort_SetRaftNode_Call) Return() *MockStoragePort_SetRaftNod
 
 func (_c *MockStoragePort_SetRaftNode_Call) RunAndReturn(run func(ports.RaftNode)) *MockStoragePort_SetRaftNode_Call {
 	_c.Run(run)
-	return _c
-}
-
-// Subscribe provides a mock function with given fields: prefix
-func (_m *MockStoragePort) Subscribe(prefix string) (<-chan ports.StorageEvent, func(), error) {
-	ret := _m.Called(prefix)
-
-	if len(ret) == 0 {
-		panic("no return value specified for Subscribe")
-	}
-
-	var r0 <-chan ports.StorageEvent
-	var r1 func()
-	var r2 error
-	if rf, ok := ret.Get(0).(func(string) (<-chan ports.StorageEvent, func(), error)); ok {
-		return rf(prefix)
-	}
-	if rf, ok := ret.Get(0).(func(string) <-chan ports.StorageEvent); ok {
-		r0 = rf(prefix)
-	} else {
-		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(<-chan ports.StorageEvent)
-		}
-	}
-
-	if rf, ok := ret.Get(1).(func(string) func()); ok {
-		r1 = rf(prefix)
-	} else {
-		if ret.Get(1) != nil {
-			r1 = ret.Get(1).(func())
-		}
-	}
-
-	if rf, ok := ret.Get(2).(func(string) error); ok {
-		r2 = rf(prefix)
-	} else {
-		r2 = ret.Error(2)
-	}
-
-	return r0, r1, r2
-}
-
-// MockStoragePort_Subscribe_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Subscribe'
-type MockStoragePort_Subscribe_Call struct {
-	*mock.Call
-}
-
-// Subscribe is a helper method to define mock.On call
-//   - prefix string
-func (_e *MockStoragePort_Expecter) Subscribe(prefix interface{}) *MockStoragePort_Subscribe_Call {
-	return &MockStoragePort_Subscribe_Call{Call: _e.mock.On("Subscribe", prefix)}
-}
-
-func (_c *MockStoragePort_Subscribe_Call) Run(run func(prefix string)) *MockStoragePort_Subscribe_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
-	})
-	return _c
-}
-
-func (_c *MockStoragePort_Subscribe_Call) Return(_a0 <-chan ports.StorageEvent, _a1 func(), _a2 error) *MockStoragePort_Subscribe_Call {
-	_c.Call.Return(_a0, _a1, _a2)
-	return _c
-}
-
-func (_c *MockStoragePort_Subscribe_Call) RunAndReturn(run func(string) (<-chan ports.StorageEvent, func(), error)) *MockStoragePort_Subscribe_Call {
-	_c.Call.Return(run)
 	return _c
 }
 

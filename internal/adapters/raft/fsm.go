@@ -103,7 +103,18 @@ func (f *FSM) applyPut(cmd domain.Command) *domain.CommandResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	currentVersion := f.versions[cmd.Key]
+	// Read authoritative version from DB
+	var currentVersion int64
+	if err := f.db.View(func(txn *badger.Txn) error {
+		v, err := f.getAuthoritativeVersion(txn, cmd.Key)
+		if err != nil {
+			return err
+		}
+		currentVersion = v
+		return nil
+	}); err != nil {
+		return &domain.CommandResult{Success: false, Error: err.Error()}
+	}
 
 	if cmd.Version > 0 && cmd.Version != currentVersion+1 {
 		return &domain.CommandResult{
@@ -116,26 +127,7 @@ func (f *FSM) applyPut(cmd domain.Command) *domain.CommandResult {
 	newVersion := currentVersion + 1
 
 	err := f.db.Update(func(txn *badger.Txn) error {
-		versionKey := fmt.Sprintf("v:%s", cmd.Key)
-		versionBytes, _ := json.Marshal(newVersion)
-
-		if err := txn.Set([]byte(cmd.Key), cmd.Value); err != nil {
-			return err
-		}
-		if err := txn.Set([]byte(versionKey), versionBytes); err != nil {
-			return err
-		}
-
-		if cmd.TTLSeconds > 0 {
-			ttlKey := fmt.Sprintf("ttl:%s", cmd.Key)
-			expireAt := time.Now().Add(time.Duration(cmd.TTLSeconds) * time.Second)
-			ttlBytes, _ := json.Marshal(expireAt)
-			if err := txn.Set([]byte(ttlKey), ttlBytes); err != nil {
-				return err
-			}
-		}
-
-		return nil
+		return f.writeValueAndVersion(txn, cmd.Key, cmd.Value, newVersion, cmd.TTLSeconds)
 	})
 
 	if err != nil {
@@ -147,14 +139,7 @@ func (f *FSM) applyPut(cmd domain.Command) *domain.CommandResult {
 
 	f.versions[cmd.Key] = newVersion
 
-	event := domain.Event{
-		Type:      domain.EventPut,
-		Key:       cmd.Key,
-		Version:   newVersion,
-		NodeID:    f.nodeID,
-		Timestamp: time.Now(),
-		RequestID: cmd.RequestID,
-	}
+	event := f.emitEvent(domain.EventPut, cmd.Key, newVersion, cmd.RequestID)
 
 	return &domain.CommandResult{
 		Success: true,
@@ -210,6 +195,7 @@ func (f *FSM) applyCAS(cmd domain.Command) *domain.CommandResult {
 		if err != nil {
 			if err == badger.ErrKeyNotFound {
 				currentValue = nil
+				// version will remain 0
 				return nil
 			}
 			return err
@@ -220,11 +206,9 @@ func (f *FSM) applyCAS(cmd domain.Command) *domain.CommandResult {
 			return err
 		}
 
-		versionKey := fmt.Sprintf("v:%s", cmd.Key)
-		vItem, err := txn.Get([]byte(versionKey))
-		if err == nil {
-			versionBytes, _ := vItem.ValueCopy(nil)
-			json.Unmarshal(versionBytes, &currentVersion)
+		v, verr := f.getAuthoritativeVersion(txn, cmd.Key)
+		if verr == nil {
+			currentVersion = v
 		}
 		return nil
 	})
@@ -260,13 +244,7 @@ func (f *FSM) applyCAS(cmd domain.Command) *domain.CommandResult {
 	newVersion := currentVersion + 1
 
 	err = f.db.Update(func(txn *badger.Txn) error {
-		versionKey := fmt.Sprintf("v:%s", cmd.Key)
-		versionBytes, _ := json.Marshal(newVersion)
-
-		if err := txn.Set([]byte(cmd.Key), cmd.Value); err != nil {
-			return err
-		}
-		return txn.Set([]byte(versionKey), versionBytes)
+		return f.writeValueAndVersion(txn, cmd.Key, cmd.Value, newVersion, 0)
 	})
 
 	if err != nil {
@@ -278,14 +256,7 @@ func (f *FSM) applyCAS(cmd domain.Command) *domain.CommandResult {
 
 	f.versions[cmd.Key] = newVersion
 
-	event := domain.Event{
-		Type:      domain.EventCAS,
-		Key:       cmd.Key,
-		Version:   newVersion,
-		NodeID:    f.nodeID,
-		Timestamp: time.Now(),
-		RequestID: cmd.RequestID,
-	}
+	event := f.emitEvent(domain.EventCAS, cmd.Key, newVersion, cmd.RequestID)
 
 	return &domain.CommandResult{
 		Success:     true,
@@ -414,40 +385,21 @@ func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 		for _, op := range cmd.Batch {
 			switch op.Type {
 			case domain.CommandPut:
-				newVersion := f.versions[op.Key] + 1
-				versionKey := fmt.Sprintf("v:%s", op.Key)
-				versionBytes, _ := json.Marshal(newVersion)
-
-				if err := txn.Set([]byte(op.Key), op.Value); err != nil {
+				current, err := f.getAuthoritativeVersion(txn, op.Key)
+				if err != nil {
 					return err
 				}
-				if err := txn.Set([]byte(versionKey), versionBytes); err != nil {
+				newVersion := current + 1
+				if err := f.writeValueAndVersion(txn, op.Key, op.Value, newVersion, op.TTLSeconds); err != nil {
 					return err
 				}
-
-				if op.TTLSeconds > 0 {
-					ttlKey := fmt.Sprintf("ttl:%s", op.Key)
-					expireAt := time.Now().Add(time.Duration(op.TTLSeconds) * time.Second)
-					ttlBytes, _ := json.Marshal(expireAt)
-					if err := txn.Set([]byte(ttlKey), ttlBytes); err != nil {
-						return err
-					}
-				}
-
 				f.versions[op.Key] = newVersion
 				results = append(results, domain.Result{
 					Key:     op.Key,
 					Success: true,
 					Version: newVersion,
 				})
-				events = append(events, domain.Event{
-					Type:      domain.EventPut,
-					Key:       op.Key,
-					Version:   newVersion,
-					NodeID:    f.nodeID,
-					Timestamp: time.Now(),
-					RequestID: cmd.RequestID,
-				})
+				events = append(events, f.emitEvent(domain.EventPut, op.Key, newVersion, cmd.RequestID))
 
 			case domain.CommandDelete:
 				versionKey := fmt.Sprintf("v:%s", op.Key)
@@ -487,31 +439,21 @@ func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 					continue
 				}
 
-				newVersion := f.versions[op.Key] + 1
-				versionKey := fmt.Sprintf("v:%s", op.Key)
-				versionBytes, _ := json.Marshal(newVersion)
-
-				if err := txn.Set([]byte(op.Key), op.Value); err != nil {
+				current, err := f.getAuthoritativeVersion(txn, op.Key)
+				if err != nil {
 					return err
 				}
-				if err := txn.Set([]byte(versionKey), versionBytes); err != nil {
+				newVersion := current + 1
+				if err := f.writeValueAndVersion(txn, op.Key, op.Value, newVersion, 0); err != nil {
 					return err
 				}
-
 				f.versions[op.Key] = newVersion
 				results = append(results, domain.Result{
 					Key:     op.Key,
 					Success: true,
 					Version: newVersion,
 				})
-				events = append(events, domain.Event{
-					Type:      domain.EventCAS,
-					Key:       op.Key,
-					Version:   newVersion,
-					NodeID:    f.nodeID,
-					Timestamp: time.Now(),
-					RequestID: cmd.RequestID,
-				})
+				events = append(events, f.emitEvent(domain.EventCAS, op.Key, newVersion, cmd.RequestID))
 			}
 		}
 		return nil
@@ -671,6 +613,53 @@ func (f *FSM) validateCluster() error {
 
 		return f.handleClusterMismatch(storedID)
 	})
+}
+
+// Helpers for consistent version handling and event composition
+func (f *FSM) getAuthoritativeVersion(txn *badger.Txn, key string) (int64, error) {
+	versionKey := fmt.Sprintf("v:%s", key)
+	vItem, err := txn.Get([]byte(versionKey))
+	if err != nil {
+		if err == badger.ErrKeyNotFound {
+			return 0, nil
+		}
+		return 0, err
+	}
+	var v int64
+	versionBytes, _ := vItem.ValueCopy(nil)
+	_ = json.Unmarshal(versionBytes, &v)
+	return v, nil
+}
+
+func (f *FSM) writeValueAndVersion(txn *badger.Txn, key string, value []byte, newVersion int64, ttlSeconds int64) error {
+	versionKey := fmt.Sprintf("v:%s", key)
+	versionBytes, _ := json.Marshal(newVersion)
+	if err := txn.Set([]byte(key), value); err != nil {
+		return err
+	}
+	if err := txn.Set([]byte(versionKey), versionBytes); err != nil {
+		return err
+	}
+	if ttlSeconds > 0 {
+		ttlKey := fmt.Sprintf("ttl:%s", key)
+		expireAt := time.Now().Add(time.Duration(ttlSeconds) * time.Second)
+		ttlBytes, _ := json.Marshal(expireAt)
+		if err := txn.Set([]byte(ttlKey), ttlBytes); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (f *FSM) emitEvent(t domain.EventType, key string, version int64, requestID string) domain.Event {
+	return domain.Event{
+		Type:      t,
+		Key:       key,
+		Version:   version,
+		NodeID:    f.nodeID,
+		Timestamp: time.Now(),
+		RequestID: requestID,
+	}
 }
 
 func (f *FSM) handleClusterMismatch(storedClusterID string) error {
