@@ -12,35 +12,37 @@ import (
 	"github.com/google/uuid"
 )
 
-type TracingProvider struct {
+const TraceContextKey = "trace_context"
+
+type Provider struct {
 	mu      sync.RWMutex
 	config  domain.TracingConfig
 	logger  *slog.Logger
 	tracers map[string]ports.Tracer
 	active  bool
 	spans   map[string]*spanImpl
-	metrics TracingMetrics
+	metrics Metrics
 }
 
-type TracingMetrics struct {
+type Metrics struct {
 	SpansCreated  int64 `json:"spans_created"`
 	SpansFinished int64 `json:"spans_finished"`
 	TracesActive  int64 `json:"traces_active"`
 	SpansDropped  int64 `json:"spans_dropped"`
 }
 
-func NewTracingProvider(config domain.TracingConfig, logger *slog.Logger) *TracingProvider {
-	return &TracingProvider{
+func NewTracingProvider(config domain.TracingConfig, logger *slog.Logger) *Provider {
+	return &Provider{
 		config:  config,
 		logger:  logger,
 		tracers: make(map[string]ports.Tracer),
 		spans:   make(map[string]*spanImpl),
 		active:  config.Enabled,
-		metrics: TracingMetrics{},
+		metrics: Metrics{},
 	}
 }
 
-func (tp *TracingProvider) GetTracer(name string) ports.Tracer {
+func (tp *Provider) GetTracer(name string) ports.Tracer {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
 
@@ -58,7 +60,7 @@ func (tp *TracingProvider) GetTracer(name string) ports.Tracer {
 	return tracer
 }
 
-func (tp *TracingProvider) Shutdown() error {
+func (tp *Provider) Shutdown() error {
 	tp.mu.Lock()
 	tp.logger.Info("shutting down tracing provider")
 
@@ -81,7 +83,7 @@ func (tp *TracingProvider) Shutdown() error {
 	return nil
 }
 
-func (tp *TracingProvider) ForceFlush() error {
+func (tp *Provider) ForceFlush() error {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
 
@@ -93,7 +95,7 @@ func (tp *TracingProvider) ForceFlush() error {
 	return nil
 }
 
-func (tp *TracingProvider) GetMetrics() TracingMetrics {
+func (tp *Provider) GetMetrics() Metrics {
 	tp.mu.RLock()
 	defer tp.mu.RUnlock()
 
@@ -102,14 +104,14 @@ func (tp *TracingProvider) GetMetrics() TracingMetrics {
 	return metrics
 }
 
-func (tp *TracingProvider) shouldSample() bool {
+func (tp *Provider) shouldSample() bool {
 	if !tp.active {
 		return false
 	}
 	return tp.config.SamplingRate > 0
 }
 
-func (tp *TracingProvider) addSpan(span *spanImpl) {
+func (tp *Provider) addSpan(span *spanImpl) {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
 
@@ -122,7 +124,7 @@ func (tp *TracingProvider) addSpan(span *spanImpl) {
 	tp.metrics.SpansCreated++
 }
 
-func (tp *TracingProvider) removeSpan(spanID string) {
+func (tp *Provider) removeSpan(spanID string) {
 	tp.mu.Lock()
 	defer tp.mu.Unlock()
 
@@ -134,7 +136,7 @@ func (tp *TracingProvider) removeSpan(spanID string) {
 
 type tracerImpl struct {
 	name     string
-	provider *TracingProvider
+	provider *Provider
 	logger   *slog.Logger
 }
 
@@ -180,11 +182,11 @@ func (t *tracerImpl) InjectContext(ctx context.Context, span ports.SpanContext) 
 	if span == nil {
 		return ctx
 	}
-	return context.WithValue(ctx, "trace_context", span)
+	return context.WithValue(ctx, TraceContextKey, span)
 }
 
 func (t *tracerImpl) ExtractContext(ctx context.Context) (ports.SpanContext, bool) {
-	if span, ok := ctx.Value("trace_context").(ports.SpanContext); ok {
+	if span, ok := ctx.Value(TraceContextKey).(ports.SpanContext); ok {
 		return span, true
 	}
 	return nil, false
@@ -207,7 +209,7 @@ type spanImpl struct {
 	tags          map[string]interface{}
 	events        []SpanEvent
 	finished      bool
-	provider      *TracingProvider
+	provider      *Provider
 	tracer        *tracerImpl
 	logger        *slog.Logger
 }

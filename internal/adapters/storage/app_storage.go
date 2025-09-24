@@ -163,28 +163,7 @@ func (s *AppStorage) putInternal(key string, value []byte, version int64, ttl ti
 	return nil
 }
 
-func (s *AppStorage) putDirect(key string, value []byte, version int64, ttl time.Duration) error {
-	return s.db.Update(func(txn *badger.Txn) error {
-		versionKey := fmt.Sprintf("v:%s", key)
-		versionBytes, _ := json.Marshal(version)
-
-		if err := txn.Set([]byte(key), value); err != nil {
-			return err
-		}
-		if err := txn.Set([]byte(versionKey), versionBytes); err != nil {
-			return err
-		}
-		if ttl > 0 {
-			ttlKey := fmt.Sprintf("ttl:%s", key)
-			expireAt := time.Now().Add(ttl)
-			ttlBytes, _ := json.Marshal(expireAt)
-			if err := txn.Set([]byte(ttlKey), ttlBytes); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
-}
+// putDirect removed to avoid non-Raft write paths
 
 func (s *AppStorage) Delete(key string) error {
 	if s.raftNode == nil {

@@ -8,6 +8,7 @@ import (
 	"net"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/eleven-am/graft/internal/adapters/circuit_breaker"
@@ -604,7 +605,7 @@ func (m *Manager) Subscribe(pattern string, handler func(string, interface{})) e
 	}
 	go func() {
 		for ev := range ch {
-			if m.patternMatches(pattern, ev.Key) {
+			if pattern == "*" || strings.HasPrefix(ev.Key, prefix) || ev.Key == pattern {
 				handler(ev.Key, nil)
 			}
 		}
@@ -1090,7 +1091,7 @@ func (m *Manager) GetMetrics() ports.SystemMetrics {
 	}
 
 	if m.tracing != nil {
-		if tracingImpl, ok := m.tracing.(*tracing.TracingProvider); ok {
+		if tracingImpl, ok := m.tracing.(*tracing.Provider); ok {
 			metrics.Tracing = tracingImpl.GetMetrics()
 		}
 	}
