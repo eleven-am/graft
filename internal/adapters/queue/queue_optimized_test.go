@@ -30,8 +30,8 @@ func TestQueue_OptimizedOperations(t *testing.T) {
 				queueItem := domain.NewQueueItem([]byte("test-data"), 1)
 				itemBytes, _ := queueItem.ToBytes()
 
-				mockStorage.On("GetNext", "queue:test:pending:").
-					Return("queue:test:pending:00000000000000000001", itemBytes, true, nil).
+				mockStorage.On("GetNext", "queue:test:ready:").
+					Return("queue:test:ready:00000000000000000001", itemBytes, true, nil).
 					Once()
 			},
 			expectedErr: false,
@@ -43,7 +43,7 @@ func TestQueue_OptimizedOperations(t *testing.T) {
 				return map[string]interface{}{"data": data, "exists": exists}, err
 			},
 			setupMocks: func(mockStorage *mocks.MockStoragePort) {
-				mockStorage.On("GetNext", "queue:test:pending:").
+				mockStorage.On("GetNext", "queue:test:ready:").
 					Return("", []byte(nil), false, nil).
 					Once()
 			},
@@ -64,8 +64,8 @@ func TestQueue_OptimizedOperations(t *testing.T) {
 				queueItem := domain.NewQueueItem([]byte("test-data"), 1)
 				itemBytes, _ := queueItem.ToBytes()
 
-				mockStorage.On("GetNext", "queue:test:pending:").
-					Return("queue:test:pending:00000000000000000001", itemBytes, true, nil).
+				mockStorage.On("GetNext", "queue:test:ready:").
+					Return("queue:test:ready:00000000000000000001", itemBytes, true, nil).
 					Once()
 
 				mockStorage.On("BatchWrite", mock.MatchedBy(func(ops []ports.WriteOp) bool {
@@ -83,8 +83,11 @@ func TestQueue_OptimizedOperations(t *testing.T) {
 				return size, err
 			},
 			setupMocks: func(mockStorage *mocks.MockStoragePort) {
-				mockStorage.On("CountPrefix", "queue:test:pending:").
-					Return(5, nil).
+				mockStorage.On("CountPrefix", "queue:test:ready:").
+					Return(3, nil).
+					Once()
+				mockStorage.On("CountPrefix", "queue:test:blocked:").
+					Return(2, nil).
 					Once()
 			},
 			expectedErr: false,
@@ -114,7 +117,7 @@ func TestQueue_OptimizedOperations(t *testing.T) {
 					Return(int64(1), nil).
 					Once()
 
-				mockStorage.On("Put", "queue:test:pending:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).
+				mockStorage.On("Put", "queue:test:ready:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).
 					Return(nil).
 					Once()
 			},
@@ -186,8 +189,8 @@ func BenchmarkQueue_OptimizedPeek(b *testing.B) {
 	queueItem := domain.NewQueueItem([]byte("test-data"), 1)
 	itemBytes, _ := queueItem.ToBytes()
 
-	mockStorage.On("GetNext", "queue:test:pending:").
-		Return("queue:test:pending:00000000000000000001", itemBytes, true, nil).
+	mockStorage.On("GetNext", "queue:test:ready:").
+		Return("queue:test:ready:00000000000000000001", itemBytes, true, nil).
 		Times(b.N)
 
 	b.ResetTimer()
@@ -204,7 +207,7 @@ func BenchmarkQueue_OptimizedSize(b *testing.B) {
 	mockStorage := mocks.NewMockStoragePort(b)
 	queue := NewQueue("test", mockStorage, nil, nil)
 
-	mockStorage.On("CountPrefix", "queue:test:pending:").
+	mockStorage.On("CountPrefix", "queue:test:ready:").
 		Return(1000, nil).
 		Times(b.N)
 
@@ -231,8 +234,8 @@ func TestQueue_PerformanceCharacteristics(t *testing.T) {
 			queueItem := domain.NewQueueItem([]byte("test-data"), 1)
 			itemBytes, _ := queueItem.ToBytes()
 
-			mockStorage.On("GetNext", "queue:test:pending:").
-				Return("queue:test:pending:00000000000000000001", itemBytes, true, nil).
+			mockStorage.On("GetNext", "queue:test:ready:").
+				Return("queue:test:ready:00000000000000000001", itemBytes, true, nil).
 				Once()
 
 			start := time.Now()

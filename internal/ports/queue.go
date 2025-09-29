@@ -3,6 +3,8 @@ package ports
 import (
 	"context"
 	"time"
+
+	"github.com/eleven-am/graft/internal/domain"
 )
 
 type QueuePort interface {
@@ -23,6 +25,16 @@ type QueuePort interface {
 	GetDeadLetterItems(limit int) ([]DeadLetterItem, error)
 	GetDeadLetterSize() (int, error)
 	RetryFromDeadLetter(itemID string) error
+
+	// Two-tier queue methods
+	EnqueueBlocked(item []byte) error
+	EnqueueReady(item []byte) error
+	GetBlockedForWorkflow(workflowID string) ([]*domain.BlockedItem, error)
+	GetReadyForWorkflow(workflowID string) ([][]byte, error)
+	PromoteBlockedToReady(item *domain.BlockedItem) error
+	MoveReadyToBlocked(item []byte, sequence int64) error
+	HasBlockedItemsWithPrefix(dataPrefix string) (bool, error)
+	HasReadyItemsWithPrefix(dataPrefix string) (bool, error)
 }
 
 type DeadLetterItem struct {

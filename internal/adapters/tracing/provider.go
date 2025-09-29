@@ -91,7 +91,6 @@ func (tp *Provider) ForceFlush() error {
 		return nil
 	}
 
-	tp.logger.Debug("force flushing traces", "active_spans", len(tp.spans))
 	return nil
 }
 
@@ -167,13 +166,6 @@ func (t *tracerImpl) StartSpanWithParent(operationName string, parent ports.Span
 	}
 
 	t.provider.addSpan(span)
-
-	t.logger.Debug("started span",
-		"operation", operationName,
-		"trace_id", span.traceID,
-		"span_id", span.spanID,
-		"parent_span_id", span.parentSpanID,
-	)
 
 	return span
 }
@@ -265,17 +257,6 @@ func (s *spanImpl) Finish() {
 
 	s.endTime = time.Now()
 	s.finished = true
-
-	duration := s.endTime.Sub(s.startTime)
-
-	s.logger.Debug("finished span",
-		"operation", s.operationName,
-		"trace_id", s.traceID,
-		"span_id", s.spanID,
-		"duration", duration,
-		"tags", len(s.tags),
-		"events", len(s.events),
-	)
 
 	s.provider.removeSpan(s.spanID)
 }

@@ -37,6 +37,40 @@ type ClaimedItem struct {
 	Sequence  int64     `json:"sequence"`
 }
 
+type BlockedItem struct {
+	Data        []byte    `json:"data"`
+	BlockedAt   time.Time `json:"blocked_at"`
+	LastChecked time.Time `json:"last_checked"`
+	CheckCount  int       `json:"check_count"`
+	Sequence    int64     `json:"sequence"`
+}
+
+func NewBlockedItem(data []byte, sequence int64) *BlockedItem {
+	now := time.Now()
+	return &BlockedItem{
+		Data:        data,
+		BlockedAt:   now,
+		LastChecked: now,
+		CheckCount:  1,
+		Sequence:    sequence,
+	}
+}
+
+func (b *BlockedItem) ToBytes() ([]byte, error) {
+	return json.Marshal(b)
+}
+
+func BlockedItemFromBytes(data []byte) (*BlockedItem, error) {
+	var item BlockedItem
+	err := json.Unmarshal(data, &item)
+	return &item, err
+}
+
+func (b *BlockedItem) UpdateCheckCount() {
+	b.LastChecked = time.Now()
+	b.CheckCount++
+}
+
 func NewClaimedItem(data []byte, claimID string, sequence int64) *ClaimedItem {
 	return &ClaimedItem{
 		Data:      data,
@@ -54,6 +88,14 @@ func ClaimedItemFromBytes(data []byte) (*ClaimedItem, error) {
 	var item ClaimedItem
 	err := json.Unmarshal(data, &item)
 	return &item, err
+}
+
+func QueueBlockedKey(name string, sequence int64) string {
+	return fmt.Sprintf("queue:%s:blocked:%020d", name, sequence)
+}
+
+func QueueReadyKey(name string, sequence int64) string {
+	return fmt.Sprintf("queue:%s:ready:%020d", name, sequence)
 }
 
 func QueuePendingKey(name string, sequence int64) string {

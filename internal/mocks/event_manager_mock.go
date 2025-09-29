@@ -805,34 +805,6 @@ func (_c *MockEventManager_Stop_Call) RunAndReturn(run func() error) *MockEventM
 	return _c
 }
 
-// Subscribe provides a mock function with given fields: pattern, handler
-
-// MockEventManager_Subscribe_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Subscribe'
-type MockEventManager_Subscribe_Call struct {
-	*mock.Call
-}
-
-// Subscribe is a helper method to define mock.On call
-//   - pattern string
-//   - handler func(string , interface{})
-
-func (_c *MockEventManager_Subscribe_Call) Run(run func(pattern string, handler func(string, interface{}))) *MockEventManager_Subscribe_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(func(string, interface{})))
-	})
-	return _c
-}
-
-func (_c *MockEventManager_Subscribe_Call) Return(_a0 error) *MockEventManager_Subscribe_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockEventManager_Subscribe_Call) RunAndReturn(run func(string, func(string, interface{})) error) *MockEventManager_Subscribe_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // SubscribeToChannel provides a mock function with given fields: prefix
 func (_m *MockEventManager) SubscribeToChannel(prefix string) (<-chan domain.Event, func(), error) {
 	ret := _m.Called(prefix)
@@ -896,33 +868,6 @@ func (_c *MockEventManager_SubscribeToChannel_Call) Return(_a0 <-chan domain.Eve
 }
 
 func (_c *MockEventManager_SubscribeToChannel_Call) RunAndReturn(run func(string) (<-chan domain.Event, func(), error)) *MockEventManager_SubscribeToChannel_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// Unsubscribe provides a mock function with given fields: pattern
-
-// MockEventManager_Unsubscribe_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Unsubscribe'
-type MockEventManager_Unsubscribe_Call struct {
-	*mock.Call
-}
-
-// Unsubscribe is a helper method to define mock.On call
-//   - pattern string
-
-func (_c *MockEventManager_Unsubscribe_Call) Run(run func(pattern string)) *MockEventManager_Unsubscribe_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
-	})
-	return _c
-}
-
-func (_c *MockEventManager_Unsubscribe_Call) Return(_a0 error) *MockEventManager_Unsubscribe_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockEventManager_Unsubscribe_Call) RunAndReturn(run func(string) error) *MockEventManager_Unsubscribe_Call {
 	_c.Call.Return(run)
 	return _c
 }

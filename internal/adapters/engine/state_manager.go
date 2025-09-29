@@ -76,6 +76,7 @@ func NewStateManager(storage ports.StoragePort, logger *slog.Logger) *StateManag
 
 // SaveWorkflowState saves workflow state using the configured optimization strategy
 func (sm *StateManager) SaveWorkflowState(ctx context.Context, workflow *domain.WorkflowInstance) error {
+
 	sm.updateStatistics(workflow)
 	stats := sm.getStatistics(workflow.ID)
 
@@ -85,7 +86,7 @@ func (sm *StateManager) SaveWorkflowState(ctx context.Context, workflow *domain.
 
 	// Built-in heuristics: batch for high-change frequency, use incremental for large states
 	if stats.ChangeFrequency >= 5.0 { // ~5 changes/sec
-		return sm.addToBatch(ctx, workflow)
+		return sm.saveImmediate(ctx, workflow)
 	}
 	if stats.StateSize >= 10*1024 { // >= 10KB
 		return sm.saveIncremental(ctx, workflow)
@@ -95,14 +96,22 @@ func (sm *StateManager) SaveWorkflowState(ctx context.Context, workflow *domain.
 
 // LoadWorkflowState loads workflow state, reconstructing from incremental snapshots if needed
 func (sm *StateManager) LoadWorkflowState(ctx context.Context, workflowID string) (*domain.WorkflowInstance, error) {
+
 	if workflow, err := sm.loadFromSnapshots(ctx, workflowID); err == nil {
 		return workflow, nil
 	}
-	return sm.loadDirect(ctx, workflowID)
+
+	workflow, err := sm.loadDirect(ctx, workflowID)
+	if err != nil {
+		return nil, err
+	}
+
+	return workflow, nil
 }
 
 // UpdateWorkflowState updates workflow state with optimistic concurrency control
 func (sm *StateManager) UpdateWorkflowState(ctx context.Context, workflowID string, updateFn func(*domain.WorkflowInstance) error) error {
+
 	for retries := 0; retries < 10; retries++ {
 		workflow, err := sm.LoadWorkflowState(ctx, workflowID)
 		if err != nil {
@@ -166,47 +175,6 @@ func (sm *StateManager) saveImmediate(ctx context.Context, workflow *domain.Work
 	return nil
 }
 
-func (sm *StateManager) addToBatch(ctx context.Context, workflow *domain.WorkflowInstance) error {
-	data, err := sm.serializeWorkflow(workflow)
-	if err != nil {
-		return domain.NewDiscoveryError("state_manager", "serialize_workflow_for_batch", err)
-	}
-
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	update := &domain.StateUpdate{
-		WorkflowID:   workflow.ID,
-		UpdateType:   "state_changed",
-		StateChanges: []domain.StateDelta{},
-		Timestamp:    time.Now(),
-		Metadata: map[string]string{
-			"serialized_data": string(data),
-			"version":         fmt.Sprintf("%d", workflow.Version),
-		},
-	}
-
-	sm.pendingBatch[workflow.ID] = update
-
-	if sm.batchTimer == nil && len(sm.pendingBatch) > 0 {
-		sm.batchTimer = time.AfterFunc(batchTimeoutDefault, func() {
-			select {
-			case sm.batchChan <- struct{}{}:
-			default:
-			}
-		})
-	}
-
-	if len(sm.pendingBatch) >= batchSizeDefault {
-		select {
-		case sm.batchChan <- struct{}{}:
-		default:
-		}
-	}
-
-	return nil
-}
-
 func (sm *StateManager) processBatches() {
 	defer sm.wg.Done()
 
@@ -262,8 +230,6 @@ func (sm *StateManager) flushBatch() {
 		sm.logger.Error("failed to save batch", "error", err, "batch_id", batchID)
 		return
 	}
-
-	sm.logger.Debug("flushed state batch", "batch_id", batchID, "update_count", len(updates))
 
 	sm.pendingBatch = make(map[string]*domain.StateUpdate)
 }

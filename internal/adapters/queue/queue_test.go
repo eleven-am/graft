@@ -19,7 +19,7 @@ func TestQueue_Enqueue(t *testing.T) {
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
-	mockStorage.On("Put", "queue:test:pending:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
+	mockStorage.On("Put", "queue:test:ready:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
 	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Once()
 
 	err := queue.Enqueue([]byte("test data"))
@@ -34,11 +34,11 @@ func TestQueue_EnqueueMultiple(t *testing.T) {
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
-	mockStorage.On("Put", "queue:test:pending:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
+	mockStorage.On("Put", "queue:test:ready:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
 	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Once()
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(2), nil).Once()
-	mockStorage.On("Put", "queue:test:pending:00000000000000000002", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
+	mockStorage.On("Put", "queue:test:ready:00000000000000000002", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
 	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Once()
 
 	err := queue.Enqueue([]byte("data 1"))
@@ -58,8 +58,8 @@ func TestQueue_Peek(t *testing.T) {
 	queueItem := domain.NewQueueItem([]byte("test data"), 1)
 	itemBytes, _ := queueItem.ToBytes()
 
-	mockStorage.On("GetNext", "queue:test:pending:").Return(
-		"queue:test:pending:00000000000000000001", itemBytes, true, nil).Once()
+	mockStorage.On("GetNext", "queue:test:ready:").Return(
+		"queue:test:ready:00000000000000000001", itemBytes, true, nil).Once()
 
 	data, exists, err := queue.Peek()
 	assert.NoError(t, err)
@@ -74,7 +74,7 @@ func TestQueue_PeekEmpty(t *testing.T) {
 	mockEventManager := &mocks.MockEventManager{}
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
-	mockStorage.On("GetNext", "queue:test:pending:").Return("", nil, false, nil).Once()
+	mockStorage.On("GetNext", "queue:test:ready:").Return("", nil, false, nil).Once()
 
 	data, exists, err := queue.Peek()
 	assert.NoError(t, err)
@@ -92,8 +92,8 @@ func TestQueue_PeekOrdering(t *testing.T) {
 	item1 := domain.NewQueueItem([]byte("first"), 1)
 	item1Bytes, _ := item1.ToBytes()
 
-	mockStorage.On("GetNext", "queue:test:pending:").Return(
-		"queue:test:pending:00000000000000000001", item1Bytes, true, nil).Once()
+	mockStorage.On("GetNext", "queue:test:ready:").Return(
+		"queue:test:ready:00000000000000000001", item1Bytes, true, nil).Once()
 
 	data, exists, err := queue.Peek()
 	assert.NoError(t, err)
@@ -111,12 +111,12 @@ func TestQueue_Claim(t *testing.T) {
 	queueItem := domain.NewQueueItem([]byte("test data"), 1)
 	itemBytes, _ := queueItem.ToBytes()
 
-	mockStorage.On("GetNext", "queue:test:pending:").Return(
-		"queue:test:pending:00000000000000000001", itemBytes, true, nil).Once()
+	mockStorage.On("GetNext", "queue:test:ready:").Return(
+		"queue:test:ready:00000000000000000001", itemBytes, true, nil).Once()
 	mockStorage.On("BatchWrite", mock.MatchedBy(func(ops []ports.WriteOp) bool {
 		return len(ops) == 2 &&
 			ops[0].Type == ports.OpDelete &&
-			ops[0].Key == "queue:test:pending:00000000000000000001" &&
+			ops[0].Key == "queue:test:ready:00000000000000000001" &&
 			ops[1].Type == ports.OpPut &&
 			len(ops[1].Key) > 0 &&
 			len(ops[1].Value) > 0
@@ -136,7 +136,7 @@ func TestQueue_ClaimEmpty(t *testing.T) {
 	mockEventManager := &mocks.MockEventManager{}
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
-	mockStorage.On("GetNext", "queue:test:pending:").Return("", nil, false, nil).Once()
+	mockStorage.On("GetNext", "queue:test:ready:").Return("", nil, false, nil).Once()
 
 	data, claimID, exists, err := queue.Claim()
 	assert.NoError(t, err)
@@ -155,10 +155,10 @@ func TestQueue_ClaimOrdering(t *testing.T) {
 	item1 := domain.NewQueueItem([]byte("first"), 1)
 	item1Bytes, _ := item1.ToBytes()
 
-	mockStorage.On("GetNext", "queue:test:pending:").Return(
-		"queue:test:pending:00000000000000000001", item1Bytes, true, nil).Once()
+	mockStorage.On("GetNext", "queue:test:ready:").Return(
+		"queue:test:ready:00000000000000000001", item1Bytes, true, nil).Once()
 	mockStorage.On("BatchWrite", mock.MatchedBy(func(ops []ports.WriteOp) bool {
-		return ops[0].Key == "queue:test:pending:00000000000000000001"
+		return ops[0].Key == "queue:test:ready:00000000000000000001"
 	})).Return(nil).Once()
 
 	data, claimID, exists, err := queue.Claim()
@@ -191,7 +191,8 @@ func TestQueue_Size(t *testing.T) {
 	mockEventManager := &mocks.MockEventManager{}
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
-	mockStorage.On("CountPrefix", "queue:test:pending:").Return(3, nil).Once()
+	mockStorage.On("CountPrefix", "queue:test:ready:").Return(2, nil).Once()
+	mockStorage.On("CountPrefix", "queue:test:blocked:").Return(1, nil).Once()
 
 	size, err := queue.Size()
 	assert.NoError(t, err)
@@ -205,7 +206,8 @@ func TestQueue_SizeEmpty(t *testing.T) {
 	mockEventManager := &mocks.MockEventManager{}
 	queue := NewQueue("test", mockStorage, mockEventManager, nil)
 
-	mockStorage.On("CountPrefix", "queue:test:pending:").Return(0, nil).Once()
+	mockStorage.On("CountPrefix", "queue:test:ready:").Return(0, nil).Once()
+	mockStorage.On("CountPrefix", "queue:test:blocked:").Return(0, nil).Once()
 
 	size, err := queue.Size()
 	assert.NoError(t, err)
@@ -321,11 +323,11 @@ func TestQueue_EnqueueClaimComplete(t *testing.T) {
 	itemBytes, _ := queueItem.ToBytes()
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
-	mockStorage.On("Put", "queue:test:pending:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
+	mockStorage.On("Put", "queue:test:ready:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
 	mockEventManager.On("Broadcast", mock.Anything).Return(nil).Once()
 
-	mockStorage.On("GetNext", "queue:test:pending:").Return(
-		"queue:test:pending:00000000000000000001", itemBytes, true, nil).Once()
+	mockStorage.On("GetNext", "queue:test:ready:").Return(
+		"queue:test:ready:00000000000000000001", itemBytes, true, nil).Once()
 
 	mockStorage.On("BatchWrite", mock.MatchedBy(func(ops []ports.WriteOp) bool {
 		return len(ops) == 2 && ops[0].Type == ports.OpDelete

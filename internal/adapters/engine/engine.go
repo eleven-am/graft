@@ -382,6 +382,14 @@ func (e *Engine) processNextItem() (bool, error) {
 		e.logger.Error("failed to complete work item",
 			"claim_id", claimID,
 			"error", err)
+	} else {
+		// Check for workflow completion after successfully completing the queue item
+		if completionErr := e.executor.CheckWorkflowCompletion(e.ctx, workItem.WorkflowID); completionErr != nil {
+			e.logger.Error("failed to check workflow completion",
+				"workflow_id", workItem.WorkflowID,
+				"node_name", workItem.NodeName,
+				"error", completionErr)
+		}
 	}
 
 	return true, execErr

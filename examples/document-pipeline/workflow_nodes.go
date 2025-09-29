@@ -48,8 +48,8 @@ func (n *DocumentIngestNode) GetName() string {
 }
 
 func (n *DocumentIngestNode) CanStart(ctx context.Context, state Document, config ProcessingConfig) bool {
-	result := state.Status != "processing_complete"
-	return result
+	canStart := state.Status != "completed"
+	return canStart
 }
 
 func (n *DocumentIngestNode) Execute(ctx context.Context, doc Document, processingConfig ProcessingConfig) (*graft.NodeResult, error) {
@@ -64,6 +64,10 @@ func (n *DocumentIngestNode) Execute(ctx context.Context, doc Document, processi
 
 	if doc.Type == "" {
 		doc.Type = detectDocumentType(doc.Content)
+	}
+
+	if doc.Language == "" {
+		doc.Language = detectLanguage(doc.Content)
 	}
 
 	validatorKey := fmt.Sprintf("%s-document_validator", doc.ID)
@@ -88,7 +92,8 @@ func (n *DocumentValidatorNode) GetName() string {
 }
 
 func (n *DocumentValidatorNode) CanStart(ctx context.Context, doc Document, config ProcessingConfig) bool {
-	return true
+	canStart := doc.Status == "ingested"
+	return canStart
 }
 
 func (n *DocumentValidatorNode) Execute(ctx context.Context, doc Document, processingConfig ProcessingConfig) (*graft.NodeResult, error) {
@@ -105,6 +110,9 @@ func (n *DocumentValidatorNode) Execute(ctx context.Context, doc Document, proce
 	}
 
 	doc.Status = "validated"
+	if doc.Metadata == nil {
+		doc.Metadata = make(map[string]interface{})
+	}
 	doc.Metadata["validated_at"] = time.Now()
 
 	processorKey := fmt.Sprintf("%s-content_processor", doc.ID)
@@ -123,7 +131,8 @@ func (n *ContentAnalyzerNode) GetName() string {
 }
 
 func (n *ContentAnalyzerNode) CanStart(ctx context.Context, doc Document, config ProcessingConfig) bool {
-	return true
+	canStart := doc.Status != "completed"
+	return canStart
 }
 
 func (n *ContentAnalyzerNode) Execute(ctx context.Context, doc Document, processingConfig ProcessingConfig) (*graft.NodeResult, error) {
@@ -134,6 +143,9 @@ func (n *ContentAnalyzerNode) Execute(ctx context.Context, doc Document, process
 	doc.Language = detectLanguage(doc.Content)
 	doc.Priority = calculatePriority(doc)
 
+	if doc.Metadata == nil {
+		doc.Metadata = make(map[string]interface{})
+	}
 	doc.Metadata["analyzed_at"] = time.Now()
 	doc.Metadata["complexity_score"] = rand.Float64()
 
@@ -157,7 +169,12 @@ func (n *ContentProcessorNode) GetName() string {
 }
 
 func (n *ContentProcessorNode) CanStart(ctx context.Context, doc Document, config ProcessingConfig) bool {
-	return doc.Status == "validated"
+	// Don't process if workflow is already complete
+	if doc.Status == "completed" {
+		return false
+	}
+	canStart := doc.Status == "validated"
+	return canStart
 }
 
 func (n *ContentProcessorNode) Execute(ctx context.Context, doc Document, processingConfig ProcessingConfig) (*graft.NodeResult, error) {
@@ -171,6 +188,9 @@ func (n *ContentProcessorNode) Execute(ctx context.Context, doc Document, proces
 
 	doc.Content = processContent(doc.Content, doc.Type)
 	doc.Status = "processed"
+	if doc.Metadata == nil {
+		doc.Metadata = make(map[string]interface{})
+	}
 	doc.Metadata["processed_at"] = time.Now()
 
 	nextNodes := []graft.NextNode{{NodeName: "quality_checker", Config: ProcessingConfig{}}}
@@ -192,13 +212,18 @@ func (n *LanguageProcessorNode) GetName() string {
 }
 
 func (n *LanguageProcessorNode) CanStart(ctx context.Context, doc Document, config ProcessingConfig) bool {
-	return doc.Language != "" && doc.Language != "unknown"
+	canStart := doc.Language != "" && doc.Language != "unknown"
+	return canStart
 }
 
 func (n *LanguageProcessorNode) Execute(ctx context.Context, doc Document, processingConfig ProcessingConfig) (*graft.NodeResult, error) {
 	time.Sleep(150 * time.Millisecond)
 
 	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-language")
+
+	if doc.Metadata == nil {
+		doc.Metadata = make(map[string]interface{})
+	}
 
 	switch doc.Language {
 	case "spanish", "french", "german":
@@ -225,7 +250,8 @@ func (n *OCRProcessorNode) GetName() string {
 }
 
 func (n *OCRProcessorNode) CanStart(ctx context.Context, doc Document, config ProcessingConfig) bool {
-	return true
+	canStart := doc.Status != "completed"
+	return canStart
 }
 func (n *OCRProcessorNode) Execute(ctx context.Context, doc Document, processingConfig ProcessingConfig) (*graft.NodeResult, error) {
 
@@ -237,6 +263,9 @@ func (n *OCRProcessorNode) Execute(ctx context.Context, doc Document, processing
 		extractedText := performOCR(doc.Content)
 		doc.Content = extractedText
 		doc.Type = "text"
+		if doc.Metadata == nil {
+			doc.Metadata = make(map[string]interface{})
+		}
 		doc.Metadata["ocr_confidence"] = 0.95
 		doc.Metadata["ocr_processed_at"] = time.Now()
 	}
@@ -255,7 +284,8 @@ func (n *NLPProcessorNode) GetName() string {
 }
 
 func (n *NLPProcessorNode) CanStart(ctx context.Context, doc Document, config ProcessingConfig) bool {
-	return true
+	canStart := doc.Status != "completed"
+	return canStart
 }
 func (n *NLPProcessorNode) Execute(ctx context.Context, doc Document, processingConfig ProcessingConfig) (*graft.NodeResult, error) {
 
@@ -267,6 +297,9 @@ func (n *NLPProcessorNode) Execute(ctx context.Context, doc Document, processing
 		sentiment := analyzeSentiment(doc.Content)
 		keywords := extractKeywords(doc.Content)
 
+		if doc.Metadata == nil {
+			doc.Metadata = make(map[string]interface{})
+		}
 		doc.Metadata["sentiment"] = sentiment
 		doc.Metadata["keywords"] = keywords
 		doc.Metadata["nlp_processed_at"] = time.Now()
@@ -286,7 +319,8 @@ func (n *QualityCheckerNode) GetName() string {
 }
 
 func (n *QualityCheckerNode) CanStart(ctx context.Context, doc Document, config ProcessingConfig) bool {
-	return true
+	canStart := doc.Status != "completed"
+	return canStart
 }
 func (n *QualityCheckerNode) Execute(ctx context.Context, doc Document, processingConfig ProcessingConfig) (*graft.NodeResult, error) {
 
@@ -295,6 +329,9 @@ func (n *QualityCheckerNode) Execute(ctx context.Context, doc Document, processi
 	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-quality")
 
 	qualityScore := calculateQualityScore(doc)
+	if doc.Metadata == nil {
+		doc.Metadata = make(map[string]interface{})
+	}
 	doc.Metadata["quality_score"] = qualityScore
 	doc.Metadata["quality_checked_at"] = time.Now()
 
@@ -326,7 +363,8 @@ func (n *QualityEnhancerNode) GetName() string {
 }
 
 func (n *QualityEnhancerNode) CanStart(ctx context.Context, doc Document, config ProcessingConfig) bool {
-	return true
+	canStart := doc.Status != "completed"
+	return canStart
 }
 func (n *QualityEnhancerNode) Execute(ctx context.Context, doc Document, processingConfig ProcessingConfig) (*graft.NodeResult, error) {
 
@@ -334,6 +372,9 @@ func (n *QualityEnhancerNode) Execute(ctx context.Context, doc Document, process
 
 	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-enhancer")
 	doc.Content = enhanceQuality(doc.Content)
+	if doc.Metadata == nil {
+		doc.Metadata = make(map[string]interface{})
+	}
 	doc.Metadata["enhanced_at"] = time.Now()
 
 	return &graft.NodeResult{
@@ -350,13 +391,17 @@ func (n *PriorityHandlerNode) GetName() string {
 }
 
 func (n *PriorityHandlerNode) CanStart(ctx context.Context, doc Document, config ProcessingConfig) bool {
-	return true
+	canStart := doc.Status != "completed"
+	return canStart
 }
 func (n *PriorityHandlerNode) Execute(ctx context.Context, doc Document, processingConfig ProcessingConfig) (*graft.NodeResult, error) {
 
 	time.Sleep(50 * time.Millisecond)
 
 	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-priority")
+	if doc.Metadata == nil {
+		doc.Metadata = make(map[string]interface{})
+	}
 	doc.Metadata["priority_processed_at"] = time.Now()
 	doc.Metadata["expedited"] = true
 
@@ -374,7 +419,8 @@ func (n *DocumentRepairNode) GetName() string {
 }
 
 func (n *DocumentRepairNode) CanStart(ctx context.Context, doc Document, config ProcessingConfig) bool {
-	return true
+	canStart := doc.Status != "completed"
+	return canStart
 }
 func (n *DocumentRepairNode) Execute(ctx context.Context, doc Document, processingConfig ProcessingConfig) (*graft.NodeResult, error) {
 
@@ -385,6 +431,9 @@ func (n *DocumentRepairNode) Execute(ctx context.Context, doc Document, processi
 	if doc.Type == "corrupted" {
 		doc.Content = repairDocument(doc.Content)
 		doc.Type = "text"
+		if doc.Metadata == nil {
+			doc.Metadata = make(map[string]interface{})
+		}
 		doc.Metadata["repaired"] = true
 		doc.Metadata["repaired_at"] = time.Now()
 	}
@@ -404,7 +453,8 @@ func (n *NotificationSenderNode) GetName() string {
 }
 
 func (n *NotificationSenderNode) CanStart(ctx context.Context, doc Document, config ProcessingConfig) bool {
-	return true
+	canStart := doc.Status != "completed"
+	return canStart
 }
 func (n *NotificationSenderNode) Execute(ctx context.Context, doc Document, processingConfig ProcessingConfig) (*graft.NodeResult, error) {
 
@@ -413,6 +463,9 @@ func (n *NotificationSenderNode) Execute(ctx context.Context, doc Document, proc
 	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-notification")
 
 	sendNotification(doc)
+	if doc.Metadata == nil {
+		doc.Metadata = make(map[string]interface{})
+	}
 	doc.Metadata["notification_sent_at"] = time.Now()
 
 	return &graft.NodeResult{
@@ -429,7 +482,8 @@ func (n *DocumentFinalizerNode) GetName() string {
 }
 
 func (n *DocumentFinalizerNode) CanStart(ctx context.Context, doc Document, config ProcessingConfig) bool {
-	return true
+	canStart := doc.Status == "quality_approved"
+	return canStart
 }
 func (n *DocumentFinalizerNode) Execute(ctx context.Context, doc Document, processingConfig ProcessingConfig) (*graft.NodeResult, error) {
 
@@ -437,6 +491,9 @@ func (n *DocumentFinalizerNode) Execute(ctx context.Context, doc Document, proce
 
 	doc.ProcessedBy = append(doc.ProcessedBy, processingConfig.ProcessorName+"-finalizer")
 	doc.Status = "completed"
+	if doc.Metadata == nil {
+		doc.Metadata = make(map[string]interface{})
+	}
 	doc.Metadata["completed_at"] = time.Now()
 	doc.Metadata["total_processing_nodes"] = len(doc.ProcessedBy)
 
@@ -573,6 +630,5 @@ func repairDocument(content string) string {
 }
 
 func sendNotification(doc Document) {
-	fmt.Printf("PRIORITY NOTIFICATION: Document %s completed with %d processing steps\n",
-		doc.ID, len(doc.ProcessedBy))
+	// Document processing complete notification placeholder
 }

@@ -315,6 +315,7 @@ var (
 	ErrTimeout         = errors.New("operation timeout")
 	ErrConnection      = errors.New("connection error")
 	ErrInvalidInput    = errors.New("invalid input")
+	ErrNodeNotReady    = errors.New("node not ready to execute")
 )
 
 type DiscoveryError struct {

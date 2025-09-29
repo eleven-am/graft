@@ -63,7 +63,7 @@ func (q *Queue) Enqueue(item []byte) error {
 		return err
 	}
 
-	key := domain.QueuePendingKey(q.name, sequence)
+	key := domain.QueueReadyKey(q.name, sequence)
 	if err := q.storage.Put(key, itemBytes, 0); err != nil {
 		return err
 	}
@@ -86,7 +86,7 @@ func (q *Queue) Peek() (item []byte, exists bool, err error) {
 		return nil, false, &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
 	}
 
-	prefix := fmt.Sprintf("queue:%s:pending:", q.name)
+	prefix := fmt.Sprintf("queue:%s:ready:", q.name)
 	_, value, exists, err := q.storage.GetNext(prefix)
 	if err != nil {
 		return nil, false, err
@@ -112,7 +112,7 @@ func (q *Queue) Claim() (item []byte, claimID string, exists bool, err error) {
 		return nil, "", false, &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
 	}
 
-	prefix := fmt.Sprintf("queue:%s:pending:", q.name)
+	prefix := fmt.Sprintf("queue:%s:ready:", q.name)
 	now := time.Now()
 	maxSkips := 100
 	skipped := 0
@@ -261,9 +261,9 @@ func (q *Queue) Release(claimID string) error {
 		return err
 	}
 
-	pendingKey := domain.QueuePendingKey(q.name, claimedItem.Sequence)
+	readyKey := domain.QueueReadyKey(q.name, claimedItem.Sequence)
 	ops := []ports.WriteOp{
-		{Type: ports.OpPut, Key: pendingKey, Value: itemBytes},
+		{Type: ports.OpPut, Key: readyKey, Value: itemBytes},
 		{Type: ports.OpDelete, Key: claimedKey},
 	}
 	if err := q.storage.BatchWrite(ops); err != nil {
@@ -281,7 +281,7 @@ func (q *Queue) WaitForItem(ctx context.Context) <-chan struct{} {
 	go func() {
 		defer close(ch)
 
-		prefix := fmt.Sprintf("queue:%s:pending:", q.name)
+		prefix := fmt.Sprintf("queue:%s:ready:", q.name)
 
 		type channelSubscriber interface {
 			SubscribeToChannel(prefix string) (<-chan domain.Event, func(), error)
@@ -322,8 +322,19 @@ func (q *Queue) Size() (int, error) {
 		return 0, &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
 	}
 
-	prefix := fmt.Sprintf("queue:%s:pending:", q.name)
-	return q.storage.CountPrefix(prefix)
+	readyPrefix := fmt.Sprintf("queue:%s:ready:", q.name)
+	readyCount, err := q.storage.CountPrefix(readyPrefix)
+	if err != nil {
+		return 0, err
+	}
+
+	blockedPrefix := fmt.Sprintf("queue:%s:blocked:", q.name)
+	blockedCount, err := q.storage.CountPrefix(blockedPrefix)
+	if err != nil {
+		return 0, err
+	}
+
+	return readyCount + blockedCount, nil
 }
 
 func (q *Queue) HasItemsWithPrefix(dataPrefix string) (bool, error) {
@@ -337,12 +348,13 @@ func (q *Queue) HasItemsWithPrefix(dataPrefix string) (bool, error) {
 	if strings.HasPrefix(dataPrefix, `"workflow_id":"`) {
 		workflowID := q.extractWorkflowIDFromPrefix(dataPrefix)
 		if workflowID != "" {
-			return q.hasWorkflowItems(workflowID), nil
+			hasItems := q.hasWorkflowItems(workflowID)
+			return hasItems, nil
 		}
 	}
 
-	prefix := fmt.Sprintf("queue:%s:pending:", q.name)
-	items, err := q.storage.ListByPrefix(prefix)
+	readyPrefix := fmt.Sprintf("queue:%s:ready:", q.name)
+	items, err := q.storage.ListByPrefix(readyPrefix)
 	if err != nil {
 		return false, err
 	}
@@ -355,6 +367,28 @@ func (q *Queue) HasItemsWithPrefix(dataPrefix string) (bool, error) {
 
 		if len(queueItem.Data) > 0 {
 			dataStr := string(queueItem.Data)
+			if len(dataStr) >= len(dataPrefix) &&
+				dataStr[:len(dataPrefix)] == dataPrefix ||
+				strings.Contains(dataStr, dataPrefix) {
+				return true, nil
+			}
+		}
+	}
+
+	blockedPrefix := fmt.Sprintf("queue:%s:blocked:", q.name)
+	blockedItems, err := q.storage.ListByPrefix(blockedPrefix)
+	if err != nil {
+		return false, err
+	}
+
+	for _, item := range blockedItems {
+		blockedItem, err := domain.BlockedItemFromBytes(item.Value)
+		if err != nil {
+			continue
+		}
+
+		if len(blockedItem.Data) > 0 {
+			dataStr := string(blockedItem.Data)
 			if len(dataStr) >= len(dataPrefix) &&
 				dataStr[:len(dataPrefix)] == dataPrefix ||
 				strings.Contains(dataStr, dataPrefix) {
@@ -473,29 +507,44 @@ func (q *Queue) GetItemsWithPrefix(dataPrefix string) ([][]byte, error) {
 
 			var matchingItems [][]byte
 			for _, seq := range sequences {
-				key := domain.QueuePendingKey(q.name, seq)
-				value, _, exists, err := q.storage.Get(key)
+				readyKey := domain.QueueReadyKey(q.name, seq)
+				value, _, exists, err := q.storage.Get(readyKey)
 				if err != nil {
-					continue
+					return nil, err
 				}
-				if !exists {
+				if exists {
+					queueItem, err := domain.QueueItemFromBytes(value)
+					if err != nil {
+						continue
+					}
+
+					matchingItems = append(matchingItems, queueItem.Data)
 					continue
 				}
 
-				queueItem, err := domain.QueueItemFromBytes(value)
+				blockedKey := domain.QueueBlockedKey(q.name, seq)
+				blockedValue, _, blockedExists, err := q.storage.Get(blockedKey)
+				if err != nil {
+					return nil, err
+				}
+				if !blockedExists {
+					continue
+				}
+
+				blockedItem, err := domain.BlockedItemFromBytes(blockedValue)
 				if err != nil {
 					continue
 				}
 
-				matchingItems = append(matchingItems, queueItem.Data)
+				matchingItems = append(matchingItems, blockedItem.Data)
 			}
 			return matchingItems, nil
 		}
 	}
 
 	var matchingItems [][]byte
-	prefix := fmt.Sprintf("queue:%s:pending:", q.name)
-	items, err := q.storage.ListByPrefix(prefix)
+	readyPrefix := fmt.Sprintf("queue:%s:ready:", q.name)
+	items, err := q.storage.ListByPrefix(readyPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -512,6 +561,28 @@ func (q *Queue) GetItemsWithPrefix(dataPrefix string) ([][]byte, error) {
 				dataStr[:len(dataPrefix)] == dataPrefix ||
 				strings.Contains(dataStr, dataPrefix) {
 				matchingItems = append(matchingItems, queueItem.Data)
+			}
+		}
+	}
+
+	blockedPrefix := fmt.Sprintf("queue:%s:blocked:", q.name)
+	blockedItems, err := q.storage.ListByPrefix(blockedPrefix)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, item := range blockedItems {
+		blockedItem, err := domain.BlockedItemFromBytes(item.Value)
+		if err != nil {
+			continue
+		}
+
+		if len(blockedItem.Data) > 0 {
+			dataStr := string(blockedItem.Data)
+			if len(dataStr) >= len(dataPrefix) &&
+				dataStr[:len(dataPrefix)] == dataPrefix ||
+				strings.Contains(dataStr, dataPrefix) {
+				matchingItems = append(matchingItems, blockedItem.Data)
 			}
 		}
 	}
@@ -729,22 +800,36 @@ func (q *Queue) getWorkflowSequences(workflowID string) []int64 {
 }
 
 func (q *Queue) rebuildWorkflowIndex() {
-	prefix := fmt.Sprintf("queue:%s:pending:", q.name)
+	readyPrefix := fmt.Sprintf("queue:%s:ready:", q.name)
+	blockedPrefix := fmt.Sprintf("queue:%s:blocked:", q.name)
 
-	currentKey, value, exists, err := q.storage.GetNext(prefix)
-	if err != nil || !exists {
-		return
+	currentKey, value, exists, err := q.storage.GetNext(readyPrefix)
+	if err == nil && exists {
+		for exists {
+			queueItem, decodeErr := domain.QueueItemFromBytes(value)
+			if decodeErr == nil {
+				q.updateWorkflowIndex(queueItem.Data, queueItem.Sequence, true)
+			}
+
+			currentKey, value, exists, err = q.storage.GetNextAfter(readyPrefix, currentKey)
+			if err != nil {
+				break
+			}
+		}
 	}
 
-	for exists {
-		queueItem, err := domain.QueueItemFromBytes(value)
-		if err == nil {
-			q.updateWorkflowIndex(queueItem.Data, queueItem.Sequence, true)
-		}
+	blockedKey, blockedValue, blockedExists, blockedErr := q.storage.GetNext(blockedPrefix)
+	if blockedErr == nil && blockedExists {
+		for blockedExists {
+			blockedItem, decodeErr := domain.BlockedItemFromBytes(blockedValue)
+			if decodeErr == nil {
+				q.updateWorkflowIndex(blockedItem.Data, blockedItem.Sequence, true)
+			}
 
-		currentKey, value, exists, err = q.storage.GetNextAfter(prefix, currentKey)
-		if err != nil {
-			break
+			blockedKey, blockedValue, blockedExists, blockedErr = q.storage.GetNextAfter(blockedPrefix, blockedKey)
+			if blockedErr != nil {
+				break
+			}
 		}
 	}
 }
@@ -801,4 +886,264 @@ func (q *Queue) Start(ctx context.Context) error {
 	q.rebuildWorkflowIndex()
 	q.rebuildClaimedIndex()
 	return nil
+}
+
+// Two-tier queue methods
+
+func (q *Queue) EnqueueBlocked(item []byte) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if len(item) > 1<<20 {
+		return &domain.StorageError{Type: domain.ErrStorageFull, Message: "queue item too large"}
+	}
+	if q.closed {
+		return &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
+	}
+
+	sequence, err := q.getNextSequence()
+	if err != nil {
+		return err
+	}
+
+	blockedItem := domain.NewBlockedItem(item, sequence)
+	itemBytes, err := blockedItem.ToBytes()
+	if err != nil {
+		return err
+	}
+
+	key := domain.QueueBlockedKey(q.name, sequence)
+	if err := q.storage.Put(key, itemBytes, 0); err != nil {
+		return err
+	}
+
+	q.updateWorkflowIndex(item, sequence, true)
+
+	return nil
+}
+
+func (q *Queue) EnqueueReady(item []byte) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if len(item) > 1<<20 {
+		return &domain.StorageError{Type: domain.ErrStorageFull, Message: "queue item too large"}
+	}
+	if q.closed {
+		return &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
+	}
+
+	sequence, err := q.getNextSequence()
+	if err != nil {
+		return err
+	}
+
+	queueItem := domain.NewQueueItem(item, sequence)
+	itemBytes, err := queueItem.ToBytes()
+	if err != nil {
+		return err
+	}
+
+	key := domain.QueueReadyKey(q.name, sequence)
+	if err := q.storage.Put(key, itemBytes, 0); err != nil {
+		return err
+	}
+
+	q.updateWorkflowIndex(item, sequence, true)
+
+	if q.eventManager != nil {
+		event := domain.Event{Type: domain.EventPut, Key: key, Timestamp: time.Now()}
+		_ = q.eventManager.Broadcast(event)
+	}
+
+	return nil
+}
+
+func (q *Queue) GetBlockedForWorkflow(workflowID string) ([]*domain.BlockedItem, error) {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
+	if q.closed {
+		return nil, &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
+	}
+
+	var blockedItems []*domain.BlockedItem
+	prefix := fmt.Sprintf("queue:%s:blocked:", q.name)
+	items, err := q.storage.ListByPrefix(prefix)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, item := range items {
+		blockedItem, err := domain.BlockedItemFromBytes(item.Value)
+		if err != nil {
+			continue
+		}
+
+		itemWorkflowID := q.extractWorkflowID(blockedItem.Data)
+		if itemWorkflowID == workflowID {
+			blockedItems = append(blockedItems, blockedItem)
+		}
+	}
+
+	return blockedItems, nil
+}
+
+func (q *Queue) GetReadyForWorkflow(workflowID string) ([][]byte, error) {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
+	if q.closed {
+		return nil, &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
+	}
+
+	var readyItems [][]byte
+	prefix := fmt.Sprintf("queue:%s:ready:", q.name)
+	items, err := q.storage.ListByPrefix(prefix)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, item := range items {
+		queueItem, err := domain.QueueItemFromBytes(item.Value)
+		if err != nil {
+			continue
+		}
+
+		itemWorkflowID := q.extractWorkflowID(queueItem.Data)
+		if itemWorkflowID == workflowID {
+			readyItems = append(readyItems, queueItem.Data)
+		}
+	}
+
+	return readyItems, nil
+}
+
+func (q *Queue) PromoteBlockedToReady(item *domain.BlockedItem) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if q.closed {
+		return &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
+	}
+
+	item.UpdateCheckCount()
+
+	queueItem := domain.NewQueueItem(item.Data, item.Sequence)
+	readyBytes, err := queueItem.ToBytes()
+	if err != nil {
+		return err
+	}
+
+	blockedKey := domain.QueueBlockedKey(q.name, item.Sequence)
+	readyKey := domain.QueueReadyKey(q.name, item.Sequence)
+
+	ops := []ports.WriteOp{
+		{Type: ports.OpDelete, Key: blockedKey},
+		{Type: ports.OpPut, Key: readyKey, Value: readyBytes},
+	}
+
+	if err := q.storage.BatchWrite(ops); err != nil {
+		return err
+	}
+
+	q.updateWorkflowIndex(item.Data, item.Sequence, true)
+
+	if q.eventManager != nil {
+		event := domain.Event{Type: domain.EventPut, Key: readyKey, Timestamp: time.Now()}
+		_ = q.eventManager.Broadcast(event)
+	}
+
+	return nil
+}
+
+func (q *Queue) MoveReadyToBlocked(item []byte, sequence int64) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	if q.closed {
+		return &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
+	}
+
+	blockedItem := domain.NewBlockedItem(item, sequence)
+	blockedBytes, err := blockedItem.ToBytes()
+	if err != nil {
+		return err
+	}
+
+	readyKey := domain.QueueReadyKey(q.name, sequence)
+	blockedKey := domain.QueueBlockedKey(q.name, sequence)
+
+	ops := []ports.WriteOp{
+		{Type: ports.OpDelete, Key: readyKey},
+		{Type: ports.OpPut, Key: blockedKey, Value: blockedBytes},
+	}
+
+	if err := q.storage.BatchWrite(ops); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (q *Queue) HasBlockedItemsWithPrefix(dataPrefix string) (bool, error) {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
+	if q.closed {
+		return false, &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
+	}
+
+	prefix := fmt.Sprintf("queue:%s:blocked:", q.name)
+	items, err := q.storage.ListByPrefix(prefix)
+	if err != nil {
+		return false, err
+	}
+
+	for _, item := range items {
+		blockedItem, err := domain.BlockedItemFromBytes(item.Value)
+		if err != nil {
+			continue
+		}
+
+		if len(blockedItem.Data) > 0 {
+			dataStr := string(blockedItem.Data)
+			if strings.Contains(dataStr, dataPrefix) {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
+}
+
+func (q *Queue) HasReadyItemsWithPrefix(dataPrefix string) (bool, error) {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+
+	if q.closed {
+		return false, &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
+	}
+
+	prefix := fmt.Sprintf("queue:%s:ready:", q.name)
+	items, err := q.storage.ListByPrefix(prefix)
+	if err != nil {
+		return false, err
+	}
+
+	for _, item := range items {
+		queueItem, err := domain.QueueItemFromBytes(item.Value)
+		if err != nil {
+			continue
+		}
+
+		if len(queueItem.Data) > 0 {
+			dataStr := string(queueItem.Data)
+			if strings.Contains(dataStr, dataPrefix) {
+				return true, nil
+			}
+		}
+	}
+
+	return false, nil
 }

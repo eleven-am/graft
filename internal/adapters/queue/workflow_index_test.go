@@ -220,9 +220,9 @@ func TestQueue_GetItemsWithPrefixOptimized(t *testing.T) {
 	queueItem2 := domain.NewQueueItem(workflowData2, 2)
 	itemBytes2, _ := queueItem2.ToBytes()
 
-	mockStorage.On("Get", "queue:test:pending:00000000000000000001").
+	mockStorage.On("Get", "queue:test:ready:00000000000000000001").
 		Return(itemBytes1, int64(0), true, nil).Once()
-	mockStorage.On("Get", "queue:test:pending:00000000000000000002").
+	mockStorage.On("Get", "queue:test:ready:00000000000000000002").
 		Return(itemBytes2, int64(0), true, nil).Once()
 
 	items, err := queue.GetItemsWithPrefix(`"workflow_id":"workflow-123"`)
@@ -242,9 +242,10 @@ func TestQueue_GetItemsWithPrefixFallback(t *testing.T) {
 	queueItem := domain.NewQueueItem([]byte(`{"task_id":"task-123","data":"test"}`), 1)
 	itemBytes, _ := queueItem.ToBytes()
 
-	mockStorage.On("ListByPrefix", "queue:test:pending:").Return([]ports.KeyValueVersion{
-		{Key: "queue:test:pending:00000000000000000001", Value: itemBytes},
+	mockStorage.On("ListByPrefix", "queue:test:ready:").Return([]ports.KeyValueVersion{
+		{Key: "queue:test:ready:00000000000000000001", Value: itemBytes},
 	}, nil).Once()
+	mockStorage.On("ListByPrefix", "queue:test:blocked:").Return([]ports.KeyValueVersion{}, nil).Once()
 
 	items, err := queue.GetItemsWithPrefix(`"task_id":"task-123"`)
 

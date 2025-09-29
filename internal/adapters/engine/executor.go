@@ -209,7 +209,7 @@ func (e *Executor) ExecuteNodeWithRetry(ctx context.Context, workflowID, nodeNam
 	}
 
 	if len(nodeResult.NextNodes) == 0 {
-		return e.checkWorkflowCompletion(ctx, workflowID)
+		return nil
 	}
 
 	for _, nextNode := range nodeResult.NextNodes {
@@ -319,7 +319,7 @@ func (e *Executor) handleExecutionFailure(ctx context.Context, workflow *domain.
 	return nil
 }
 
-func (e *Executor) checkWorkflowCompletion(ctx context.Context, workflowID string) error {
+func (e *Executor) CheckWorkflowCompletion(ctx context.Context, workflowID string) error {
 
 	workflowPrefix := fmt.Sprintf(`"workflow_id":"%s"`, workflowID)
 	hasPendingNodes, err := e.queue.HasItemsWithPrefix(workflowPrefix)

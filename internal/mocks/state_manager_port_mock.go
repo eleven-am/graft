@@ -128,6 +128,51 @@ func (_c *MockStateManagerPort_SaveWorkflowState_Call) RunAndReturn(run func(con
 	return _c
 }
 
+// Stop provides a mock function with no fields
+func (_m *MockStateManagerPort) Stop() error {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for Stop")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func() error); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockStateManagerPort_Stop_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Stop'
+type MockStateManagerPort_Stop_Call struct {
+	*mock.Call
+}
+
+// Stop is a helper method to define mock.On call
+func (_e *MockStateManagerPort_Expecter) Stop() *MockStateManagerPort_Stop_Call {
+	return &MockStateManagerPort_Stop_Call{Call: _e.mock.On("Stop")}
+}
+
+func (_c *MockStateManagerPort_Stop_Call) Run(run func()) *MockStateManagerPort_Stop_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockStateManagerPort_Stop_Call) Return(_a0 error) *MockStateManagerPort_Stop_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockStateManagerPort_Stop_Call) RunAndReturn(run func() error) *MockStateManagerPort_Stop_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // UpdateWorkflowState provides a mock function with given fields: ctx, workflowID, updateFn
 func (_m *MockStateManagerPort) UpdateWorkflowState(ctx context.Context, workflowID string, updateFn func(*domain.WorkflowInstance) error) error {
 	ret := _m.Called(ctx, workflowID, updateFn)
@@ -172,45 +217,6 @@ func (_c *MockStateManagerPort_UpdateWorkflowState_Call) Return(_a0 error) *Mock
 }
 
 func (_c *MockStateManagerPort_UpdateWorkflowState_Call) RunAndReturn(run func(context.Context, string, func(*domain.WorkflowInstance) error) error) *MockStateManagerPort_UpdateWorkflowState_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// Stop provides a mock function with given fields:
-func (_m *MockStateManagerPort) Stop() error {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		return nil
-	}
-	var r0 error
-	if rf, ok := ret.Get(0).(func() error); ok {
-		r0 = rf()
-	} else {
-		r0 = ret.Error(0)
-	}
-	return r0
-}
-
-// MockStateManagerPort_Stop_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Stop'
-type MockStateManagerPort_Stop_Call struct{ *mock.Call }
-
-// Stop is a helper method to define mock.On call
-func (_e *MockStateManagerPort_Expecter) Stop() *MockStateManagerPort_Stop_Call {
-	return &MockStateManagerPort_Stop_Call{Call: _e.mock.On("Stop")}
-}
-
-func (_c *MockStateManagerPort_Stop_Call) Run(run func()) *MockStateManagerPort_Stop_Call {
-	_c.Call.Run(func(args mock.Arguments) { run() })
-	return _c
-}
-
-func (_c *MockStateManagerPort_Stop_Call) Return(_a0 error) *MockStateManagerPort_Stop_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockStateManagerPort_Stop_Call) RunAndReturn(run func() error) *MockStateManagerPort_Stop_Call {
 	_c.Call.Return(run)
 	return _c
 }

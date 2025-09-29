@@ -3,8 +3,6 @@
 package mocks
 
 import (
-	io "io"
-
 	ports "github.com/eleven-am/graft/internal/ports"
 	mock "github.com/stretchr/testify/mock"
 
@@ -278,58 +276,6 @@ func (_c *MockStoragePort_CountPrefix_Call) Return(count int, err error) *MockSt
 }
 
 func (_c *MockStoragePort_CountPrefix_Call) RunAndReturn(run func(string) (int, error)) *MockStoragePort_CountPrefix_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// CreateCompressedSnapshot provides a mock function with no fields
-
-// MockStoragePort_CreateCompressedSnapshot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CreateCompressedSnapshot'
-type MockStoragePort_CreateCompressedSnapshot_Call struct {
-	*mock.Call
-}
-
-// CreateCompressedSnapshot is a helper method to define mock.On call
-
-func (_c *MockStoragePort_CreateCompressedSnapshot_Call) Run(run func()) *MockStoragePort_CreateCompressedSnapshot_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockStoragePort_CreateCompressedSnapshot_Call) Return(_a0 io.ReadCloser, _a1 error) *MockStoragePort_CreateCompressedSnapshot_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockStoragePort_CreateCompressedSnapshot_Call) RunAndReturn(run func() (io.ReadCloser, error)) *MockStoragePort_CreateCompressedSnapshot_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// CreateSnapshot provides a mock function with no fields
-
-// MockStoragePort_CreateSnapshot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CreateSnapshot'
-type MockStoragePort_CreateSnapshot_Call struct {
-	*mock.Call
-}
-
-// CreateSnapshot is a helper method to define mock.On call
-
-func (_c *MockStoragePort_CreateSnapshot_Call) Run(run func()) *MockStoragePort_CreateSnapshot_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockStoragePort_CreateSnapshot_Call) Return(_a0 io.ReadCloser, _a1 error) *MockStoragePort_CreateSnapshot_Call {
-	_c.Call.Return(_a0, _a1)
-	return _c
-}
-
-func (_c *MockStoragePort_CreateSnapshot_Call) RunAndReturn(run func() (io.ReadCloser, error)) *MockStoragePort_CreateSnapshot_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -1077,60 +1023,6 @@ func (_c *MockStoragePort_PutWithTTL_Call) Return(_a0 error) *MockStoragePort_Pu
 }
 
 func (_c *MockStoragePort_PutWithTTL_Call) RunAndReturn(run func(string, []byte, int64, time.Duration) error) *MockStoragePort_PutWithTTL_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// RestoreCompressedSnapshot provides a mock function with given fields: snapshot
-
-// MockStoragePort_RestoreCompressedSnapshot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RestoreCompressedSnapshot'
-type MockStoragePort_RestoreCompressedSnapshot_Call struct {
-	*mock.Call
-}
-
-// RestoreCompressedSnapshot is a helper method to define mock.On call
-//   - snapshot io.Reader
-
-func (_c *MockStoragePort_RestoreCompressedSnapshot_Call) Run(run func(snapshot io.Reader)) *MockStoragePort_RestoreCompressedSnapshot_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(io.Reader))
-	})
-	return _c
-}
-
-func (_c *MockStoragePort_RestoreCompressedSnapshot_Call) Return(_a0 error) *MockStoragePort_RestoreCompressedSnapshot_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockStoragePort_RestoreCompressedSnapshot_Call) RunAndReturn(run func(io.Reader) error) *MockStoragePort_RestoreCompressedSnapshot_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// RestoreSnapshot provides a mock function with given fields: snapshot
-
-// MockStoragePort_RestoreSnapshot_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RestoreSnapshot'
-type MockStoragePort_RestoreSnapshot_Call struct {
-	*mock.Call
-}
-
-// RestoreSnapshot is a helper method to define mock.On call
-//   - snapshot io.Reader
-
-func (_c *MockStoragePort_RestoreSnapshot_Call) Run(run func(snapshot io.Reader)) *MockStoragePort_RestoreSnapshot_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(io.Reader))
-	})
-	return _c
-}
-
-func (_c *MockStoragePort_RestoreSnapshot_Call) Return(_a0 error) *MockStoragePort_RestoreSnapshot_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockStoragePort_RestoreSnapshot_Call) RunAndReturn(run func(io.Reader) error) *MockStoragePort_RestoreSnapshot_Call {
 	_c.Call.Return(run)
 	return _c
 }

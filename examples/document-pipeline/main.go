@@ -121,6 +121,14 @@ func main() {
 
 		workflowID := fmt.Sprintf("workflow-%d-%d", i+1, time.Now().Unix())
 
+		fmt.Printf("🔍 DEBUG: Creating trigger for workflow %s\n", workflowID)
+		contentPreview := scenario.Doc.Content
+		if len(contentPreview) > 50 {
+			contentPreview = contentPreview[:50] + "..."
+		}
+		fmt.Printf("🔍 DEBUG: Initial document - ID: %s, Status: %s, Content: %s\n", scenario.Doc.ID, scenario.Doc.Status, contentPreview)
+		fmt.Printf("🔍 DEBUG: Config - MaxRetries: %d, EnableNLP: %t, ProcessorName: %s\n", scenario.Config.MaxRetries, scenario.Config.EnableNLP, scenario.Config.ProcessorName)
+
 		trigger := graft.WorkflowTrigger{
 			WorkflowID: workflowID,
 			InitialNodes: []graft.NodeConfig{
@@ -132,6 +140,7 @@ func main() {
 			InitialState: scenario.Doc,
 		}
 
+		fmt.Printf("🔍 DEBUG: About to call StartWorkflow...\n")
 		if err := manager.StartWorkflow(trigger); err != nil {
 			log.Fatalf("❌ Failed to start workflow %s: %v", workflowID, err)
 		}
@@ -144,7 +153,24 @@ func main() {
 	fmt.Println("\n⏳ Workflows started. Completion will be handled automatically...")
 	fmt.Printf("🔄 Processing %d workflow(s). Waiting for completion callbacks...\n", len(scenarios))
 
-	select {}
+	// Wait up to 30 seconds for workflows to complete
+	timeout := time.After(30 * time.Second)
+	completed := make(chan struct{})
+
+	go func() {
+		for completedWorkflows < len(scenarios) {
+			time.Sleep(100 * time.Millisecond)
+		}
+		close(completed)
+	}()
+
+	select {
+	case <-completed:
+		fmt.Println("✅ All workflows completed successfully!")
+	case <-timeout:
+		fmt.Println("⚠️ Timeout: Some workflows didn't complete within 30 seconds")
+		fmt.Printf("📊 Completed: %d/%d workflows\n", completedWorkflows, len(scenarios))
+	}
 }
 
 type DocumentScenario struct {

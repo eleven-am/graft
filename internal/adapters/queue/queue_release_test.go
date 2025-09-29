@@ -32,7 +32,7 @@ func TestQueue_Release_AddsDeferralAndDelay(t *testing.T) {
 		if len(ops) != 2 {
 			return false
 		}
-		if !(ops[0].Type == ports.OpPut && strings.HasPrefix(ops[0].Key, "queue:test:pending:")) {
+		if !(ops[0].Type == ports.OpPut && strings.HasPrefix(ops[0].Key, "queue:test:ready:")) {
 			return false
 		}
 		if !(ops[1].Type == ports.OpDelete && ops[1].Key == "queue:test:claimed:claim-1") {
@@ -123,8 +123,8 @@ func TestQueue_ClaimedIndex_AddAndRemove(t *testing.T) {
 	qi := domain.NewQueueItem(workBytes, 7)
 	qiBytes, _ := qi.ToBytes()
 
-	storage.On("GetNext", "queue:test:pending:").Return(
-		"queue:test:pending:00000000000000000007", qiBytes, true, nil,
+	storage.On("GetNext", "queue:test:ready:").Return(
+		"queue:test:ready:00000000000000000007", qiBytes, true, nil,
 	).Once()
 
 	storage.On("BatchWrite", mock.MatchedBy(func(ops []ports.WriteOp) bool {
