@@ -73,12 +73,7 @@ type RaftConfig struct {
 	TrailingLogs       uint64        `json:"trailing_logs" yaml:"trailing_logs"`
 	LeaderLeaseTimeout time.Duration `json:"leader_lease_timeout" yaml:"leader_lease_timeout"`
 
-	DiscoveryTimeout  time.Duration `json:"discovery_timeout" yaml:"discovery_timeout"`
-	BootstrapExpected int           `json:"bootstrap_expected" yaml:"bootstrap_expected"`
-	ForceBootstrap    bool          `json:"force_bootstrap" yaml:"force_bootstrap"`
-	ExpectedNodes     []string      `json:"expected_nodes,omitempty" yaml:"expected_nodes,omitempty"`
-	RequireCluster    bool          `json:"require_cluster" yaml:"require_cluster"`
-	JoinTimeout       time.Duration `json:"join_timeout" yaml:"join_timeout"`
+	DiscoveryTimeout time.Duration `json:"discovery_timeout" yaml:"discovery_timeout"`
 }
 
 type ResourceConfig struct {

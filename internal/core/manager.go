@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
-	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/eleven-am/graft/internal/adapters/circuit_breaker"
@@ -26,7 +26,9 @@ import (
 	"github.com/eleven-am/graft/internal/adapters/tracing"
 	"github.com/eleven-am/graft/internal/adapters/transport"
 	"github.com/eleven-am/graft/internal/domain"
+	"github.com/eleven-am/graft/internal/helpers/metadata"
 	"github.com/eleven-am/graft/internal/ports"
+	"github.com/eleven-am/graft/internal/readiness"
 
 	badger "github.com/dgraph-io/badger/v3"
 )
@@ -47,9 +49,12 @@ type Manager struct {
 	rateLimiters    ports.RateLimiterProvider
 	tracing         ports.TracingProvider
 
-	config *domain.Config
-	logger *slog.Logger
-	nodeID string
+	config           *domain.Config
+	logger           *slog.Logger
+	nodeID           string
+	readinessManager *readiness.Manager
+	workflowIntakeMu sync.RWMutex
+	workflowIntakeOk bool
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -168,7 +173,6 @@ func NewWithConfig(config *domain.Config) *Manager {
 
 	appTransport := prov.newTransport(logger, config.Transport)
 
-	// Create a temporary event manager for raft initialization
 	tempEventManager := prov.newEventManager(nil, config.NodeID, logger)
 
 	raftAdapter, err := prov.newRaftNode(raftConfig, raftStorage, tempEventManager, appTransport, logger)
@@ -178,10 +182,8 @@ func NewWithConfig(config *domain.Config) *Manager {
 	}
 	cleanup = append(cleanup, raftAdapter.Stop)
 
-	// Create app storage
 	appStorage := prov.newAppStorage(raftAdapter, raftStorage.StateDB(), logger)
 
-	// Now create the real event manager with storage
 	eventManager := prov.newEventManager(appStorage, config.NodeID, logger)
 	cleanup = append(cleanup, func() error {
 		if eventManager != nil {
@@ -190,12 +192,10 @@ func NewWithConfig(config *domain.Config) *Manager {
 		return nil
 	})
 
-	// Update the raft adapter with the real event manager
 	if updater, ok := raftAdapter.(interface{ SetEventManager(ports.EventManager) }); ok {
 		updater.SetEventManager(eventManager)
 	}
 
-	// Set event manager on app storage
 	if s, ok := appStorage.(interface{ SetEventManager(ports.EventManager) }); ok {
 		s.SetEventManager(eventManager)
 	}
@@ -260,22 +260,24 @@ func NewWithConfig(config *domain.Config) *Manager {
 	}
 
 	manager := &Manager{
-		config:          config,
-		logger:          logger,
-		nodeID:          config.NodeID,
-		discovery:       discoveryManager,
-		raftAdapter:     raftAdapter,
-		storage:         appStorage,
-		eventManager:    eventManager,
-		nodeRegistry:    nodeRegistryManager,
-		queue:           queueAdapter,
-		engine:          engineAdapter,
-		loadBalancer:    loadBalancerManager,
-		clusterManager:  clusterManager,
-		circuitBreakers: circuitBreakerProvider,
-		rateLimiters:    rateLimiterProvider,
-		tracing:         tracingProvider,
-		transport:       appTransport,
+		config:           config,
+		logger:           logger,
+		nodeID:           config.NodeID,
+		discovery:        discoveryManager,
+		raftAdapter:      raftAdapter,
+		storage:          appStorage,
+		eventManager:     eventManager,
+		nodeRegistry:     nodeRegistryManager,
+		queue:            queueAdapter,
+		engine:           engineAdapter,
+		loadBalancer:     loadBalancerManager,
+		clusterManager:   clusterManager,
+		circuitBreakers:  circuitBreakerProvider,
+		rateLimiters:     rateLimiterProvider,
+		tracing:          tracingProvider,
+		transport:        appTransport,
+		readinessManager: readiness.NewManager(),
+		workflowIntakeOk: true,
 	}
 
 	if config.Observability.Enabled {
@@ -346,6 +348,7 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	if err != nil {
 		return fmt.Errorf("invalid bind port: %w", err)
 	}
+
 	if err := m.discovery.Start(m.ctx, host, p); err != nil {
 		return fmt.Errorf("failed to start discovery: %w", err)
 	}
@@ -355,23 +358,42 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 		return fmt.Errorf("discovery wait failed: %w", err)
 	}
 
-	if len(existingPeers) == 0 && !m.shouldBootstrap(existingPeers, &m.config.Raft) {
-
-		m.logger.Info("deferring bootstrap decision, will wait for other nodes")
-
-		extendedTimeout := m.config.Raft.DiscoveryTimeout * 3
-		existingPeers, err = m.waitForDiscovery(ctx, extendedTimeout)
-		if err != nil {
-			return fmt.Errorf("extended discovery wait failed: %w", err)
-		}
-
-		if len(existingPeers) == 0 {
-			m.logger.Warn("no peers found after extended wait, proceeding with bootstrap")
-		}
-	}
+	readiness.LogPeerMetadata(existingPeers, m.logger)
 
 	if err := m.raftAdapter.Start(ctx, existingPeers); err != nil {
 		return fmt.Errorf("failed to start raft node: %w", err)
+	}
+
+	m.raftAdapter.SetReadinessCallback(func(ready bool) {
+		if ready {
+			m.logger.Info("raft reported ready - transitioning to ready state")
+			m.readinessManager.SetState(readiness.StateReady)
+			m.resumeWorkflowIntake()
+		} else {
+			m.logger.Info("raft reported not ready - pausing workflow intake")
+			m.pauseWorkflowIntake()
+		}
+	})
+
+	m.pauseWorkflowIntake()
+
+	if len(existingPeers) == 0 {
+		m.logger.Info("starting as provisional leader - no existing peers found")
+		m.readinessManager.SetState(readiness.StateProvisional)
+
+		leaderCtx, leaderCancel := context.WithTimeout(m.ctx, m.config.Raft.DiscoveryTimeout)
+		defer leaderCancel()
+
+		if err := m.waitForSelfLeadership(leaderCtx); err != nil {
+			m.logger.Warn("timed out waiting for raft leadership", "error", err)
+		} else {
+			m.logger.Info("raft leadership established for provisional node")
+			m.readinessManager.SetState(readiness.StateReady)
+			m.resumeWorkflowIntake()
+		}
+	} else {
+		m.logger.Info("starting with existing peers", "peer_count", len(existingPeers))
+		m.readinessManager.SetState(readiness.StateDetecting)
 	}
 
 	if err := m.loadBalancer.Start(m.ctx); err != nil {
@@ -402,6 +424,8 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 		return err
 	}
 
+	go m.watchForSeniorPeers()
+
 	if len(existingPeers) > 0 {
 		joinCtx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
 		defer cancel()
@@ -410,7 +434,18 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 				continue
 			}
 			peerAddr := net.JoinHostPort(peer.Address, strconv.Itoa(peer.Port))
-			req := &ports.JoinRequest{NodeID: m.nodeID, Address: host, Port: grpcPort, Metadata: map[string]string{"cluster_id": m.config.ClusterID}}
+
+			bootMetadata := metadata.GetGlobalBootstrapMetadata()
+			joinMetadata := metadata.ExtendMetadata(map[string]string{
+				"cluster_id": m.config.ClusterID,
+			}, bootMetadata)
+
+			req := &ports.JoinRequest{
+				NodeID:   m.nodeID,
+				Address:  host,
+				Port:     grpcPort,
+				Metadata: joinMetadata,
+			}
 			resp, err := m.transport.SendJoinRequest(joinCtx, peerAddr, req)
 			if err != nil {
 				m.logger.Warn("join request failed", "peer", peerAddr, "error", err)
@@ -418,6 +453,8 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 			}
 			if resp != nil && resp.Accepted {
 				m.logger.Info("successfully joined cluster via RPC", "peer", peerAddr)
+				m.readinessManager.SetState(readiness.StateReady)
+				m.resumeWorkflowIntake()
 				break
 			} else {
 				m.logger.Warn("join request not accepted", "peer", peerAddr, "message", func() string {
@@ -478,6 +515,11 @@ func (m *Manager) StartWorkflow(trigger WorkflowTrigger) error {
 	if m.engine == nil {
 		return fmt.Errorf("engine not started")
 	}
+
+	if !m.isWorkflowIntakeAllowed() {
+		return fmt.Errorf("workflow intake paused during bootstrap handoff")
+	}
+
 	internalTrigger, err := trigger.toInternal()
 	if err != nil {
 		return err
@@ -730,72 +772,14 @@ func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) (
 
 	m.logger.Info("waiting for discovery to find peers", "timeout", timeout)
 
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	for {
-		select {
-		case <-timeoutCtx.Done():
-			peers := m.discovery.GetPeers()
-			m.logger.Info("discovery timeout reached", "peers_found", len(peers))
-			return peers, nil
-		case <-ticker.C:
-			peers := m.discovery.GetPeers()
-			if len(peers) > 0 {
-				m.logger.Info("discovery found peers", "peer_count", len(peers))
-				return peers, nil
-			}
-		}
-	}
-}
+	<-timeoutCtx.Done()
 
-// shouldBootstrap determines if this node should bootstrap based on configuration and peers
-func (m *Manager) shouldBootstrap(peers []ports.Peer, raftConfig *domain.RaftConfig) bool {
-
-	if raftConfig.ForceBootstrap {
-		m.logger.Info("force bootstrap enabled, will bootstrap")
-		return true
-	}
-
-	if len(peers) > 0 {
-		m.logger.Info("peers found, will attempt to join cluster", "peer_count", len(peers))
-		return false
-	}
-
-	expectedNodes := raftConfig.ExpectedNodes
-	if len(expectedNodes) == 0 {
-
-		expectedNodes = []string{m.nodeID}
-		m.logger.Info("no expected nodes configured, will bootstrap as single node", "node_id", m.nodeID)
-		return true
-	}
-
-	nodeInExpected := false
-	for _, nodeID := range expectedNodes {
-		if nodeID == m.nodeID {
-			nodeInExpected = true
-			break
-		}
-	}
-
-	if !nodeInExpected {
-		m.logger.Info("node not in expected nodes list, will not bootstrap", "node_id", m.nodeID, "expected_nodes", expectedNodes)
-		return false
-	}
-
-	sort.Strings(expectedNodes)
-	shouldBootstrap := expectedNodes[0] == m.nodeID
-
-	if shouldBootstrap {
-		m.logger.Info("lexicographic decision: will bootstrap as leader", "node_id", m.nodeID, "expected_nodes", expectedNodes)
-	} else {
-		m.logger.Info("lexicographic decision: will wait for other node to bootstrap", "node_id", m.nodeID, "lowest_expected", expectedNodes[0])
-	}
-
-	return shouldBootstrap
+	peers := m.discovery.GetPeers()
+	m.logger.Info("discovery phase complete", "peers_found", len(peers))
+	return peers, nil
 }
 
 type WorkflowTrigger struct {
@@ -1045,6 +1029,21 @@ func (m *Manager) GetHealth() ports.HealthStatus {
 		"peers":     len(info.Peers),
 	}
 
+	health.Details["readiness"] = map[string]interface{}{
+		"state":  m.readinessManager.GetState().String(),
+		"ready":  m.readinessManager.IsReady(),
+		"intake": m.isWorkflowIntakeAllowed(),
+	}
+
+	if m.raftAdapter != nil {
+		bootID, timestamp := m.raftAdapter.GetBootMetadata()
+		health.Details["bootstrap"] = map[string]interface{}{
+			"provisional": m.raftAdapter.IsProvisional(),
+			"boot_id":     bootID,
+			"timestamp":   timestamp,
+		}
+	}
+
 	return health
 }
 
@@ -1105,4 +1104,138 @@ func (m *Manager) GetCircuitBreakerProvider() ports.CircuitBreakerProvider {
 
 func (m *Manager) GetRateLimiterProvider() ports.RateLimiterProvider {
 	return m.rateLimiters
+}
+
+func (m *Manager) WaitUntilReady(ctx context.Context) error {
+	return m.readinessManager.WaitUntilReady(ctx)
+}
+
+func (m *Manager) IsReady() bool {
+	return m.readinessManager.IsReady()
+}
+
+func (m *Manager) GetReadinessState() string {
+	return m.readinessManager.GetState().String()
+}
+
+func (m *Manager) pauseWorkflowIntake() {
+	m.workflowIntakeMu.Lock()
+	defer m.workflowIntakeMu.Unlock()
+	m.workflowIntakeOk = false
+	m.logger.Info("workflow intake paused for bootstrap handoff")
+}
+
+func (m *Manager) resumeWorkflowIntake() {
+	m.workflowIntakeMu.Lock()
+	defer m.workflowIntakeMu.Unlock()
+	m.workflowIntakeOk = true
+	m.logger.Info("workflow intake resumed")
+}
+
+func (m *Manager) isWorkflowIntakeAllowed() bool {
+	m.workflowIntakeMu.RLock()
+	defer m.workflowIntakeMu.RUnlock()
+	return m.workflowIntakeOk
+}
+
+func (m *Manager) watchForSeniorPeers() {
+	if !m.raftAdapter.IsProvisional() {
+		m.logger.Debug("node not provisional, skipping senior peer detection")
+		return
+	}
+
+	m.logger.Info("starting senior peer detection for provisional leader")
+
+	discoveryEvents := m.discovery.Events()
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-m.ctx.Done():
+			return
+		case event, ok := <-discoveryEvents:
+			if !ok {
+				return
+			}
+			m.logger.Debug("discovery event received", "type", event.Type, "peer_id", event.Peer.ID)
+			m.handleDiscoveryEvent(event)
+		case <-ticker.C:
+			m.checkForSeniorPeers()
+		}
+	}
+}
+
+func (m *Manager) handleDiscoveryEvent(event ports.Event) {
+	if event.Type == ports.PeerAdded || event.Type == ports.PeerUpdated {
+		peers := m.discovery.GetPeers()
+		seniorPeer := readiness.FindSeniorPeer(m.nodeID, peers, m.logger)
+
+		if seniorPeer != nil {
+			m.logger.Info("discovered senior peer via event", "senior_peer", seniorPeer.ID)
+			m.initiateDemotion(*seniorPeer)
+		}
+	}
+}
+
+func (m *Manager) checkForSeniorPeers() {
+	if !m.raftAdapter.IsProvisional() {
+		return
+	}
+
+	peers := m.discovery.GetPeers()
+	seniorPeer := readiness.FindSeniorPeer(m.nodeID, peers, m.logger)
+
+	if seniorPeer != nil {
+		m.logger.Info("discovered senior peer via periodic check", "senior_peer", seniorPeer.ID)
+		m.initiateDemotion(*seniorPeer)
+	}
+}
+
+func (m *Manager) initiateDemotion(seniorPeer ports.Peer) {
+	if !m.raftAdapter.IsProvisional() {
+		m.logger.Debug("node no longer provisional, skipping demotion")
+		return
+	}
+
+	m.logger.Info("initiating demotion and join to senior peer",
+		"senior_peer_id", seniorPeer.ID,
+		"senior_address", seniorPeer.Address,
+		"senior_port", seniorPeer.Port)
+
+	m.readinessManager.SetState(readiness.StateDetecting)
+	m.pauseWorkflowIntake()
+
+	demotionCtx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
+	defer cancel()
+
+	if err := m.raftAdapter.DemoteAndJoin(demotionCtx, seniorPeer); err != nil {
+		m.logger.Error("demotion failed", "error", err, "senior_peer", seniorPeer.ID)
+		m.resumeWorkflowIntake()
+		return
+	}
+
+	m.logger.Info("demotion successful - node joined cluster", "senior_peer", seniorPeer.ID)
+	m.readinessManager.SetState(readiness.StateReady)
+	m.resumeWorkflowIntake()
+}
+
+func (m *Manager) waitForSelfLeadership(ctx context.Context) error {
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			isLeader := m.raftAdapter.IsLeader()
+			leaderAddr := m.raftAdapter.LeaderAddr()
+
+			if isLeader {
+				m.logger.Info("self-leadership established", "node_id", m.nodeID, "leader_addr", leaderAddr)
+				return nil
+			}
+		}
+	}
 }

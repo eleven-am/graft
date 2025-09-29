@@ -84,11 +84,10 @@ func (sm *StateManager) SaveWorkflowState(ctx context.Context, workflow *domain.
 		return sm.saveImmediate(ctx, workflow)
 	}
 
-	// Built-in heuristics: batch for high-change frequency, use incremental for large states
-	if stats.ChangeFrequency >= 5.0 { // ~5 changes/sec
+	if stats.ChangeFrequency >= 5.0 {
 		return sm.saveImmediate(ctx, workflow)
 	}
-	if stats.StateSize >= 10*1024 { // >= 10KB
+	if stats.StateSize >= 10*1024 {
 		return sm.saveIncremental(ctx, workflow)
 	}
 	return sm.saveImmediate(ctx, workflow)
@@ -126,7 +125,6 @@ func (sm *StateManager) UpdateWorkflowState(ctx context.Context, workflowID stri
 
 		workflow.Version++
 
-		// Always record a delta for potential incremental snapshots
 		delta := sm.createStateDelta(oldState, workflow)
 		sm.addDelta(workflowID, delta)
 
@@ -291,7 +289,7 @@ func (sm *StateManager) serializeWorkflow(workflow *domain.WorkflowInstance) ([]
 	}
 
 	stats := sm.getStatistics(workflow.ID)
-	if stats.StateSize >= 1024 { // Compress if >= 1KB
+	if stats.StateSize >= 1024 {
 		return sm.compressData(data)
 	}
 	return data, nil
@@ -401,10 +399,10 @@ func (sm *StateManager) createFullSnapshot(workflow *domain.WorkflowInstance) do
 		OriginalSize: int64(len(data)),
 		Metadata:     make(map[string]string),
 	}
-	// Always include checksum for integrity
+
 	snapshot.Checksum = checksum
 	stats := sm.getStatistics(workflow.ID)
-	if stats.StateSize >= 1024 { // Compress if >= 1KB
+	if stats.StateSize >= 1024 {
 		if compressed, err := sm.compressData(data); err == nil {
 			snapshot.CompressedData = compressed
 			snapshot.CompressedSize = int64(len(compressed))

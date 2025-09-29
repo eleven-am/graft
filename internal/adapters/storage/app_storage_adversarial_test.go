@@ -114,7 +114,6 @@ func TestAppStorage_PubSubEventDeliveryUnderStress(t *testing.T) {
 			}, nil
 		})
 
-	// Use EventManager as event hub
 	ev := events.NewManager(storage, "test-node", slog.New(slog.NewTextHandler(os.Stdout, nil)))
 	storage.SetEventManager(ev)
 	require.NoError(t, ev.Start(context.Background()))
@@ -220,8 +219,6 @@ func TestAppStorage_SubscriptionMemoryLeak(t *testing.T) {
 
 	storage := NewAppStorage(nil, db, slog.New(slog.NewTextHandler(os.Stdout, nil)))
 
-	// EventManager-based subscription; track via returned unsubscribe only
-
 	for i := 0; i < 100; i++ {
 		ev := events.NewManager(storage, "test-node", slog.New(slog.NewTextHandler(os.Stdout, nil)))
 		storage.SetEventManager(ev)
@@ -240,8 +237,6 @@ func TestAppStorage_SubscriptionMemoryLeak(t *testing.T) {
 
 	time.Sleep(10 * time.Millisecond)
 
-	// No direct access to internal lists; basic sanity check that unsub doesn't panic and channel closes.
-	// (EventManager owns subscription lifecycle.)
 }
 
 func TestAppStorage_CloseRaceCondition(t *testing.T) {

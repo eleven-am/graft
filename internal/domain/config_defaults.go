@@ -60,12 +60,7 @@ func DefaultRaftConfig() RaftConfig {
 		TrailingLogs:       10240,
 		LeaderLeaseTimeout: 500 * time.Millisecond,
 
-		DiscoveryTimeout:  10 * time.Second,
-		BootstrapExpected: 0,
-		ForceBootstrap:    false,
-		ExpectedNodes:     []string{},
-		RequireCluster:    false,
-		JoinTimeout:       30 * time.Second,
+		DiscoveryTimeout: 10 * time.Second,
 	}
 }
 
@@ -304,19 +299,6 @@ func (c *Config) Validate() error {
 
 	if c.Engine.MaxConcurrentWorkflows <= 0 {
 		return NewConfigError("engine.max_concurrent_workflows", ErrInvalidInput)
-	}
-
-	if len(c.Raft.ExpectedNodes) > 0 {
-		found := false
-		for _, node := range c.Raft.ExpectedNodes {
-			if node == c.NodeID {
-				found = true
-				break
-			}
-		}
-		if !found {
-			return NewConfigError("raft.expected_nodes", fmt.Errorf("node %s not found in ExpectedNodes list - this will cause bootstrap conflicts", c.NodeID))
-		}
 	}
 
 	return nil

@@ -35,7 +35,7 @@ func TestBroadcastCommand_DispatchesOnceViaStorage(t *testing.T) {
 	assert.NoError(t, err)
 
 	_ = mgr.BroadcastCommand(ctx, &dev)
-	// Simulate storage-published event
+
 	_ = mgr.PublishStorageEvents([]domain.Event{{Type: domain.EventPut, Key: "dev-cmd:deploy", NodeID: "node-1", Timestamp: time.Now()}})
 
 	deadline := time.Now().Add(500 * time.Millisecond)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"time"
 
@@ -126,6 +127,12 @@ func (m *MDNSProvider) announce() error {
 		m.server.Shutdown()
 	}
 
+	txtRecords := []string{fmt.Sprintf("id=%s", m.nodeInfo.ID)}
+
+	for key, value := range m.nodeInfo.Metadata {
+		txtRecords = append(txtRecords, fmt.Sprintf("%s=%s", key, value))
+	}
+
 	service, err := mdns.NewMDNSService(
 		m.nodeInfo.ID,
 		m.service,
@@ -133,7 +140,7 @@ func (m *MDNSProvider) announce() error {
 		m.host,
 		m.nodeInfo.Port,
 		[]net.IP{net.ParseIP(m.nodeInfo.Address)},
-		[]string{fmt.Sprintf("id=%s", m.nodeInfo.ID)},
+		txtRecords,
 	)
 	if err != nil {
 		return domain.NewDiscoveryError("mdns", "service_create", err)
@@ -239,14 +246,15 @@ func (m *MDNSProvider) processMDNSEntry(entry *mdns.ServiceEntry) (string, *port
 		return "", nil, false
 	}
 
+	peerMetadata := m.extractAllMetadata(entry)
+	peerMetadata["host"] = entry.Host
+	peerMetadata["name"] = entry.Name
+
 	peer := ports.Peer{
-		ID:      peerID,
-		Address: entry.AddrV4.String(),
-		Port:    entry.Port,
-		Metadata: map[string]string{
-			"host": entry.Host,
-			"name": entry.Name,
-		},
+		ID:       peerID,
+		Address:  entry.AddrV4.String(),
+		Port:     entry.Port,
+		Metadata: peerMetadata,
 	}
 
 	m.mu.Lock()
@@ -267,4 +275,19 @@ func (m *MDNSProvider) extractPeerID(entry *mdns.ServiceEntry) string {
 		}
 	}
 	return ""
+}
+
+func (m *MDNSProvider) extractAllMetadata(entry *mdns.ServiceEntry) map[string]string {
+	metadata := make(map[string]string)
+
+	for _, txt := range entry.InfoFields {
+		if parts := strings.SplitN(txt, "=", 2); len(parts) == 2 {
+			key, value := parts[0], parts[1]
+			if key != "id" {
+				metadata[key] = value
+			}
+		}
+	}
+
+	return metadata
 }

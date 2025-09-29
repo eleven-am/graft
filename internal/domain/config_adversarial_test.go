@@ -137,7 +137,6 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 				config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 				config.Raft.DiscoveryTimeout = -1 * time.Second
-				config.Raft.JoinTimeout = -1 * time.Second
 				return config
 			},
 
@@ -317,9 +316,6 @@ func TestDefaultConfig_SanityChecks(t *testing.T) {
 	assert.Nil(t, config.Logger, "Default Logger should be nil")
 
 	assert.Greater(t, config.Raft.DiscoveryTimeout, time.Duration(0), "DiscoveryTimeout should be positive")
-	assert.Greater(t, config.Raft.JoinTimeout, time.Duration(0), "JoinTimeout should be positive")
-	assert.GreaterOrEqual(t, config.Raft.BootstrapExpected, 0, "BootstrapExpected should be non-negative")
-	assert.NotNil(t, config.Raft.ExpectedNodes, "ExpectedNodes should not be nil")
 
 	assert.Greater(t, config.Resources.MaxConcurrentTotal, 0, "MaxConcurrentTotal should be positive")
 	assert.Greater(t, config.Resources.DefaultPerTypeLimit, 0, "DefaultPerTypeLimit should be positive")
@@ -423,8 +419,6 @@ func TestConfig_ConcurrentAccess(t *testing.T) {
 
 			_ = config.NodeID
 			_ = config.ClusterID
-			_ = config.Raft.ExpectedNodes
-
 			config.Validate()
 
 			config.WithMDNS("service", "domain", "host")

@@ -64,7 +64,6 @@ func (tp *Provider) Shutdown() error {
 	tp.mu.Lock()
 	tp.logger.Info("shutting down tracing provider")
 
-	// Get a copy of spans to finish them outside the lock
 	spansToFinish := make([]*spanImpl, 0, len(tp.spans))
 	for _, span := range tp.spans {
 		spansToFinish = append(spansToFinish, span)
@@ -75,7 +74,6 @@ func (tp *Provider) Shutdown() error {
 	tp.spans = make(map[string]*spanImpl)
 	tp.mu.Unlock()
 
-	// Finish spans outside the lock to avoid deadlock
 	for _, span := range spansToFinish {
 		span.Finish()
 	}

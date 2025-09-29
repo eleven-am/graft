@@ -19,6 +19,7 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/eleven-am/graft/internal/domain"
+	"github.com/eleven-am/graft/internal/helpers/metadata"
 	"github.com/eleven-am/graft/internal/ports"
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/raft"
@@ -33,6 +34,15 @@ type JoinResponse struct {
 	Success bool   `json:"success"`
 	Message string `json:"message"`
 }
+
+type ProvisionalState struct {
+	isProvisional     bool
+	bootID            string
+	launchTimestamp   int64
+	readinessCallback func(bool)
+}
+
+type DemotionCallback func(context.Context, ports.Peer) error
 
 type Config struct {
 	NodeID             string
@@ -75,19 +85,21 @@ func DefaultRaftConfig(nodeID, clusterID, bindAddr, dataDir string, clusterPolic
 }
 
 type Node struct {
-	raft         *raft.Raft
-	config       *Config
-	storage      *Storage
-	fsm          *FSM
-	transport    raft.Transport
-	logger       *slog.Logger
-	started      bool
-	stopped      bool
-	mu           sync.Mutex
-	eventManager ports.EventManager
-	observer     *raft.Observer
-	observerChan chan raft.Observation
-	appTransport ports.TransportPort
+	raft             *raft.Raft
+	config           *Config
+	storage          *Storage
+	fsm              *FSM
+	transport        raft.Transport
+	logger           *slog.Logger
+	started          bool
+	stopped          bool
+	mu               sync.RWMutex
+	eventManager     ports.EventManager
+	observer         *raft.Observer
+	observerChan     chan raft.Observation
+	appTransport     ports.TransportPort
+	provisionalState *ProvisionalState
+	demotionCallback DemotionCallback
 }
 
 func NewNode(config *Config, storage *Storage, eventManager ports.EventManager, appTransport ports.TransportPort, logger *slog.Logger) (*Node, error) {
@@ -101,6 +113,10 @@ func NewNode(config *Config, storage *Storage, eventManager ports.EventManager, 
 	observerChan := make(chan raft.Observation, 100)
 	observer := raft.NewObserver(observerChan, false, nil)
 
+	bootMetadata := metadata.GetGlobalBootstrapMetadata()
+	bootID := metadata.GetBootID(bootMetadata)
+	launchTimestamp := metadata.ExtractLaunchTimestamp(bootMetadata)
+
 	return &Node{
 		config:       config,
 		storage:      storage,
@@ -110,6 +126,11 @@ func NewNode(config *Config, storage *Storage, eventManager ports.EventManager, 
 		observer:     observer,
 		observerChan: observerChan,
 		appTransport: appTransport,
+		provisionalState: &ProvisionalState{
+			isProvisional:   false,
+			bootID:          bootID,
+			launchTimestamp: launchTimestamp,
+		},
 	}, nil
 }
 
@@ -160,7 +181,12 @@ func (r *Node) Start(ctx context.Context, existingPeers []ports.Peer) error {
 	}
 
 	if len(existingPeers) == 0 {
-		r.logger.Debug("no existing peers found, bootstrapping single-node cluster", "node_id", r.config.NodeID)
+		r.logger.Debug("no existing peers found, bootstrapping provisional single-node cluster", "node_id", r.config.NodeID)
+		r.provisionalState.isProvisional = true
+
+		bootID, launchTimestamp := r.GetBootMetadata()
+		r.logger.Info("starting as provisional leader", "boot_id", bootID, "launch_timestamp", launchTimestamp)
+
 		configuration := raft.Configuration{
 			Servers: []raft.Server{
 				{
@@ -179,7 +205,7 @@ func (r *Node) Start(ctx context.Context, existingPeers []ports.Peer) error {
 				return fmt.Errorf("failed to bootstrap cluster: %w", bootstrapErr)
 			}
 		} else {
-			r.logger.Info("successfully bootstrapped new single-node cluster")
+			r.logger.Info("successfully bootstrapped provisional single-node cluster")
 		}
 	} else {
 		r.logger.Info("found existing peers, will join cluster after startup", "peer_count", len(existingPeers))
@@ -256,6 +282,152 @@ func (r *Node) Apply(cmd domain.Command, timeout time.Duration) (*domain.Command
 
 func (r *Node) IsLeader() bool {
 	return r.raft.State() == raft.Leader
+}
+
+func (r *Node) IsProvisional() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.provisionalState == nil {
+		return false
+	}
+	return r.provisionalState.isProvisional
+}
+
+func (r *Node) GetBootMetadata() (bootID string, launchTimestamp int64) {
+
+	bootMetadata := metadata.GetGlobalBootstrapMetadata()
+	bootID = metadata.GetBootID(bootMetadata)
+	launchTimestamp = metadata.ExtractLaunchTimestamp(bootMetadata)
+	return bootID, launchTimestamp
+}
+
+func (r *Node) SetReadinessCallback(callback func(bool)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.provisionalState != nil {
+		r.provisionalState.readinessCallback = callback
+	}
+}
+
+func (r *Node) DemoteAndJoin(ctx context.Context, peer ports.Peer) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.raft == nil {
+		return fmt.Errorf("raft not initialized")
+	}
+
+	if r.provisionalState == nil || !r.provisionalState.isProvisional {
+		return fmt.Errorf("node is not in provisional state")
+	}
+
+	if !r.IsLeader() {
+		return fmt.Errorf("node is not currently leader")
+	}
+
+	r.logger.Info("beginning demotion and join process", "target_peer_id", peer.ID, "target_peer_address", peer.Address)
+
+	if r.provisionalState.readinessCallback != nil {
+		r.provisionalState.readinessCallback(false)
+	}
+
+	addr := peer.Address
+	if peer.Port > 0 {
+		if _, _, err := net.SplitHostPort(peer.Address); err != nil {
+			addr = fmt.Sprintf("%s:%d", peer.Address, peer.Port)
+		}
+	}
+
+	r.logger.Info("requesting to join established cluster", "peer_id", peer.ID, "peer_address", addr)
+
+	if err := r.joinViaPeer(peer.ID, addr); err != nil {
+		r.logger.Error("failed to join established cluster", "error", err)
+		return fmt.Errorf("failed to join cluster: %w", err)
+	}
+
+	r.logger.Info("shutting down provisional single-node cluster")
+
+	if err := r.raft.Shutdown().Error(); err != nil {
+		r.logger.Error("failed to shutdown provisional raft instance", "error", err)
+		return fmt.Errorf("failed to shutdown provisional raft: %w", err)
+	}
+
+	raftConfig := raft.DefaultConfig()
+	raftConfig.LocalID = raft.ServerID(r.config.NodeID)
+	raftConfig.HeartbeatTimeout = r.config.HeartbeatTimeout
+	raftConfig.ElectionTimeout = r.config.ElectionTimeout
+	raftConfig.CommitTimeout = r.config.CommitTimeout
+	raftConfig.MaxAppendEntries = r.config.MaxAppendEntries
+	raftConfig.ShutdownOnRemove = r.config.ShutdownOnRemove
+	raftConfig.TrailingLogs = r.config.TrailingLogs
+	raftConfig.SnapshotInterval = r.config.SnapshotInterval
+	raftConfig.SnapshotThreshold = r.config.SnapshotThreshold
+	raftConfig.LeaderLeaseTimeout = r.config.LeaderLeaseTimeout
+	raftConfig.Logger = slogToHcLogger(r.logger)
+
+	raftNode, err := raft.NewRaft(raftConfig, r.fsm, r.storage.LogStore(), r.storage.StableStore(), r.storage.SnapshotStore(), r.transport)
+	if err != nil {
+		r.logger.Error("failed to create new raft instance for join", "error", err)
+		return fmt.Errorf("failed to create raft instance for join: %w", err)
+	}
+
+	r.raft = raftNode
+	r.raft.RegisterObserver(r.observer)
+
+	waitCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	if err := r.WaitForLeader(waitCtx); err != nil {
+		r.logger.Warn("timed out waiting for leader after joining cluster, but continuing", "error", err)
+
+	}
+
+	r.provisionalState.isProvisional = false
+	r.logger.Info("successfully demoted and joined established cluster", "peer_id", peer.ID)
+
+	if r.provisionalState.readinessCallback != nil {
+		r.provisionalState.readinessCallback(true)
+	}
+
+	return nil
+}
+
+func (r *Node) joinViaPeer(peerID, peerAddr string) error {
+	if r.appTransport != nil {
+		host, portStr, err := net.SplitHostPort(peerAddr)
+		if err != nil {
+			return fmt.Errorf("invalid peer address format: %w", err)
+		}
+		port, err := strconv.Atoi(portStr)
+		if err != nil {
+			return fmt.Errorf("invalid port in peer address: %w", err)
+		}
+
+		bootMetadata := metadata.GetGlobalBootstrapMetadata()
+
+		request := &ports.JoinRequest{
+			NodeID:   r.config.NodeID,
+			Address:  host,
+			Port:     port,
+			Metadata: bootMetadata,
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		resp, err := r.appTransport.SendJoinRequest(ctx, peerAddr, request)
+		if err != nil {
+			return fmt.Errorf("failed to request join via RPC: %w", err)
+		}
+
+		if !resp.Accepted {
+			return fmt.Errorf("join request rejected: %s", resp.Message)
+		}
+
+		return nil
+	}
+
+	return fmt.Errorf("no transport available for join request")
 }
 
 func (r *Node) LeaderAddr() string {
@@ -549,9 +721,11 @@ func (r *Node) WaitForLeader(ctx context.Context) error {
 			return ctx.Err()
 		case <-ticker.C:
 			_, leaderID := r.raft.LeaderWithID()
-			if leaderID != "" {
+			if leaderID != "" && string(leaderID) != r.config.NodeID {
 				r.logger.Info("leader established", "leader_id", leaderID)
 				return nil
+			} else if leaderID != "" && string(leaderID) == r.config.NodeID {
+				r.logger.Debug("still waiting for external leader", "current_leader", leaderID, "our_id", r.config.NodeID)
 			}
 		}
 	}

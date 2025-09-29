@@ -44,10 +44,8 @@ func main() {
 		log.Fatalf("❌ Failed to start Graft: %v", err)
 	}
 
-	fmt.Println("✅ Graft cluster started successfully!")
+	fmt.Printf("✅ Graft cluster ready (state: %s)!\n", manager.GetReadinessState())
 	fmt.Println("📊 Cluster Info:", formatClusterInfo(manager.GetClusterInfo()))
-
-	time.Sleep(2 * time.Second)
 
 	fmt.Println("\n🔥 Running Document Processing Scenarios")
 	fmt.Println(strings.Repeat("=", 60))
@@ -146,14 +144,11 @@ func main() {
 		}
 
 		fmt.Printf("✅ Started workflow: %s\n", workflowID)
-
-		time.Sleep(500 * time.Millisecond)
 	}
 
 	fmt.Println("\n⏳ Workflows started. Completion will be handled automatically...")
 	fmt.Printf("🔄 Processing %d workflow(s). Waiting for completion callbacks...\n", len(scenarios))
 
-	// Wait up to 30 seconds for workflows to complete
 	timeout := time.After(30 * time.Second)
 	completed := make(chan struct{})
 
@@ -219,7 +214,6 @@ func monitorWorkflow(manager *graft.Manager, workflowID, scenarioName string, ti
 
 	statusChan, unsubscribe, err := manager.SubscribeToWorkflowState(workflowID)
 	if err != nil {
-
 		return monitorWorkflowPolling(manager, workflowID, scenarioName, timeout)
 	}
 	defer unsubscribe()

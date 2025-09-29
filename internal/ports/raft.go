@@ -73,6 +73,10 @@ type RaftNode interface {
 	Start(ctx context.Context, existingPeers []Peer) error
 	Apply(cmd domain.Command, timeout time.Duration) (*domain.CommandResult, error)
 	IsLeader() bool
+	IsProvisional() bool
+	GetBootMetadata() (bootID string, launchTimestamp int64)
+	SetReadinessCallback(callback func(bool))
+	DemoteAndJoin(ctx context.Context, peer Peer) error
 	LeaderAddr() string
 	AddVoter(nodeID string, address string) error
 	RemoveServer(nodeID string) error

@@ -338,7 +338,6 @@ config := &domain.Config{
     // ... other config ...
     Cluster: domain.ClusterConfig{
         Policy: domain.ClusterPolicyRestricted,
-        ExpectedNodes: []string{"node-1", "node-2", "node-3"},
     },
 }
 ```

@@ -97,7 +97,6 @@ func TestQueue_PromoteBlockedToReady(t *testing.T) {
 		Sequence:    1,
 	}
 
-	// Promotion keeps the same sequence number, just moves from blocked to ready
 	mockStorage.On("BatchWrite", mock.MatchedBy(func(ops []ports.WriteOp) bool {
 		return len(ops) == 2 &&
 			ops[0].Type == ports.OpDelete &&
@@ -133,10 +132,9 @@ func TestQueue_GetItemsWithPrefix_ChecksBothQueues(t *testing.T) {
 	}
 	blockedBytes, _ := blockedItem.ToBytes()
 
-	// First it tries ready for sequence 1 (exists)
 	mockStorage.On("Get", "queue:test:ready:00000000000000000001").
 		Return(readyBytes, int64(0), true, nil).Once()
-	// Then it tries ready for sequence 2 (doesn't exist), then blocked for sequence 2 (exists)
+
 	mockStorage.On("Get", "queue:test:ready:00000000000000000002").
 		Return([]byte{}, int64(0), false, nil).Once()
 	mockStorage.On("Get", "queue:test:blocked:00000000000000000002").
@@ -176,7 +174,7 @@ func TestQueue_HasItemsWithPrefix_ChecksBothQueues(t *testing.T) {
 				q.updateWorkflowIndex(workflowData, 1, true)
 			},
 			setupMocks: func(mockStorage *mocks.MockStoragePort) {
-				// Will find workflow in index
+
 			},
 			prefix:         `"workflow_id":"wf-ready"`,
 			expectedExists: true,
@@ -188,7 +186,7 @@ func TestQueue_HasItemsWithPrefix_ChecksBothQueues(t *testing.T) {
 				q.updateWorkflowIndex(workflowData, 1, true)
 			},
 			setupMocks: func(mockStorage *mocks.MockStoragePort) {
-				// Will find workflow in index
+
 			},
 			prefix:         `"workflow_id":"wf-blocked"`,
 			expectedExists: true,
@@ -196,10 +194,10 @@ func TestQueue_HasItemsWithPrefix_ChecksBothQueues(t *testing.T) {
 		{
 			name: "no items for workflow",
 			setupWorkflow: func(q *Queue) {
-				// No workflow items - hasWorkflowItems returns false immediately
+
 			},
 			setupMocks: func(mockStorage *mocks.MockStoragePort) {
-				// No mock setup needed - hasWorkflowItems returns false early
+
 			},
 			prefix:         `"workflow_id":"wf-none"`,
 			expectedExists: false,
@@ -232,7 +230,7 @@ func TestQueue_Size_IncludesBothQueues(t *testing.T) {
 
 	size, err := queue.Size()
 	assert.NoError(t, err)
-	assert.Equal(t, 8, size) // 5 ready + 3 blocked
+	assert.Equal(t, 8, size)
 
 	mockStorage.AssertExpectations(t)
 }
@@ -273,7 +271,6 @@ func TestQueue_BlockedItemPromotion_Integration(t *testing.T) {
 
 	workflowData := []byte(`{"workflow_id":"wf-promotion","data":"test"}`)
 
-	// Fix sequence key for EnqueueBlocked
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
 	mockStorage.On("Put", "queue:test:blocked:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
 
@@ -290,7 +287,6 @@ func TestQueue_BlockedItemPromotion_Integration(t *testing.T) {
 		Sequence:    1,
 	}
 
-	// Promotion doesn't need new sequence, just moves the item
 	mockStorage.On("BatchWrite", mock.MatchedBy(func(ops []ports.WriteOp) bool {
 		return len(ops) == 2 &&
 			ops[0].Type == ports.OpDelete &&
@@ -324,8 +320,6 @@ func TestQueue_SequenceGenerationConsistency(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
 	queue := NewQueue("test", mockStorage, nil, nil)
 
-	// Both ready and blocked items should use consistent sequence generation
-	// Verify through actual enqueue operations
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
 	mockStorage.On("Put", "queue:test:ready:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
 

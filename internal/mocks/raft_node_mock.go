@@ -182,6 +182,108 @@ func (_c *MockRaftNode_Apply_Call) RunAndReturn(run func(domain.Command, time.Du
 	return _c
 }
 
+// DemoteAndJoin provides a mock function with given fields: ctx, peer
+func (_m *MockRaftNode) DemoteAndJoin(ctx context.Context, peer ports.Peer) error {
+	ret := _m.Called(ctx, peer)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DemoteAndJoin")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, ports.Peer) error); ok {
+		r0 = rf(ctx, peer)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockRaftNode_DemoteAndJoin_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DemoteAndJoin'
+type MockRaftNode_DemoteAndJoin_Call struct {
+	*mock.Call
+}
+
+// DemoteAndJoin is a helper method to define mock.On call
+//   - ctx context.Context
+//   - peer ports.Peer
+func (_e *MockRaftNode_Expecter) DemoteAndJoin(ctx interface{}, peer interface{}) *MockRaftNode_DemoteAndJoin_Call {
+	return &MockRaftNode_DemoteAndJoin_Call{Call: _e.mock.On("DemoteAndJoin", ctx, peer)}
+}
+
+func (_c *MockRaftNode_DemoteAndJoin_Call) Run(run func(ctx context.Context, peer ports.Peer)) *MockRaftNode_DemoteAndJoin_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(ports.Peer))
+	})
+	return _c
+}
+
+func (_c *MockRaftNode_DemoteAndJoin_Call) Return(_a0 error) *MockRaftNode_DemoteAndJoin_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockRaftNode_DemoteAndJoin_Call) RunAndReturn(run func(context.Context, ports.Peer) error) *MockRaftNode_DemoteAndJoin_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetBootMetadata provides a mock function with no fields
+func (_m *MockRaftNode) GetBootMetadata() (string, int64) {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetBootMetadata")
+	}
+
+	var r0 string
+	var r1 int64
+	if rf, ok := ret.Get(0).(func() (string, int64)); ok {
+		return rf()
+	}
+	if rf, ok := ret.Get(0).(func() string); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func() int64); ok {
+		r1 = rf()
+	} else {
+		r1 = ret.Get(1).(int64)
+	}
+
+	return r0, r1
+}
+
+// MockRaftNode_GetBootMetadata_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetBootMetadata'
+type MockRaftNode_GetBootMetadata_Call struct {
+	*mock.Call
+}
+
+// GetBootMetadata is a helper method to define mock.On call
+func (_e *MockRaftNode_Expecter) GetBootMetadata() *MockRaftNode_GetBootMetadata_Call {
+	return &MockRaftNode_GetBootMetadata_Call{Call: _e.mock.On("GetBootMetadata")}
+}
+
+func (_c *MockRaftNode_GetBootMetadata_Call) Run(run func()) *MockRaftNode_GetBootMetadata_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockRaftNode_GetBootMetadata_Call) Return(bootID string, launchTimestamp int64) *MockRaftNode_GetBootMetadata_Call {
+	_c.Call.Return(bootID, launchTimestamp)
+	return _c
+}
+
+func (_c *MockRaftNode_GetBootMetadata_Call) RunAndReturn(run func() (string, int64)) *MockRaftNode_GetBootMetadata_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetClusterInfo provides a mock function with no fields
 func (_m *MockRaftNode) GetClusterInfo() ports.ClusterInfo {
 	ret := _m.Called()
@@ -407,6 +509,51 @@ func (_c *MockRaftNode_IsLeader_Call) RunAndReturn(run func() bool) *MockRaftNod
 	return _c
 }
 
+// IsProvisional provides a mock function with no fields
+func (_m *MockRaftNode) IsProvisional() bool {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for IsProvisional")
+	}
+
+	var r0 bool
+	if rf, ok := ret.Get(0).(func() bool); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(bool)
+	}
+
+	return r0
+}
+
+// MockRaftNode_IsProvisional_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'IsProvisional'
+type MockRaftNode_IsProvisional_Call struct {
+	*mock.Call
+}
+
+// IsProvisional is a helper method to define mock.On call
+func (_e *MockRaftNode_Expecter) IsProvisional() *MockRaftNode_IsProvisional_Call {
+	return &MockRaftNode_IsProvisional_Call{Call: _e.mock.On("IsProvisional")}
+}
+
+func (_c *MockRaftNode_IsProvisional_Call) Run(run func()) *MockRaftNode_IsProvisional_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockRaftNode_IsProvisional_Call) Return(_a0 bool) *MockRaftNode_IsProvisional_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockRaftNode_IsProvisional_Call) RunAndReturn(run func() bool) *MockRaftNode_IsProvisional_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // LeaderAddr provides a mock function with no fields
 func (_m *MockRaftNode) LeaderAddr() string {
 	ret := _m.Called()
@@ -553,6 +700,39 @@ func (_c *MockRaftNode_RemoveServer_Call) Return(_a0 error) *MockRaftNode_Remove
 
 func (_c *MockRaftNode_RemoveServer_Call) RunAndReturn(run func(string) error) *MockRaftNode_RemoveServer_Call {
 	_c.Call.Return(run)
+	return _c
+}
+
+// SetReadinessCallback provides a mock function with given fields: callback
+func (_m *MockRaftNode) SetReadinessCallback(callback func(bool)) {
+	_m.Called(callback)
+}
+
+// MockRaftNode_SetReadinessCallback_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetReadinessCallback'
+type MockRaftNode_SetReadinessCallback_Call struct {
+	*mock.Call
+}
+
+// SetReadinessCallback is a helper method to define mock.On call
+//   - callback func(bool)
+func (_e *MockRaftNode_Expecter) SetReadinessCallback(callback interface{}) *MockRaftNode_SetReadinessCallback_Call {
+	return &MockRaftNode_SetReadinessCallback_Call{Call: _e.mock.On("SetReadinessCallback", callback)}
+}
+
+func (_c *MockRaftNode_SetReadinessCallback_Call) Run(run func(callback func(bool))) *MockRaftNode_SetReadinessCallback_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(func(bool)))
+	})
+	return _c
+}
+
+func (_c *MockRaftNode_SetReadinessCallback_Call) Return() *MockRaftNode_SetReadinessCallback_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockRaftNode_SetReadinessCallback_Call) RunAndReturn(run func(func(bool))) *MockRaftNode_SetReadinessCallback_Call {
+	_c.Run(run)
 	return _c
 }
 

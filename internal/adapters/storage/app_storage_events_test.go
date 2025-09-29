@@ -29,12 +29,10 @@ func TestAppStorage_PublishToEventManager(t *testing.T) {
 	require.NoError(t, ev.Start(context.Background()))
 	defer ev.Stop()
 
-	// Subscribe to workflow: prefix
 	ch, unsub, err := ev.SubscribeToChannel("workflow:")
 	require.NoError(t, err)
 	defer unsub()
 
-	// Mock Raft Apply to return a single event
 	key := domain.WorkflowStateKey("testwf")
 	mockRaft.On("Apply", mock.Anything, mock.Anything).Return(&domain.CommandResult{
 		Success: true,
@@ -47,7 +45,6 @@ func TestAppStorage_PublishToEventManager(t *testing.T) {
 		}},
 	}, nil)
 
-	// Perform Put (leader path: publishes immediately)
 	require.NoError(t, storage.Put(key, []byte("v"), 1))
 
 	select {
@@ -64,7 +61,7 @@ func TestAppStorage_FollowerPublishesAfterTimeout(t *testing.T) {
 	defer cleanup()
 
 	mockRaft := mocks.NewMockRaftNode(t)
-	// Simulate follower
+
 	mockRaft.On("IsLeader").Return(false).Maybe()
 
 	storage := NewAppStorage(mockRaft, db, slog.New(slog.NewTextHandler(os.Stdout, nil)))
@@ -79,8 +76,6 @@ func TestAppStorage_FollowerPublishesAfterTimeout(t *testing.T) {
 	require.NoError(t, err)
 	defer unsub2()
 
-	// Raft Apply returns an event but DB won't reflect version (no real FSM),
-	// so waitForVersionsAndBroadcast will time out (~200ms) before publishing
 	mockRaft.On("Apply", mock.Anything, mock.Anything).Return(&domain.CommandResult{
 		Success: true,
 		Events: []domain.Event{{
@@ -98,7 +93,7 @@ func TestAppStorage_FollowerPublishesAfterTimeout(t *testing.T) {
 	select {
 	case e := <-ch2:
 		elapsed := time.Since(start)
-		// Expect publish after ~200ms timeout; allow some slack
+
 		if elapsed < 180*time.Millisecond {
 			t.Fatalf("event published too early: %v", elapsed)
 		}

@@ -5,6 +5,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eleven-am/graft/internal/helpers/metadata"
 	"github.com/eleven-am/graft/internal/ports"
 	"log/slog"
 )
@@ -66,13 +67,16 @@ func (m *Manager) Start(ctx context.Context, address string, port int) error {
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.Unlock()
 
+	bootMetadata := metadata.GetGlobalBootstrapMetadata()
+	nodeMetadata := metadata.ExtendMetadata(map[string]string{
+		"version": "1.0.0",
+	}, bootMetadata)
+
 	node := ports.NodeInfo{
-		ID:      m.NodeID,
-		Address: address,
-		Port:    port,
-		Metadata: map[string]string{
-			"version": "1.0.0",
-		},
+		ID:       m.NodeID,
+		Address:  address,
+		Port:     port,
+		Metadata: nodeMetadata,
 	}
 
 	for _, provider := range m.providers {
@@ -193,4 +197,8 @@ func (m *Manager) updateSnapshots() {
 	}
 
 	m.peers = allPeers
+}
+
+func (m *Manager) Events() <-chan ports.Event {
+	return m.events
 }

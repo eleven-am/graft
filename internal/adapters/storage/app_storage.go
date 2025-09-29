@@ -390,7 +390,7 @@ func (s *AppStorage) GetVersion(key string) (int64, error) {
 // IncrementVersion deprecated and removed. Use Put with expected version or higher-level managers.
 
 func (s *AppStorage) ExpireAt(key string, expireTime time.Time) error {
-	// Prefer Raft path for cluster consistency: re-PUT current value with TTL
+
 	if s.raftNode != nil {
 		value, version, exists, err := s.Get(key)
 		if err != nil {
@@ -406,7 +406,6 @@ func (s *AppStorage) ExpireAt(key string, expireTime time.Time) error {
 		return s.PutWithTTL(key, value, version, ttl)
 	}
 
-	// Fallback to direct DB write if Raft is not active
 	ttlKey := fmt.Sprintf("ttl:%s", key)
 	ttlBytes, _ := json.Marshal(expireTime)
 	return s.db.Update(func(txn *badger.Txn) error { return txn.Set([]byte(ttlKey), ttlBytes) })

@@ -36,8 +36,6 @@ func main() {
 		log.Fatalf("failed to start Graft: %v", err)
 	}
 
-	time.Sleep(2 * time.Second)
-
 	scenarios := []struct {
 		name   string
 		doc    WorkflowDocument
@@ -91,7 +89,6 @@ func main() {
 		if err := manager.StartWorkflow(trigger); err != nil {
 			log.Fatalf("failed to start workflow %s: %v", workflowID, err)
 		}
-		time.Sleep(200 * time.Millisecond)
 	}
 
 	select {

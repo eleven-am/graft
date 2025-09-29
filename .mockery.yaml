@@ -24,6 +24,8 @@ packages:
       RaftNode:
       QueuePort:
       StateManagerPort:
+      Provider:
+      EnginePort:
   github.com/hashicorp/raft:
     config:
       dir: "./internal/mocks"

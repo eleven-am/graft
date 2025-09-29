@@ -103,7 +103,6 @@ func (f *FSM) applyPut(cmd domain.Command) *domain.CommandResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	// Read authoritative version from DB
 	var currentVersion int64
 	if err := f.db.View(func(txn *badger.Txn) error {
 		v, err := f.getAuthoritativeVersion(txn, cmd.Key)
@@ -195,7 +194,7 @@ func (f *FSM) applyCAS(cmd domain.Command) *domain.CommandResult {
 		if err != nil {
 			if err == badger.ErrKeyNotFound {
 				currentValue = nil
-				// version will remain 0
+
 				return nil
 			}
 			return err

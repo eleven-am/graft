@@ -69,7 +69,7 @@ func (b *ExponentialBackoff) Reset() {
 
 func NewEngine(config domain.EngineConfig, nodeID string, nodeRegistry ports.NodeRegistryPort, queue ports.QueuePort, storage ports.StoragePort, eventManager ports.EventManager, loadBalancer ports.LoadBalancer, logger *slog.Logger) *Engine {
 	var stateManager ports.StateManagerPort
-	// Use the unified StateManager (optimized implementation) for all configurations.
+
 	stateManager = NewStateManager(storage, logger)
 
 	metrics := domain.NewExecutionMetrics()
@@ -383,7 +383,7 @@ func (e *Engine) processNextItem() (bool, error) {
 			"claim_id", claimID,
 			"error", err)
 	} else {
-		// Check for workflow completion after successfully completing the queue item
+
 		if completionErr := e.executor.CheckWorkflowCompletion(e.ctx, workItem.WorkflowID); completionErr != nil {
 			e.logger.Error("failed to check workflow completion",
 				"workflow_id", workItem.WorkflowID,

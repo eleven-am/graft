@@ -169,7 +169,7 @@ func (n *ContentProcessorNode) GetName() string {
 }
 
 func (n *ContentProcessorNode) CanStart(ctx context.Context, doc Document, config ProcessingConfig) bool {
-	// Don't process if workflow is already complete
+
 	if doc.Status == "completed" {
 		return false
 	}
@@ -630,5 +630,5 @@ func repairDocument(content string) string {
 }
 
 func sendNotification(doc Document) {
-	// Document processing complete notification placeholder
+
 }

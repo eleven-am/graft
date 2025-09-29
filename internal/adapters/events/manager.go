@@ -102,7 +102,6 @@ func (m *Manager) Start(ctx context.Context) error {
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.running = true
 
-	// Start cleanup goroutine for processed events
 	go m.cleanupProcessedEvents()
 
 	return nil
