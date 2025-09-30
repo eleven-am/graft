@@ -39,7 +39,7 @@ type Node struct {
 }
 
 func NewNode(cfg *Config, storage *Storage, eventManager ports.EventManager, appTransport ports.TransportPort, logger *slog.Logger) (ports.RaftNode, error) {
-	_ = appTransport // application transport integration handled at higher layers for now
+	_ = appTransport
 	if cfg == nil {
 		return nil, errors.New("raft2: config is required")
 	}

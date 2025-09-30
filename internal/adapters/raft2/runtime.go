@@ -197,7 +197,6 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 
 	go r.observe(runtimeCtx)
 
-	// Update leadership info to provisional leader until observations come in.
 	stats := instance.Stats()
 	term := uint64(0)
 	if termStr, ok := stats["current_term"]; ok {

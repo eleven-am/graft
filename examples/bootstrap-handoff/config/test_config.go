@@ -96,7 +96,7 @@ func (nc NodeConfig) CreateManager(logger *slog.Logger) *graft.Manager {
 	case "mdns":
 		manager.MDNS(nc.Discovery.Service, nc.Discovery.Domain)
 	case "inmemory":
-		// Provider is injected at launch time by the harness.
+
 	default:
 		logger.Warn("unknown discovery type, defaulting to mdns", "type", nc.Discovery.Type)
 		manager.MDNS(nc.Discovery.Service, nc.Discovery.Domain)

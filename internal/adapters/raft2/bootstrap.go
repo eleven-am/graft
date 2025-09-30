@@ -91,7 +91,6 @@ func (c *Coordinator) Start(ctx context.Context) error {
 
 	go c.run(runCtx, done)
 
-	// Emit an initial provisional event to signal startup.
 	c.emit(ports.BootstrapEvent{
 		Type:      ports.BootstrapEventProvisional,
 		Timestamp: c.config.Clock(),
