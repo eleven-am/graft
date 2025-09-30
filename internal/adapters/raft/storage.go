@@ -1,4 +1,4 @@
-package raft2
+package raft
 
 import (
 	"errors"
@@ -33,11 +33,11 @@ func NewStorage(cfg StorageConfig, logger *slog.Logger) (*Storage, error) {
 	}
 
 	if cfg.DataDir == "" {
-		return nil, fmt.Errorf("raft2: storage requires data directory")
+		return nil, fmt.Errorf("raft: storage requires data directory")
 	}
 
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
-		return nil, fmt.Errorf("raft2: create data dir %s: %w", cfg.DataDir, err)
+		return nil, fmt.Errorf("raft: create data dir %s: %w", cfg.DataDir, err)
 	}
 
 	logPath := filepath.Join(cfg.DataDir, "raft-log")
@@ -45,30 +45,30 @@ func NewStorage(cfg StorageConfig, logger *slog.Logger) (*Storage, error) {
 	statePath := filepath.Join(cfg.DataDir, "state")
 
 	if err := os.MkdirAll(snapshotPath, 0o755); err != nil {
-		return nil, fmt.Errorf("raft2: create snapshot dir %s: %w", snapshotPath, err)
+		return nil, fmt.Errorf("raft: create snapshot dir %s: %w", snapshotPath, err)
 	}
 
 	logOpts := badger.DefaultOptions(logPath)
-	logOpts.Logger = &badgerAdapter{logger: logger.With("component", "raft2.badger-log")}
+	logOpts.Logger = &badgerAdapter{logger: logger.With("component", "raft.badger-log")}
 
 	store, err := raftbadger.New(raftbadger.Config{DataPath: logPath}, &logOpts)
 	if err != nil {
-		return nil, fmt.Errorf("raft2: open raft log store: %w", err)
+		return nil, fmt.Errorf("raft: open raft log store: %w", err)
 	}
 
 	snapshotStore, err := raft.NewFileSnapshotStore(snapshotPath, 3, os.Stderr)
 	if err != nil {
 		_ = store.Close()
-		return nil, fmt.Errorf("raft2: open snapshot store: %w", err)
+		return nil, fmt.Errorf("raft: open snapshot store: %w", err)
 	}
 
 	stateOpts := badger.DefaultOptions(statePath)
-	stateOpts.Logger = &badgerAdapter{logger: logger.With("component", "raft2.badger-state")}
+	stateOpts.Logger = &badgerAdapter{logger: logger.With("component", "raft.badger-state")}
 
 	stateDB, err := badger.Open(stateOpts)
 	if err != nil {
 		_ = store.Close()
-		return nil, fmt.Errorf("raft2: open state db: %w", err)
+		return nil, fmt.Errorf("raft: open state db: %w", err)
 	}
 
 	return &Storage{

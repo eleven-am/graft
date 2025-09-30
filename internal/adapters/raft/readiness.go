@@ -1,4 +1,4 @@
-package raft2
+package raft
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 )
 
 // Readiness provides a concurrency-safe implementation of ports.ReadinessGate
-// used by the raft2 controller pipeline. It exposes a simple state machine and
+// used by the raft controller pipeline. It exposes a simple state machine and
 // coordinate waiters via a channel that is closed when the system transitions
 // into the ready state.
 type Readiness struct {

@@ -1,4 +1,4 @@
-package raft2
+package raft
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 	"github.com/eleven-am/graft/internal/domain"
 )
 
-// BadgerStorageProvider provisions persistent storage for raft2 nodes.
+// BadgerStorageProvider provisions persistent storage for raft nodes.
 type BadgerStorageProvider struct {
 	Logger *slog.Logger
 }
@@ -24,12 +24,12 @@ func (p *BadgerStorageProvider) Create(_ context.Context, opts domain.RaftContro
 
 	dataDir := opts.DataDir
 	if dataDir == "" {
-		return nil, fmt.Errorf("raft2: data directory not provided")
+		return nil, fmt.Errorf("raft: data directory not provided")
 	}
 
-	storage, err := NewStorage(StorageConfig{DataDir: filepath.Join(dataDir, "raft2")}, logger)
+	storage, err := NewStorage(StorageConfig{DataDir: filepath.Join(dataDir, "raft")}, logger)
 	if err != nil {
-		return nil, fmt.Errorf("raft2: storage init failed: %w", err)
+		return nil, fmt.Errorf("raft: storage init failed: %w", err)
 	}
 
 	return storage.resources(), nil

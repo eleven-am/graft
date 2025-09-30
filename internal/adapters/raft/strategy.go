@@ -1,4 +1,4 @@
-package raft2
+package raft
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 
 // PollingStrategy observes leadership information from the runtime and emits
 // coarse bootstrap events when transitions occur. It provides the baseline
-// coordination loop for the new raft2 controller; more sophisticated discovery
+// coordination loop for the new raft controller; more sophisticated discovery
 // and negotiation can build on top of this mechanism.
 type PollingStrategy struct {
 	runtime  NodeRuntime
@@ -33,7 +33,7 @@ func NewPollingStrategy(runtime NodeRuntime, interval time.Duration, logger *slo
 
 	return &PollingStrategy{
 		runtime:  runtime,
-		logger:   logger.With("component", "raft2.strategy"),
+		logger:   logger.With("component", "raft.strategy"),
 		interval: interval,
 		clock:    time.Now,
 	}
@@ -42,7 +42,7 @@ func NewPollingStrategy(runtime NodeRuntime, interval time.Duration, logger *slo
 // Run implements the Strategy interface.
 func (s *PollingStrategy) Run(ctx context.Context, emitter EventEmitter) error {
 	if s.runtime == nil {
-		return errors.New("raft2: polling strategy requires runtime")
+		return errors.New("raft: polling strategy requires runtime")
 	}
 
 	ticker := time.NewTicker(s.interval)

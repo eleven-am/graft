@@ -9,7 +9,7 @@ type RaftPeerSpec struct {
 	Metadata map[string]string
 }
 
-// RaftRuntimeConfig captures timing and replication parameters for the raft2
+// RaftRuntimeConfig captures timing and replication parameters for the raft
 // controller runtime. These values are intentionally a subset of the legacy
 // raft adapter configuration to keep the new subsystem focused on essential
 // behaviour first.
@@ -30,7 +30,7 @@ type RaftRuntimeConfig struct {
 }
 
 // RaftControllerOptions captures the configuration required to start a raft
-// controller instance within the new raft2 subsystem.
+// controller instance within the new raft subsystem.
 type RaftControllerOptions struct {
 	NodeID            string
 	BindAddress       string

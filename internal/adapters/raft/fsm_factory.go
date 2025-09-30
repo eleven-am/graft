@@ -1,4 +1,4 @@
-package raft2
+package raft
 
 import (
 	"context"
@@ -12,20 +12,20 @@ import (
 )
 
 // FSMFactory provides raft FSM instances compatible with the domain command
-// model for the raft2 runtime.
+// model for the raft runtime.
 type FSMFactory struct {
 	EventManager ports.EventManager
 	Logger       *slog.Logger
 }
 
-// Create implements the raft2 FSMFactory interface.
+// Create implements the raft FSMFactory interface.
 func (f *FSMFactory) Create(_ context.Context, opts domain.RaftControllerOptions, storage *StorageResources) (raft.FSM, error) {
 	if storage == nil {
-		return nil, errors.New("raft2: storage resources required for FSM creation")
+		return nil, errors.New("raft: storage resources required for FSM creation")
 	}
 
 	if storage.StateDB == nil {
-		return nil, errors.New("raft2: storage missing state database")
+		return nil, errors.New("raft: storage missing state database")
 	}
 
 	logger := f.Logger

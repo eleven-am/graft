@@ -21,7 +21,7 @@ import (
 	"github.com/eleven-am/graft/internal/adapters/node_registry"
 	"github.com/eleven-am/graft/internal/adapters/observability"
 	"github.com/eleven-am/graft/internal/adapters/queue"
-	"github.com/eleven-am/graft/internal/adapters/raft2"
+	"github.com/eleven-am/graft/internal/adapters/raft"
 	"github.com/eleven-am/graft/internal/adapters/rate_limiter"
 	"github.com/eleven-am/graft/internal/adapters/storage"
 	"github.com/eleven-am/graft/internal/adapters/tracing"
@@ -64,8 +64,8 @@ type Manager struct {
 
 type managerProviders struct {
 	newEventManager   func(ports.StoragePort, string, *slog.Logger) ports.EventManager
-	newRaftStorage    func(dataDir string, logger *slog.Logger) (*raft2.Storage, error)
-	newRaftNode       func(cfg *raft2.Config, storage *raft2.Storage, events ports.EventManager, appTransport ports.TransportPort, logger *slog.Logger) (ports.RaftNode, error)
+	newRaftStorage    func(dataDir string, logger *slog.Logger) (*raft.Storage, error)
+	newRaftNode       func(cfg *raft.Config, storage *raft.Storage, events ports.EventManager, appTransport ports.TransportPort, logger *slog.Logger) (ports.RaftNode, error)
 	newAppStorage     func(raft ports.RaftNode, db *badger.DB, logger *slog.Logger) ports.StoragePort
 	newNodeRegistry   func(*slog.Logger) ports.NodeRegistryPort
 	newClusterManager func(ports.RaftNode, int, *slog.Logger) ports.ClusterManager
@@ -80,11 +80,11 @@ func defaultProviders() managerProviders {
 		newEventManager: func(storage ports.StoragePort, nodeID string, l *slog.Logger) ports.EventManager {
 			return events.NewManager(storage, nodeID, l)
 		},
-		newRaftStorage: func(dataDir string, l *slog.Logger) (*raft2.Storage, error) {
-			return raft2.NewStorage(raft2.StorageConfig{DataDir: filepath.Join(dataDir, "raft2")}, l)
+		newRaftStorage: func(dataDir string, l *slog.Logger) (*raft.Storage, error) {
+			return raft.NewStorage(raft.StorageConfig{DataDir: filepath.Join(dataDir, "raft")}, l)
 		},
-		newRaftNode: func(cfg *raft2.Config, st *raft2.Storage, ev ports.EventManager, t ports.TransportPort, l *slog.Logger) (ports.RaftNode, error) {
-			return raft2.NewNode(cfg, st, ev, t, l)
+		newRaftNode: func(cfg *raft.Config, st *raft.Storage, ev ports.EventManager, t ports.TransportPort, l *slog.Logger) (ports.RaftNode, error) {
+			return raft.NewNode(cfg, st, ev, t, l)
 		},
 		newAppStorage: func(r ports.RaftNode, db *badger.DB, l *slog.Logger) ports.StoragePort {
 			return storage.NewAppStorage(r, db, l)
@@ -164,7 +164,7 @@ func NewWithConfig(config *domain.Config) *Manager {
 
 	discoveryManager := createDiscoveryManager(config, logger)
 
-	raftConfig := raft2.DefaultRaftConfig(config.NodeID, config.ClusterID, config.BindAddr, config.DataDir, config.Cluster.Policy)
+	raftConfig := raft.DefaultRaftConfig(config.NodeID, config.ClusterID, config.BindAddr, config.DataDir, config.Cluster.Policy)
 
 	prov := defaultProviders()
 

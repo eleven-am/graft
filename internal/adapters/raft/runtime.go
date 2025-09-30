@@ -1,4 +1,4 @@
-package raft2
+package raft
 
 import (
 	"context"
@@ -96,7 +96,7 @@ func NewRuntime(deps RuntimeDeps) *Runtime {
 
 	return &Runtime{
 		deps:       deps,
-		logger:     logger.With("component", "raft2.runtime"),
+		logger:     logger.With("component", "raft.runtime"),
 		clock:      clock,
 		leadership: ports.RaftLeadershipInfo{State: ports.RaftLeadershipUnknown},
 	}
@@ -113,13 +113,13 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 	r.mu.Unlock()
 
 	if r.deps.StorageProvider == nil {
-		return errors.New("raft2: storage provider is required")
+		return errors.New("raft: storage provider is required")
 	}
 	if r.deps.TransportProvider == nil {
-		return errors.New("raft2: transport provider is required")
+		return errors.New("raft: transport provider is required")
 	}
 	if r.deps.FSMFactory == nil {
-		return errors.New("raft2: FSM factory is required")
+		return errors.New("raft: FSM factory is required")
 	}
 
 	runtimeCtx, cancel := context.WithCancel(ctx)
@@ -131,7 +131,7 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 	storage, err := r.deps.StorageProvider.Create(runtimeCtx, opts)
 	if err != nil {
 		cancel()
-		return fmt.Errorf("raft2: storage init failed: %w", err)
+		return fmt.Errorf("raft: storage init failed: %w", err)
 	}
 
 	r.mu.Lock()
@@ -142,14 +142,14 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 	if err != nil {
 		cancel()
 		r.closeStores()
-		return fmt.Errorf("raft2: fsm init failed: %w", err)
+		return fmt.Errorf("raft: fsm init failed: %w", err)
 	}
 
 	transport, advertise, err := r.deps.TransportProvider.Create(runtimeCtx, opts)
 	if err != nil {
 		cancel()
 		r.closeStores()
-		return fmt.Errorf("raft2: transport init failed: %w", err)
+		return fmt.Errorf("raft: transport init failed: %w", err)
 	}
 
 	config := r.buildRaftConfig(opts)
@@ -165,7 +165,7 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 			cancel()
 			r.closeTransport(transport)
 			r.closeStores()
-			return fmt.Errorf("raft2: bootstrap failed: %w", err)
+			return fmt.Errorf("raft: bootstrap failed: %w", err)
 		}
 	}
 
@@ -175,7 +175,7 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 		cancel()
 		r.closeTransport(transport)
 		r.closeStores()
-		return fmt.Errorf("raft2: new raft failed: %w", err)
+		return fmt.Errorf("raft: new raft failed: %w", err)
 	}
 	r.deps.Logger.Debug("raft instance created successfully", "node_id", opts.NodeID)
 
@@ -269,7 +269,7 @@ func (r *Runtime) Apply(cmd domain.Command, timeout time.Duration) (*domain.Comm
 
 	data, err := cmd.Marshal()
 	if err != nil {
-		return nil, fmt.Errorf("raft2: marshal command failed: %w", err)
+		return nil, fmt.Errorf("raft: marshal command failed: %w", err)
 	}
 
 	future := instance.Apply(data, timeout)
@@ -279,7 +279,7 @@ func (r *Runtime) Apply(cmd domain.Command, timeout time.Duration) (*domain.Comm
 
 	res, ok := future.Response().(*domain.CommandResult)
 	if !ok {
-		return nil, fmt.Errorf("raft2: command response type mismatch")
+		return nil, fmt.Errorf("raft: command response type mismatch")
 	}
 
 	return res, nil
@@ -513,7 +513,7 @@ func (r *Runtime) StateDB() *badger.DB {
 func (r *Runtime) ReadStale(key string) ([]byte, error) {
 	db := r.StateDB()
 	if db == nil {
-		return nil, errors.New("raft2: state db unavailable")
+		return nil, errors.New("raft: state db unavailable")
 	}
 	var value []byte
 	err := db.View(func(txn *badger.Txn) error {

@@ -1,4 +1,4 @@
-package raft2
+package raft
 
 import (
 	"context"
@@ -41,10 +41,10 @@ type Node struct {
 func NewNode(cfg *Config, storage *Storage, eventManager ports.EventManager, appTransport ports.TransportPort, logger *slog.Logger) (ports.RaftNode, error) {
 	_ = appTransport
 	if cfg == nil {
-		return nil, errors.New("raft2: config is required")
+		return nil, errors.New("raft: config is required")
 	}
 	if storage == nil {
-		return nil, errors.New("raft2: storage is required")
+		return nil, errors.New("raft: storage is required")
 	}
 	if logger == nil {
 		logger = slog.Default()
@@ -80,7 +80,7 @@ func NewNode(cfg *Config, storage *Storage, eventManager ports.EventManager, app
 		config:          cfg,
 		storage:         storage,
 		events:          eventManager,
-		logger:          logger.With("component", "raft2.node", "node_id", cfg.NodeID),
+		logger:          logger.With("component", "raft.node", "node_id", cfg.NodeID),
 		metadata:        bootMeta,
 		runtime:         runtime,
 		controller:      controller,

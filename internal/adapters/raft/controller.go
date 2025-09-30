@@ -1,4 +1,4 @@
-package raft2
+package raft
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 )
 
 // NodeRuntime abstracts the low-level raft node implementation controlled by
-// the raft2 controller.
+// the raft controller.
 type NodeRuntime interface {
 	Start(ctx context.Context, opts domain.RaftControllerOptions) error
 	Stop() error
@@ -77,7 +77,7 @@ func NewController(deps ControllerDeps) (*Controller, error) {
 // Start brings the controller online using the provided options.
 func (c *Controller) Start(ctx context.Context, opts domain.RaftControllerOptions) error {
 	if opts.NodeID == "" {
-		return errors.New("raft2: node id is required")
+		return errors.New("raft: node id is required")
 	}
 
 	c.mu.RLock()

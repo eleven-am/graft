@@ -1,4 +1,4 @@
-package raft2
+package raft
 
 import (
 	"context"

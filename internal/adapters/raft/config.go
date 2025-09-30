@@ -1,4 +1,4 @@
-package raft2
+package raft
 
 import (
 	"time"
@@ -8,7 +8,7 @@ import (
 
 // Config mirrors the legacy raft adapter configuration so the manager can
 // continue to construct nodes without large refactors while the underlying
-// implementation is replaced by raft2 components.
+// implementation is replaced by raft components.
 type Config struct {
 	NodeID             string
 	ClusterID          string
@@ -29,7 +29,7 @@ type Config struct {
 }
 
 // DefaultRaftConfig reproduces the old helper so existing callers continue to
-// compile. Values feed into raft2 runtime configuration internally.
+// compile. Values feed into raft runtime configuration internally.
 func DefaultRaftConfig(nodeID, clusterID, bindAddr, dataDir string, clusterPolicy domain.ClusterPolicy) *Config {
 	return &Config{
 		NodeID:             nodeID,

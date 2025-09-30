@@ -1,4 +1,4 @@
-package raft2
+package raft
 
 import (
 	"bytes"
@@ -17,7 +17,7 @@ import (
 	"github.com/hashicorp/raft"
 )
 
-// FSM implements raft.FSM for the raft2 subsystem. It mirrors the behaviour of
+// FSM implements raft.FSM for the raft subsystem. It mirrors the behaviour of
 // the legacy adapter while living entirely within the new package.
 type FSM struct {
 	db               *badger.DB
@@ -42,7 +42,7 @@ func NewFSM(db *badger.DB, eventManager ports.EventManager, nodeID, clusterID st
 		eventManager:  eventManager,
 		versions:      make(map[string]int64),
 		nodeID:        nodeID,
-		logger:        logger.With("component", "raft2.fsm", "node_id", nodeID),
+		logger:        logger.With("component", "raft.fsm", "node_id", nodeID),
 		clusterID:     clusterID,
 		clusterPolicy: policy,
 	}
