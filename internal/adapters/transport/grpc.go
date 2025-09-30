@@ -3,20 +3,22 @@ package transport
 import (
 	"context"
 	"fmt"
-	"github.com/eleven-am/graft/internal/domain"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
 	"log/slog"
 	"net"
 	"time"
 
+	"github.com/eleven-am/graft/internal/domain"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
+
 	"crypto/tls"
 	"crypto/x509"
+	"os"
+
 	"github.com/eleven-am/graft/internal/helpers/netutil"
 	"github.com/eleven-am/graft/internal/ports"
 	pb "github.com/eleven-am/graft/internal/proto"
 	"google.golang.org/grpc"
-	"os"
 )
 
 type GRPCTransport struct {
