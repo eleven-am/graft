@@ -25,11 +25,12 @@ package graft
 
 import (
 	"context"
-	"github.com/eleven-am/graft/internal/ports"
 	"log/slog"
 
 	"github.com/eleven-am/graft/internal/core"
 	"github.com/eleven-am/graft/internal/domain"
+	"github.com/eleven-am/graft/internal/helpers/metadata"
+	"github.com/eleven-am/graft/internal/ports"
 )
 
 // Manager is the main orchestration engine that manages workflow execution,
@@ -186,6 +187,15 @@ func New(nodeID, bindAddr, dataDir string, logger *slog.Logger) *Manager {
 //	manager := graft.NewWithConfig(config)
 func NewWithConfig(config *domain.Config) *Manager {
 	return core.NewWithConfig(config)
+}
+
+// ResetBootstrapMetadataForTesting forces regeneration of bootstrap metadata.
+//
+// This helper is intended for in-process integration tests where multiple managers
+// run inside the same binary and would otherwise share bootstrap identifiers.
+// Do not use in production code.
+func ResetBootstrapMetadataForTesting() {
+	metadata.ResetGlobalBootstrapMetadata()
 }
 
 // GetWorkflowContext extracts workflow metadata from the execution context during node execution.

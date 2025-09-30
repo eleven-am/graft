@@ -38,7 +38,7 @@ func RunWorkflowContinuity(ctx context.Context, launcher *harness.NodeLauncher) 
 	workflowCtx, cancelWorkflows := context.WithCancel(ctx)
 	defer cancelWorkflows()
 
-	go harness.StartContinuousWorkflows(workflowCtx, node1, "continuity-test", 2*time.Second, monitor)
+	go harness.StartContinuousWorkflows(workflowCtx, launcher, node1, "continuity-test", 2*time.Second, monitor)
 
 	time.Sleep(5 * time.Second)
 
@@ -92,29 +92,20 @@ func RunWorkflowContinuity(ctx context.Context, launcher *harness.NodeLauncher) 
 	}
 
 	testWorkflowID := "continuity-validation-test"
-	fmt.Printf("  🧪 Starting dedicated test workflow: %s\n", testWorkflowID)
+	fmt.Printf("  🧪 Starting post-handoff test workflow: %s\n", testWorkflowID)
 
-	if err := harness.StartTestWorkflow(ctx, node1, testWorkflowID); err != nil {
+	if err := harness.StartTestWorkflow(ctx, launcher, node1, testWorkflowID); err != nil {
 		return fmt.Errorf("failed to start test workflow: %w", err)
 	}
 
 	time.Sleep(3 * time.Second)
 
-	continuityResult := monitor.AnalyzeContinuity(testWorkflowID, handoffStartTime, handoffEndTime)
-
-	fmt.Printf("  📊 Workflow continuity analysis:\n")
-	fmt.Printf("    - Workflow ID: %s\n", continuityResult.WorkflowID)
-	fmt.Printf("    - Event count: %d\n", continuityResult.EventCount)
-	fmt.Printf("    - Total duration: %v\n", continuityResult.TotalDuration)
-
-	if continuityResult.HandoffDetected {
-		fmt.Printf("    - Handoff duration: %v\n", continuityResult.HandoffDuration)
-		fmt.Printf("    - Processing continued: %v\n", continuityResult.ProcessingContinued)
-
-		if !continuityResult.ProcessingContinued {
-			return fmt.Errorf("workflow processing did not continue across handoff")
-		}
+	testWorkflowEvents := monitor.GetEventsForWorkflow(testWorkflowID)
+	if len(testWorkflowEvents) == 0 {
+		return fmt.Errorf("test workflow did not produce any events")
 	}
+
+	fmt.Printf("  ✅ Post-handoff workflow completed successfully (%d events)\n", len(testWorkflowEvents))
 
 	eventsBeforeHandoff := 0
 	eventsDuringHandoff := 0

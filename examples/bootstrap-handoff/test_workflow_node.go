@@ -44,8 +44,8 @@ func (n *TestWorkflowNode) Execute(ctx context.Context, state interface{}, confi
 	}
 
 	return graft.NodeResult{
-		State: result,
-		Next:  nil,
+		GlobalState: result,
+		NextNodes:   nil,
 	}, nil
 }
 

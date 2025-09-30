@@ -53,13 +53,15 @@ func main() {
 		if err := scenario.run(scenarioCtx, launcher); err != nil {
 			log.Printf("❌ Scenario '%s' failed: %v", scenario.name, err)
 			scenarioCancel()
+			launcher.StopAll()
+			time.Sleep(3 * time.Second)
 			continue
 		}
 
 		fmt.Printf("✅ Scenario '%s' completed successfully\n", scenario.name)
 		scenarioCancel()
 		launcher.StopAll()
-		time.Sleep(1 * time.Second)
+		time.Sleep(3 * time.Second)
 	}
 
 	fmt.Println("\n🎉 Bootstrap Handoff Validation Complete!")

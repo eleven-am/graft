@@ -181,9 +181,28 @@ type TestWorkflow struct {
 	Data interface{}
 }
 
-func StartTestWorkflow(ctx context.Context, instance *NodeInstance, workflowID string) error {
-	if !instance.Manager.IsReady() {
-		return fmt.Errorf("node %s not ready for workflow", instance.Config.NodeID)
+func StartTestWorkflow(ctx context.Context, launcher *NodeLauncher, instance *NodeInstance, workflowID string) error {
+	if launcher == nil {
+		return fmt.Errorf("launcher is required to route workflows")
+	}
+
+	target := instance
+	clusterInfo := instance.Manager.GetClusterInfo()
+
+	if !clusterInfo.IsLeader {
+		for _, peerID := range clusterInfo.Peers {
+			if peerInstance := launcher.GetInstance(peerID); peerInstance != nil {
+				peerInfo := peerInstance.Manager.GetClusterInfo()
+				if peerInfo.IsLeader && peerInstance.Manager.IsReady() {
+					target = peerInstance
+					break
+				}
+			}
+		}
+	}
+
+	if !target.Manager.IsReady() {
+		return fmt.Errorf("node %s not ready for workflow", target.Config.NodeID)
 	}
 
 	trigger := graft.WorkflowTrigger{
@@ -192,7 +211,7 @@ func StartTestWorkflow(ctx context.Context, instance *NodeInstance, workflowID s
 			{
 				Name: "test_node",
 				Config: map[string]interface{}{
-					"processor": instance.Config.NodeID,
+					"processor": target.Config.NodeID,
 					"duration":  1000,
 				},
 			},
@@ -200,14 +219,14 @@ func StartTestWorkflow(ctx context.Context, instance *NodeInstance, workflowID s
 		InitialState: map[string]interface{}{
 			"test_id":   workflowID,
 			"timestamp": time.Now().Unix(),
-			"node":      instance.Config.NodeID,
+			"node":      target.Config.NodeID,
 		},
 	}
 
-	return instance.Manager.StartWorkflow(trigger)
+	return target.Manager.StartWorkflow(trigger)
 }
 
-func StartContinuousWorkflows(ctx context.Context, instance *NodeInstance, workflowPrefix string, interval time.Duration, monitor *WorkflowMonitor) {
+func StartContinuousWorkflows(ctx context.Context, launcher *NodeLauncher, instance *NodeInstance, workflowPrefix string, interval time.Duration, monitor *WorkflowMonitor) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -218,14 +237,10 @@ func StartContinuousWorkflows(ctx context.Context, instance *NodeInstance, workf
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if !instance.Manager.IsReady() {
-				continue
-			}
-
 			counter++
 			workflowID := fmt.Sprintf("%s-%d", workflowPrefix, counter)
 
-			if err := StartTestWorkflow(ctx, instance, workflowID); err != nil {
+			if err := StartTestWorkflow(ctx, launcher, instance, workflowID); err != nil {
 				continue
 			}
 		}

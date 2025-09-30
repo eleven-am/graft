@@ -340,7 +340,7 @@ func TestEngine_PanicRecovery(t *testing.T) {
 	status, err := engine.GetWorkflowStatus("panic-test")
 	require.NoError(t, err)
 
-	require.Equal(t, domain.WorkflowStateRunning, status.Status)
+	require.Equal(t, domain.WorkflowStateCompleted, status.Status)
 
 	dlqSize, err := engine.GetDeadLetterSize()
 	require.NoError(t, err)

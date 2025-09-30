@@ -8,11 +8,11 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"log/slog"
 	"net"
-	"strconv"
 	"time"
 
 	"crypto/tls"
 	"crypto/x509"
+	"github.com/eleven-am/graft/internal/helpers/netutil"
 	"github.com/eleven-am/graft/internal/ports"
 	pb "github.com/eleven-am/graft/internal/proto"
 	"google.golang.org/grpc"
@@ -51,13 +51,12 @@ func (t *GRPCTransport) Start(ctx context.Context, bindAddr string, port int) er
 	}
 
 	t.address = host
-	t.port = port
 
-	addr := net.JoinHostPort(host, strconv.Itoa(port))
-	listener, err := net.Listen("tcp", addr)
+	listener, actualPort, err := netutil.ListenTCP(host, port)
 	if err != nil {
-		return fmt.Errorf("failed to listen on %s: %w", addr, err)
+		return err
 	}
+	t.port = actualPort
 
 	serverOpts := []grpc.ServerOption{}
 	if t.cfg.MaxMessageSizeMB > 0 {
@@ -86,7 +85,8 @@ func (t *GRPCTransport) Start(ctx context.Context, bindAddr string, port int) er
 	t.server = grpc.NewServer(serverOpts...)
 	pb.RegisterGraftNodeServer(t.server, t)
 
-	t.logger.Info("starting gRPC transport", "address", addr)
+	actualAddr := listener.Addr().String()
+	t.logger.Info("starting gRPC transport", "address", actualAddr)
 
 	go func() {
 		if err := t.server.Serve(listener); err != nil {

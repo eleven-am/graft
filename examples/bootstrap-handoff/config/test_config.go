@@ -3,6 +3,8 @@ package config
 import (
 	"context"
 	"log/slog"
+	"net"
+	"strconv"
 	"time"
 
 	"github.com/eleven-am/graft"
@@ -14,6 +16,18 @@ type NodeConfig struct {
 	GRPCPort  int
 	DataDir   string
 	Discovery DiscoveryConfig
+}
+
+func (nc NodeConfig) RaftPort() int {
+	_, portStr, err := net.SplitHostPort(nc.RaftAddr)
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0
+	}
+	return port
 }
 
 type DiscoveryConfig struct {
@@ -41,9 +55,7 @@ func DefaultTestConfig() TestConfig {
 				GRPCPort: 8201,
 				DataDir:  "./test-data/node-1",
 				Discovery: DiscoveryConfig{
-					Type:    "mdns",
-					Service: "graft-test",
-					Domain:  "local.",
+					Type: "inmemory",
 				},
 			},
 			{
@@ -52,9 +64,7 @@ func DefaultTestConfig() TestConfig {
 				GRPCPort: 8202,
 				DataDir:  "./test-data/node-2",
 				Discovery: DiscoveryConfig{
-					Type:    "mdns",
-					Service: "graft-test",
-					Domain:  "local.",
+					Type: "inmemory",
 				},
 			},
 			{
@@ -63,9 +73,7 @@ func DefaultTestConfig() TestConfig {
 				GRPCPort: 8203,
 				DataDir:  "./test-data/node-3",
 				Discovery: DiscoveryConfig{
-					Type:    "mdns",
-					Service: "graft-test",
-					Domain:  "local.",
+					Type: "inmemory",
 				},
 			},
 		},
@@ -84,7 +92,13 @@ func (nc NodeConfig) CreateManager(logger *slog.Logger) *graft.Manager {
 		return nil
 	}
 
-	if nc.Discovery.Type == "mdns" {
+	switch nc.Discovery.Type {
+	case "mdns":
+		manager.MDNS(nc.Discovery.Service, nc.Discovery.Domain)
+	case "inmemory":
+		// Provider is injected at launch time by the harness.
+	default:
+		logger.Warn("unknown discovery type, defaulting to mdns", "type", nc.Discovery.Type)
 		manager.MDNS(nc.Discovery.Service, nc.Discovery.Domain)
 	}
 

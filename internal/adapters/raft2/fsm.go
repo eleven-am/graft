@@ -1,20 +1,24 @@
-package raft
+package raft2
 
 import (
 	"bytes"
 	stdjson "encoding/json"
 	"fmt"
+	"io"
+	"sync"
+	"time"
+
+	"log/slog"
+
 	"github.com/dgraph-io/badger/v3"
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/ports"
 	json "github.com/eleven-am/graft/internal/xjson"
 	"github.com/hashicorp/raft"
-	"io"
-	"log/slog"
-	"sync"
-	"time"
 )
 
+// FSM implements raft.FSM for the raft2 subsystem. It mirrors the behaviour of
+// the legacy adapter while living entirely within the new package.
 type FSM struct {
 	db               *badger.DB
 	eventManager     ports.EventManager
@@ -23,11 +27,12 @@ type FSM struct {
 	nodeID           string
 	logger           *slog.Logger
 	clusterID        string
-	clusterValidated bool
 	clusterPolicy    domain.ClusterPolicy
+	clusterValidated bool
 }
 
-func NewFSM(db *badger.DB, eventManager ports.EventManager, nodeID, clusterID string, clusterPolicy domain.ClusterPolicy, logger *slog.Logger) *FSM {
+// NewFSM constructs a new FSM instance bound to the provided Badger database.
+func NewFSM(db *badger.DB, eventManager ports.EventManager, nodeID, clusterID string, policy domain.ClusterPolicy, logger *slog.Logger) *FSM {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -37,9 +42,9 @@ func NewFSM(db *badger.DB, eventManager ports.EventManager, nodeID, clusterID st
 		eventManager:  eventManager,
 		versions:      make(map[string]int64),
 		nodeID:        nodeID,
-		logger:        logger.With("component", "raft-fsm", "node_id", nodeID),
+		logger:        logger.With("component", "raft2.fsm", "node_id", nodeID),
 		clusterID:     clusterID,
-		clusterPolicy: clusterPolicy,
+		clusterPolicy: policy,
 	}
 
 	if err := fsm.validateCluster(); err != nil {
@@ -51,23 +56,18 @@ func NewFSM(db *badger.DB, eventManager ports.EventManager, nodeID, clusterID st
 	return fsm
 }
 
+// Apply executes a replicated command and returns a domain.CommandResult.
 func (f *FSM) Apply(log *raft.Log) interface{} {
 	var cmd domain.Command
 	if err := json.Unmarshal(log.Data, &cmd); err != nil {
 		f.logger.Error("failed to unmarshal command", "error", err)
-		return &domain.CommandResult{
-			Success: false,
-			Error:   fmt.Sprintf("failed to unmarshal command: %v", err),
-		}
+		return &domain.CommandResult{Success: false, Error: fmt.Sprintf("failed to unmarshal command: %v", err)}
 	}
 
 	if !f.clusterValidated {
 		if err := f.validateCluster(); err != nil {
 			f.logger.Error("cluster validation failed", "error", err)
-			return &domain.CommandResult{
-				Success: false,
-				Error:   fmt.Sprintf("cluster validation failed: %v", err),
-			}
+			return &domain.CommandResult{Success: false, Error: fmt.Sprintf("cluster validation failed: %v", err)}
 		}
 		f.clusterValidated = true
 	}
@@ -85,19 +85,13 @@ func (f *FSM) Apply(log *raft.Log) interface{} {
 		return f.applyAtomicIncrement(cmd)
 	default:
 		f.logger.Error("unknown command type", "command_type", cmd.Type)
-		return &domain.CommandResult{
-			Success: false,
-			Error:   fmt.Sprintf("unknown command type: %v", cmd.Type),
-		}
+		return &domain.CommandResult{Success: false, Error: fmt.Sprintf("unknown command type: %v", cmd.Type)}
 	}
 }
 
 func (f *FSM) applyPut(cmd domain.Command) *domain.CommandResult {
 	if cmd.Key == "" {
-		return &domain.CommandResult{
-			Success: false,
-			Error:   "key cannot be empty",
-		}
+		return &domain.CommandResult{Success: false, Error: "key cannot be empty"}
 	}
 
 	f.mu.Lock()
@@ -124,62 +118,36 @@ func (f *FSM) applyPut(cmd domain.Command) *domain.CommandResult {
 	}
 
 	newVersion := currentVersion + 1
-
-	err := f.db.Update(func(txn *badger.Txn) error {
+	if err := f.db.Update(func(txn *badger.Txn) error {
 		return f.writeValueAndVersion(txn, cmd.Key, cmd.Value, newVersion, cmd.TTLSeconds)
-	})
-
-	if err != nil {
-		return &domain.CommandResult{
-			Success: false,
-			Error:   err.Error(),
-		}
+	}); err != nil {
+		return &domain.CommandResult{Success: false, Error: err.Error()}
 	}
 
 	f.versions[cmd.Key] = newVersion
-
 	event := f.emitEvent(domain.EventPut, cmd.Key, newVersion, cmd.RequestID)
 
-	return &domain.CommandResult{
-		Success: true,
-		Version: newVersion,
-		Events:  []domain.Event{event},
-	}
+	return &domain.CommandResult{Success: true, Version: newVersion, Events: []domain.Event{event}}
 }
 
 func (f *FSM) applyDelete(cmd domain.Command) *domain.CommandResult {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	err := f.db.Update(func(txn *badger.Txn) error {
+	if err := f.db.Update(func(txn *badger.Txn) error {
 		versionKey := fmt.Sprintf("v:%s", cmd.Key)
 		if err := txn.Delete([]byte(cmd.Key)); err != nil {
 			return err
 		}
 		return txn.Delete([]byte(versionKey))
-	})
-
-	if err != nil {
-		return &domain.CommandResult{
-			Success: false,
-			Error:   err.Error(),
-		}
+	}); err != nil {
+		return &domain.CommandResult{Success: false, Error: err.Error()}
 	}
 
 	delete(f.versions, cmd.Key)
+	event := domain.Event{Type: domain.EventDelete, Key: cmd.Key, NodeID: f.nodeID, Timestamp: time.Now(), RequestID: cmd.RequestID}
 
-	event := domain.Event{
-		Type:      domain.EventDelete,
-		Key:       cmd.Key,
-		NodeID:    f.nodeID,
-		Timestamp: time.Now(),
-		RequestID: cmd.RequestID,
-	}
-
-	return &domain.CommandResult{
-		Success: true,
-		Events:  []domain.Event{event},
-	}
+	return &domain.CommandResult{Success: true, Events: []domain.Event{event}}
 }
 
 func (f *FSM) applyCAS(cmd domain.Command) *domain.CommandResult {
@@ -189,97 +157,63 @@ func (f *FSM) applyCAS(cmd domain.Command) *domain.CommandResult {
 	var currentValue []byte
 	var currentVersion int64
 
-	err := f.db.View(func(txn *badger.Txn) error {
+	if err := f.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(cmd.Key))
 		if err != nil {
 			if err == badger.ErrKeyNotFound {
-				currentValue = nil
-
 				return nil
 			}
 			return err
 		}
 
-		currentValue, err = item.ValueCopy(nil)
+		valueCopy, err := item.ValueCopy(nil)
 		if err != nil {
 			return err
 		}
+		currentValue = valueCopy
 
-		v, verr := f.getAuthoritativeVersion(txn, cmd.Key)
-		if verr == nil {
+		v, err := f.getAuthoritativeVersion(txn, cmd.Key)
+		if err == nil {
 			currentVersion = v
 		}
 		return nil
-	})
-
-	if err != nil {
-		return &domain.CommandResult{
-			Success: false,
-			Error:   err.Error(),
-		}
+	}); err != nil {
+		return &domain.CommandResult{Success: false, Error: err.Error()}
 	}
 
 	if cmd.Version > 0 {
 		if currentVersion != cmd.Version {
-			f.logger.Info("CAS version mismatch",
-				"key", cmd.Key,
-				"expected_version", cmd.Version,
-				"current_version", currentVersion)
 			return &domain.CommandResult{
 				Success:     false,
 				Error:       fmt.Sprintf("version mismatch: expected %d, got %d", cmd.Version, currentVersion),
 				PrevVersion: currentVersion,
 			}
 		}
-	} else if cmd.Expected != nil {
-		if !bytes.Equal(currentValue, cmd.Expected) {
-			return &domain.CommandResult{
-				Success: false,
-				Error:   "value mismatch",
-			}
-		}
+	} else if cmd.Expected != nil && !bytes.Equal(currentValue, cmd.Expected) {
+		return &domain.CommandResult{Success: false, Error: "value mismatch"}
 	}
 
 	newVersion := currentVersion + 1
-
-	err = f.db.Update(func(txn *badger.Txn) error {
+	if err := f.db.Update(func(txn *badger.Txn) error {
 		return f.writeValueAndVersion(txn, cmd.Key, cmd.Value, newVersion, 0)
-	})
-
-	if err != nil {
-		return &domain.CommandResult{
-			Success: false,
-			Error:   err.Error(),
-		}
+	}); err != nil {
+		return &domain.CommandResult{Success: false, Error: err.Error()}
 	}
 
 	f.versions[cmd.Key] = newVersion
-
 	event := f.emitEvent(domain.EventCAS, cmd.Key, newVersion, cmd.RequestID)
 
-	return &domain.CommandResult{
-		Success:     true,
-		Version:     newVersion,
-		PrevVersion: currentVersion,
-		Events:      []domain.Event{event},
-	}
+	return &domain.CommandResult{Success: true, Version: newVersion, PrevVersion: currentVersion, Events: []domain.Event{event}}
 }
 
 func (f *FSM) applyAtomicIncrement(cmd domain.Command) *domain.CommandResult {
-	if cmd.Key == "" {
-		return &domain.CommandResult{
-			Success: false,
-			Error:   "key cannot be empty",
-		}
-	}
-
 	f.mu.Lock()
 	defer f.mu.Unlock()
 
-	var currentValue int64 = 0
-	var currentVersion int64 = 0
+	var currentValue int64
+	var currentVersion int64
 
-	err := f.db.View(func(txn *badger.Txn) error {
+	if err := f.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(cmd.Key))
 		if err != nil {
 			if err == badger.ErrKeyNotFound {
@@ -292,34 +226,24 @@ func (f *FSM) applyAtomicIncrement(cmd domain.Command) *domain.CommandResult {
 		if err != nil {
 			return err
 		}
-
 		if err := json.Unmarshal(valueBytes, &currentValue); err != nil {
 			return fmt.Errorf("failed to unmarshal current value as int64: %v", err)
 		}
 
 		versionKey := fmt.Sprintf("v:%s", cmd.Key)
-		vItem, err := txn.Get([]byte(versionKey))
-		if err == nil {
+		if vItem, err := txn.Get([]byte(versionKey)); err == nil {
 			versionBytes, _ := vItem.ValueCopy(nil)
-			json.Unmarshal(versionBytes, &currentVersion)
+			_ = json.Unmarshal(versionBytes, &currentVersion)
 		}
 		return nil
-	})
-
-	if err != nil {
-		return &domain.CommandResult{
-			Success: false,
-			Error:   err.Error(),
-		}
+	}); err != nil {
+		return &domain.CommandResult{Success: false, Error: err.Error()}
 	}
 
 	var incrementBy int64 = 1
 	if len(cmd.Value) > 0 {
 		if err := json.Unmarshal(cmd.Value, &incrementBy); err != nil {
-			return &domain.CommandResult{
-				Success: false,
-				Error:   fmt.Sprintf("failed to parse increment value: %v", err),
-			}
+			return &domain.CommandResult{Success: false, Error: fmt.Sprintf("failed to parse increment value: %v", err)}
 		}
 	}
 
@@ -328,49 +252,33 @@ func (f *FSM) applyAtomicIncrement(cmd domain.Command) *domain.CommandResult {
 
 	newValueBytes, err := json.Marshal(newValue)
 	if err != nil {
-		return &domain.CommandResult{
-			Success: false,
-			Error:   fmt.Sprintf("failed to marshal new value: %v", err),
-		}
+		return &domain.CommandResult{Success: false, Error: fmt.Sprintf("failed to marshal new value: %v", err)}
 	}
 
-	err = f.db.Update(func(txn *badger.Txn) error {
+	if err := f.db.Update(func(txn *badger.Txn) error {
 		versionKey := fmt.Sprintf("v:%s", cmd.Key)
 		versionBytes, _ := json.Marshal(newVersion)
-
 		if err := txn.Set([]byte(cmd.Key), newValueBytes); err != nil {
 			return err
 		}
 		return txn.Set([]byte(versionKey), versionBytes)
-	})
-
-	if err != nil {
-		return &domain.CommandResult{
-			Success: false,
-			Error:   err.Error(),
-		}
+	}); err != nil {
+		return &domain.CommandResult{Success: false, Error: err.Error()}
 	}
 
 	f.versions[cmd.Key] = newVersion
-
-	event := domain.Event{
-		Type:      domain.EventPut,
-		Key:       cmd.Key,
-		Version:   newVersion,
-		NodeID:    f.nodeID,
-		Timestamp: time.Now(),
-		RequestID: cmd.RequestID,
-	}
-
+	event := domain.Event{Type: domain.EventPut, Key: cmd.Key, Version: newVersion, NodeID: f.nodeID, Timestamp: time.Now(), RequestID: cmd.RequestID}
 	if f.eventManager != nil {
 		f.eventManager.Broadcast(event)
 	}
 
-	return &domain.CommandResult{
-		Success: true,
-		Version: newVersion,
-		Events:  []domain.Event{event},
-	}
+	return &domain.CommandResult{Success: true, Version: newVersion, Events: []domain.Event{event}}
+}
+
+func (f *FSM) SetEventManager(manager ports.EventManager) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.eventManager = manager
 }
 
 func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
@@ -380,7 +288,7 @@ func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 	results := make([]domain.Result, 0, len(cmd.Batch))
 	events := make([]domain.Event, 0, len(cmd.Batch))
 
-	err := f.db.Update(func(txn *badger.Txn) error {
+	if err := f.db.Update(func(txn *badger.Txn) error {
 		for _, op := range cmd.Batch {
 			switch op.Type {
 			case domain.CommandPut:
@@ -393,11 +301,7 @@ func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 					return err
 				}
 				f.versions[op.Key] = newVersion
-				results = append(results, domain.Result{
-					Key:     op.Key,
-					Success: true,
-					Version: newVersion,
-				})
+				results = append(results, domain.Result{Key: op.Key, Success: true, Version: newVersion})
 				events = append(events, f.emitEvent(domain.EventPut, op.Key, newVersion, cmd.RequestID))
 
 			case domain.CommandDelete:
@@ -408,19 +312,9 @@ func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 				if err := txn.Delete([]byte(versionKey)); err != nil {
 					return err
 				}
-
 				delete(f.versions, op.Key)
-				results = append(results, domain.Result{
-					Key:     op.Key,
-					Success: true,
-				})
-				events = append(events, domain.Event{
-					Type:      domain.EventDelete,
-					Key:       op.Key,
-					NodeID:    f.nodeID,
-					Timestamp: time.Now(),
-					RequestID: cmd.RequestID,
-				})
+				results = append(results, domain.Result{Key: op.Key, Success: true})
+				events = append(events, domain.Event{Type: domain.EventDelete, Key: op.Key, NodeID: f.nodeID, Timestamp: time.Now(), RequestID: cmd.RequestID})
 
 			case domain.CommandCAS:
 				item, err := txn.Get([]byte(op.Key))
@@ -428,13 +322,8 @@ func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 				if err == nil {
 					currentValue, _ = item.ValueCopy(nil)
 				}
-
 				if op.Expected != nil && !bytes.Equal(currentValue, op.Expected) {
-					results = append(results, domain.Result{
-						Key:     op.Key,
-						Success: false,
-						Error:   "value mismatch in batch",
-					})
+					results = append(results, domain.Result{Key: op.Key, Success: false, Error: "value mismatch in batch"})
 					continue
 				}
 
@@ -447,31 +336,19 @@ func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 					return err
 				}
 				f.versions[op.Key] = newVersion
-				results = append(results, domain.Result{
-					Key:     op.Key,
-					Success: true,
-					Version: newVersion,
-				})
+				results = append(results, domain.Result{Key: op.Key, Success: true, Version: newVersion})
 				events = append(events, f.emitEvent(domain.EventCAS, op.Key, newVersion, cmd.RequestID))
 			}
 		}
 		return nil
-	})
-
-	if err != nil {
-		return &domain.CommandResult{
-			Success: false,
-			Error:   err.Error(),
-		}
+	}); err != nil {
+		return &domain.CommandResult{Success: false, Error: err.Error()}
 	}
 
-	return &domain.CommandResult{
-		Success:      true,
-		BatchResults: results,
-		Events:       events,
-	}
+	return &domain.CommandResult{Success: true, BatchResults: results, Events: events}
 }
 
+// Snapshot captures the full state for Raft log compaction.
 func (f *FSM) Snapshot() (raft.FSMSnapshot, error) {
 	f.logger.Info("starting FSM snapshot creation")
 	f.mu.RLock()
@@ -486,12 +363,9 @@ func (f *FSM) Snapshot() (raft.FSMSnapshot, error) {
 		snapshot.Versions[k] = v
 	}
 
-	err := f.db.View(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchSize = 10
-		it := txn.NewIterator(opts)
+	if err := f.db.View(func(txn *badger.Txn) error {
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
-
 		for it.Rewind(); it.Valid(); it.Next() {
 			item := it.Item()
 			key := string(item.Key())
@@ -502,17 +376,16 @@ func (f *FSM) Snapshot() (raft.FSMSnapshot, error) {
 			snapshot.Data[key] = value
 		}
 		return nil
-	})
-
-	if err != nil {
+	}); err != nil {
 		f.logger.Error("failed to create FSM snapshot", "error", err)
-	} else {
-		f.logger.Info("FSM snapshot creation completed", "keys_count", len(snapshot.Data))
+		return nil, err
 	}
 
-	return snapshot, err
+	f.logger.Info("FSM snapshot creation completed", "keys_count", len(snapshot.Data))
+	return snapshot, nil
 }
 
+// Restore loads a snapshot back into memory and persistent storage.
 func (f *FSM) Restore(rc io.ReadCloser) error {
 	f.logger.Info("starting FSM restore from snapshot")
 	defer rc.Close()
@@ -527,10 +400,8 @@ func (f *FSM) Restore(rc io.ReadCloser) error {
 	defer f.mu.Unlock()
 
 	f.versions = make(map[string]int64)
-	if snapshot.Versions != nil {
-		for k, v := range snapshot.Versions {
-			f.versions[k] = v
-		}
+	for k, v := range snapshot.Versions {
+		f.versions[k] = v
 	}
 
 	if err := f.db.DropAll(); err != nil {
@@ -538,22 +409,20 @@ func (f *FSM) Restore(rc io.ReadCloser) error {
 		return err
 	}
 
-	err := f.db.Update(func(txn *badger.Txn) error {
+	if err := f.db.Update(func(txn *badger.Txn) error {
 		for key, value := range snapshot.Data {
 			if err := txn.Set([]byte(key), value); err != nil {
 				return err
 			}
 		}
 		return nil
-	})
-
-	if err != nil {
+	}); err != nil {
 		f.logger.Error("failed to restore FSM data", "error", err)
-	} else {
-		f.logger.Info("FSM restore completed", "keys_restored", len(snapshot.Data), "versions_restored", len(snapshot.Versions))
+		return err
 	}
 
-	return err
+	f.logger.Info("FSM restore completed", "keys_restored", len(snapshot.Data), "versions_restored", len(snapshot.Versions))
+	return nil
 }
 
 type fsmSnapshot struct {
@@ -562,24 +431,20 @@ type fsmSnapshot struct {
 }
 
 func (s *fsmSnapshot) Persist(sink raft.SnapshotSink) error {
-	err := func() error {
-		b, err := json.Marshal(s)
+	if err := func() error {
+		payload, err := json.Marshal(s)
 		if err != nil {
 			return err
 		}
-
-		if _, err := sink.Write(b); err != nil {
+		if _, err := sink.Write(payload); err != nil {
 			return err
 		}
-
 		return sink.Close()
-	}()
-
-	if err != nil {
+	}(); err != nil {
 		sink.Cancel()
+		return err
 	}
-
-	return err
+	return nil
 }
 
 func (s *fsmSnapshot) Release() {}
@@ -614,20 +479,19 @@ func (f *FSM) validateCluster() error {
 	})
 }
 
-// Helpers for consistent version handling and event composition
 func (f *FSM) getAuthoritativeVersion(txn *badger.Txn, key string) (int64, error) {
 	versionKey := fmt.Sprintf("v:%s", key)
-	vItem, err := txn.Get([]byte(versionKey))
+	item, err := txn.Get([]byte(versionKey))
 	if err != nil {
 		if err == badger.ErrKeyNotFound {
 			return 0, nil
 		}
 		return 0, err
 	}
-	var v int64
-	versionBytes, _ := vItem.ValueCopy(nil)
-	_ = json.Unmarshal(versionBytes, &v)
-	return v, nil
+	var version int64
+	bytes, _ := item.ValueCopy(nil)
+	_ = json.Unmarshal(bytes, &version)
+	return version, nil
 }
 
 func (f *FSM) writeValueAndVersion(txn *badger.Txn, key string, value []byte, newVersion int64, ttlSeconds int64) error {
@@ -641,8 +505,8 @@ func (f *FSM) writeValueAndVersion(txn *badger.Txn, key string, value []byte, ne
 	}
 	if ttlSeconds > 0 {
 		ttlKey := fmt.Sprintf("ttl:%s", key)
-		expireAt := time.Now().Add(time.Duration(ttlSeconds) * time.Second)
-		ttlBytes, _ := json.Marshal(expireAt)
+		expires := time.Now().Add(time.Duration(ttlSeconds) * time.Second)
+		ttlBytes, _ := json.Marshal(expires)
 		if err := txn.Set([]byte(ttlKey), ttlBytes); err != nil {
 			return err
 		}
@@ -651,39 +515,25 @@ func (f *FSM) writeValueAndVersion(txn *badger.Txn, key string, value []byte, ne
 }
 
 func (f *FSM) emitEvent(t domain.EventType, key string, version int64, requestID string) domain.Event {
-	return domain.Event{
-		Type:      t,
-		Key:       key,
-		Version:   version,
-		NodeID:    f.nodeID,
-		Timestamp: time.Now(),
-		RequestID: requestID,
-	}
+	return domain.Event{Type: t, Key: key, Version: version, NodeID: f.nodeID, Timestamp: time.Now(), RequestID: requestID}
 }
 
 func (f *FSM) handleClusterMismatch(storedClusterID string) error {
-	f.logger.Warn("cluster ID mismatch detected",
-		"stored_cluster_id", storedClusterID,
-		"expected_cluster_id", f.clusterID,
-		"policy", f.clusterPolicy)
+	f.logger.Warn("cluster ID mismatch detected", "stored_cluster_id", storedClusterID, "expected_cluster_id", f.clusterID, "policy", f.clusterPolicy)
 
 	switch f.clusterPolicy {
 	case domain.ClusterPolicyStrict:
 		return fmt.Errorf("cluster ID mismatch: expected %s, got %s (strict policy)", f.clusterID, storedClusterID)
-
 	case domain.ClusterPolicyAdopt:
 		f.logger.Info("adopting existing cluster ID", "cluster_id", storedClusterID)
 		f.clusterID = storedClusterID
 		return nil
-
 	case domain.ClusterPolicyReset:
 		f.logger.Warn("resetting cluster with new ID", "old_cluster_id", storedClusterID, "new_cluster_id", f.clusterID)
 		return f.resetClusterData()
-
 	case domain.ClusterPolicyRecover:
 		f.logger.Info("attempting cluster recovery", "stored_id", storedClusterID, "expected_id", f.clusterID)
 		return f.attemptClusterRecovery(storedClusterID)
-
 	default:
 		return fmt.Errorf("unknown cluster policy: %v", f.clusterPolicy)
 	}
@@ -692,41 +542,29 @@ func (f *FSM) handleClusterMismatch(storedClusterID string) error {
 func (f *FSM) resetClusterData() error {
 	f.logger.Warn("clearing cluster data for reset")
 	return f.db.Update(func(txn *badger.Txn) error {
-		opts := badger.DefaultIteratorOptions
-		opts.PrefetchValues = false
-		it := txn.NewIterator(opts)
+		it := txn.NewIterator(badger.DefaultIteratorOptions)
 		defer it.Close()
 
-		keysToDelete := [][]byte{}
+		var keys [][]byte
 		for it.Rewind(); it.Valid(); it.Next() {
 			key := it.Item().KeyCopy(nil)
-			keyStr := string(key)
-
-			if keyStr != "cluster_id" {
-				keysToDelete = append(keysToDelete, key)
+			if string(key) != "cluster_id" {
+				keys = append(keys, key)
 			}
 		}
 
-		for _, key := range keysToDelete {
+		for _, key := range keys {
 			if err := txn.Delete(key); err != nil {
 				return fmt.Errorf("failed to delete key %s: %w", string(key), err)
 			}
 		}
 
-		if err := txn.Set([]byte("cluster_id"), []byte(f.clusterID)); err != nil {
-			return fmt.Errorf("failed to set new cluster ID: %w", err)
-		}
-
-		f.logger.Info("cluster data reset completed", "new_cluster_id", f.clusterID)
-		return nil
+		return txn.Set([]byte("cluster_id"), []byte(f.clusterID))
 	})
 }
 
 func (f *FSM) attemptClusterRecovery(storedClusterID string) error {
-	f.logger.Info("recovering by adopting stored cluster ID",
-		"stored_cluster_id", storedClusterID,
-		"attempted_cluster_id", f.clusterID)
-
+	f.logger.Info("recovering by adopting stored cluster ID", "stored_cluster_id", storedClusterID, "attempted_cluster_id", f.clusterID)
 	f.clusterID = storedClusterID
 	return nil
 }

@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
 	"bootstrap-handoff-test/config"
 	"github.com/eleven-am/graft"
+	"github.com/eleven-am/graft/testsupport/localdiscovery"
 )
 
 type NodeInstance struct {
@@ -36,12 +38,15 @@ type NodeLauncher struct {
 	logger    *slog.Logger
 	instances map[string]*NodeInstance
 	mu        sync.RWMutex
+	hub       *localdiscovery.Hub
+	launches  int
 }
 
 func NewNodeLauncher(logger *slog.Logger) *NodeLauncher {
 	return &NodeLauncher{
 		logger:    logger,
 		instances: make(map[string]*NodeInstance),
+		hub:       localdiscovery.NewHub(logger),
 	}
 }
 
@@ -53,31 +58,65 @@ func (nl *NodeLauncher) LaunchNode(ctx context.Context, cfg config.NodeConfig) (
 		return nil, fmt.Errorf("node %s already launched", cfg.NodeID)
 	}
 
-	if err := os.MkdirAll(cfg.DataDir, 0755); err != nil {
+	uniqueDataDir := filepath.Clean(fmt.Sprintf("%s-%d", cfg.DataDir, time.Now().UnixNano()))
+	if err := os.MkdirAll(uniqueDataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create data dir: %w", err)
 	}
 
-	manager := cfg.CreateManager(nl.logger)
+	actualCfg := cfg
+	nl.launches++
+	offset := nl.launches * 10
+	actualCfg.RaftAddr = fmt.Sprintf("127.0.0.1:%d", cfg.RaftPort()+offset)
+	actualCfg.GRPCPort = cfg.GRPCPort + offset
+	actualCfg.DataDir = uniqueDataDir
+
+	if actualCfg.Discovery.Type == "inmemory" {
+		graft.ResetBootstrapMetadataForTesting()
+	}
+
+	manager := actualCfg.CreateManager(nl.logger)
 	if manager == nil {
-		return nil, fmt.Errorf("failed to create manager for node %s", cfg.NodeID)
+		return nil, fmt.Errorf("failed to create manager for node %s", actualCfg.NodeID)
+	}
+
+	if actualCfg.Discovery.Type == "inmemory" {
+		manager.AddProvider(nl.hub.NewProvider())
 	}
 
 	instance := &NodeInstance{
 		Manager:   manager,
-		Config:    cfg,
+		Config:    actualCfg,
 		StartedAt: time.Now(),
 		Ready:     false,
 	}
 
-	if err := manager.Start(ctx, cfg.GRPCPort); err != nil {
-		return nil, fmt.Errorf("failed to start node %s: %w", cfg.NodeID, err)
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- manager.Start(ctx, actualCfg.GRPCPort)
+	}()
+
+	var startErr error
+	select {
+	case err := <-errCh:
+		startErr = err
+	case <-time.After(15 * time.Second):
+		startErr = fmt.Errorf("node %s start timed out", actualCfg.NodeID)
+		_ = manager.Stop()
+		select {
+		case <-errCh:
+		case <-time.After(2 * time.Second):
+		}
+	}
+
+	if startErr != nil {
+		return nil, startErr
 	}
 
 	nl.instances[cfg.NodeID] = instance
 
 	go nl.monitorReadiness(ctx, instance)
 
-	nl.logger.Info("node launched", "node_id", cfg.NodeID, "grpc_port", cfg.GRPCPort)
+	nl.logger.Info("node launched", "node_id", actualCfg.NodeID, "raft_addr", actualCfg.RaftAddr, "grpc_port", actualCfg.GRPCPort)
 	return instance, nil
 }
 

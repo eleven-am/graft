@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,7 +21,7 @@ import (
 	"github.com/eleven-am/graft/internal/adapters/node_registry"
 	"github.com/eleven-am/graft/internal/adapters/observability"
 	"github.com/eleven-am/graft/internal/adapters/queue"
-	"github.com/eleven-am/graft/internal/adapters/raft"
+	"github.com/eleven-am/graft/internal/adapters/raft2"
 	"github.com/eleven-am/graft/internal/adapters/rate_limiter"
 	"github.com/eleven-am/graft/internal/adapters/storage"
 	"github.com/eleven-am/graft/internal/adapters/tracing"
@@ -52,6 +53,7 @@ type Manager struct {
 	config           *domain.Config
 	logger           *slog.Logger
 	nodeID           string
+	grpcPort         int
 	readinessManager *readiness.Manager
 	workflowIntakeMu sync.RWMutex
 	workflowIntakeOk bool
@@ -62,8 +64,8 @@ type Manager struct {
 
 type managerProviders struct {
 	newEventManager   func(ports.StoragePort, string, *slog.Logger) ports.EventManager
-	newRaftStorage    func(dataDir string, logger *slog.Logger) (*raft.Storage, error)
-	newRaftNode       func(cfg *raft.Config, storage *raft.Storage, events ports.EventManager, appTransport ports.TransportPort, logger *slog.Logger) (ports.RaftNode, error)
+	newRaftStorage    func(dataDir string, logger *slog.Logger) (*raft2.Storage, error)
+	newRaftNode       func(cfg *raft2.Config, storage *raft2.Storage, events ports.EventManager, appTransport ports.TransportPort, logger *slog.Logger) (ports.RaftNode, error)
 	newAppStorage     func(raft ports.RaftNode, db *badger.DB, logger *slog.Logger) ports.StoragePort
 	newNodeRegistry   func(*slog.Logger) ports.NodeRegistryPort
 	newClusterManager func(ports.RaftNode, int, *slog.Logger) ports.ClusterManager
@@ -78,9 +80,11 @@ func defaultProviders() managerProviders {
 		newEventManager: func(storage ports.StoragePort, nodeID string, l *slog.Logger) ports.EventManager {
 			return events.NewManager(storage, nodeID, l)
 		},
-		newRaftStorage: func(dataDir string, l *slog.Logger) (*raft.Storage, error) { return raft.NewStorage(dataDir, l) },
-		newRaftNode: func(cfg *raft.Config, st *raft.Storage, ev ports.EventManager, t ports.TransportPort, l *slog.Logger) (ports.RaftNode, error) {
-			return raft.NewNode(cfg, st, ev, t, l)
+		newRaftStorage: func(dataDir string, l *slog.Logger) (*raft2.Storage, error) {
+			return raft2.NewStorage(raft2.StorageConfig{DataDir: filepath.Join(dataDir, "raft2")}, l)
+		},
+		newRaftNode: func(cfg *raft2.Config, st *raft2.Storage, ev ports.EventManager, t ports.TransportPort, l *slog.Logger) (ports.RaftNode, error) {
+			return raft2.NewNode(cfg, st, ev, t, l)
 		},
 		newAppStorage: func(r ports.RaftNode, db *badger.DB, l *slog.Logger) ports.StoragePort {
 			return storage.NewAppStorage(r, db, l)
@@ -160,7 +164,7 @@ func NewWithConfig(config *domain.Config) *Manager {
 
 	discoveryManager := createDiscoveryManager(config, logger)
 
-	raftConfig := raft.DefaultRaftConfig(config.NodeID, config.ClusterID, config.BindAddr, config.DataDir, config.Cluster.Policy)
+	raftConfig := raft2.DefaultRaftConfig(config.NodeID, config.ClusterID, config.BindAddr, config.DataDir, config.Cluster.Policy)
 
 	prov := defaultProviders()
 
@@ -281,7 +285,7 @@ func NewWithConfig(config *domain.Config) *Manager {
 	}
 
 	if config.Observability.Enabled {
-		manager.observability = observability.NewServer(config.Observability.Port, manager, manager, logger)
+		manager.observability = observability.NewServer(0, manager, manager, logger)
 	}
 
 	cleanup = nil
@@ -349,7 +353,7 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 		return fmt.Errorf("invalid bind port: %w", err)
 	}
 
-	if err := m.discovery.Start(m.ctx, host, p); err != nil {
+	if err := m.discovery.Start(m.ctx, host, p, grpcPort); err != nil {
 		return fmt.Errorf("failed to start discovery: %w", err)
 	}
 
@@ -420,6 +424,8 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	if sink, ok := m.loadBalancer.(ports.LoadSink); ok {
 		m.transport.RegisterLoadSink(sink)
 	}
+	m.grpcPort = grpcPort
+
 	if err := m.transport.Start(m.ctx, m.config.BindAddr, grpcPort); err != nil {
 		return err
 	}
@@ -429,41 +435,8 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	if len(existingPeers) > 0 {
 		joinCtx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
 		defer cancel()
-		for _, peer := range existingPeers {
-			if peer.ID == m.nodeID {
-				continue
-			}
-			peerAddr := net.JoinHostPort(peer.Address, strconv.Itoa(peer.Port))
-
-			bootMetadata := metadata.GetGlobalBootstrapMetadata()
-			joinMetadata := metadata.ExtendMetadata(map[string]string{
-				"cluster_id": m.config.ClusterID,
-			}, bootMetadata)
-
-			req := &ports.JoinRequest{
-				NodeID:   m.nodeID,
-				Address:  host,
-				Port:     grpcPort,
-				Metadata: joinMetadata,
-			}
-			resp, err := m.transport.SendJoinRequest(joinCtx, peerAddr, req)
-			if err != nil {
-				m.logger.Warn("join request failed", "peer", peerAddr, "error", err)
-				continue
-			}
-			if resp != nil && resp.Accepted {
-				m.logger.Info("successfully joined cluster via RPC", "peer", peerAddr)
-				m.readinessManager.SetState(readiness.StateReady)
-				m.resumeWorkflowIntake()
-				break
-			} else {
-				m.logger.Warn("join request not accepted", "peer", peerAddr, "message", func() string {
-					if resp != nil {
-						return resp.Message
-					}
-					return ""
-				}())
-			}
+		if !m.joinPeers(joinCtx, existingPeers) {
+			return fmt.Errorf("failed to join existing peers")
 		}
 	}
 
@@ -1158,7 +1131,6 @@ func (m *Manager) watchForSeniorPeers() {
 			if !ok {
 				return
 			}
-			m.logger.Debug("discovery event received", "type", event.Type, "peer_id", event.Peer.ID)
 			m.handleDiscoveryEvent(event)
 		case <-ticker.C:
 			m.checkForSeniorPeers()
@@ -1216,8 +1188,89 @@ func (m *Manager) initiateDemotion(seniorPeer ports.Peer) {
 	}
 
 	m.logger.Info("demotion successful - node joined cluster", "senior_peer", seniorPeer.ID)
+
+	joinCtx, cancelJoin := context.WithTimeout(m.ctx, 10*time.Second)
+	defer cancelJoin()
+	if m.joinPeers(joinCtx, []ports.Peer{seniorPeer}) {
+		m.logger.Info("successfully joined senior peer after demotion", "senior_peer", seniorPeer.ID)
+	} else {
+		m.logger.Warn("join request after demotion not accepted", "senior_peer", seniorPeer.ID)
+	}
 	m.readinessManager.SetState(readiness.StateReady)
 	m.resumeWorkflowIntake()
+}
+
+func (m *Manager) joinPeers(ctx context.Context, peers []ports.Peer) bool {
+	host, raftPortStr, err := net.SplitHostPort(m.config.BindAddr)
+	if err != nil {
+		host = m.config.BindAddr
+		raftPortStr = "7222"
+	}
+
+	raftPort, err := strconv.Atoi(raftPortStr)
+	if err != nil {
+		m.logger.Error("invalid raft port in bind address", "bind_addr", m.config.BindAddr, "port_str", raftPortStr)
+		return false
+	}
+
+	bootMetadata := metadata.GetGlobalBootstrapMetadata()
+	joinMetadata := metadata.ExtendMetadata(map[string]string{
+		"cluster_id": m.config.ClusterID,
+	}, bootMetadata)
+
+	succeeded := false
+	for _, peer := range peers {
+		if peer.ID == m.nodeID {
+			continue
+		}
+
+		grpcPortStr, ok := peer.Metadata["grpc_port"]
+		if !ok {
+			m.logger.Warn("peer missing grpc_port metadata", "peer_id", peer.ID)
+			continue
+		}
+		grpcPort, err := strconv.Atoi(grpcPortStr)
+		if err != nil {
+			m.logger.Warn("invalid grpc_port in peer metadata", "peer_id", peer.ID, "value", grpcPortStr)
+			continue
+		}
+
+		peerAddr := net.JoinHostPort(peer.Address, strconv.Itoa(grpcPort))
+
+		m.logger.Debug("sending join request",
+			"peer_addr", peerAddr,
+			"node_id", m.nodeID,
+			"raft_address", host,
+			"raft_port", raftPort,
+			"grpc_port", m.grpcPort)
+
+		req := &ports.JoinRequest{
+			NodeID:   m.nodeID,
+			Address:  host,
+			Port:     raftPort,
+			Metadata: joinMetadata,
+		}
+
+		resp, err := m.transport.SendJoinRequest(ctx, peerAddr, req)
+		if err != nil {
+			m.logger.Warn("join request failed", "peer", peerAddr, "error", err)
+			continue
+		}
+
+		if resp != nil && resp.Accepted {
+			m.logger.Info("successfully joined cluster via RPC", "peer", peerAddr)
+			succeeded = true
+			break
+		}
+
+		message := "no response"
+		if resp != nil {
+			message = resp.Message
+		}
+		m.logger.Warn("join request not accepted", "peer", peerAddr, "message", message)
+	}
+
+	return succeeded
 }
 
 func (m *Manager) waitForSelfLeadership(ctx context.Context) error {

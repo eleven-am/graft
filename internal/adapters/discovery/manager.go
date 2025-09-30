@@ -2,6 +2,8 @@ package discovery
 
 import (
 	"context"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -41,7 +43,11 @@ func (m *Manager) Add(provider ports.Provider) error {
 }
 
 func (m *Manager) MDNS(service, domain string) error {
-	provider := NewMDNSProvider(service, domain, m.NodeID, m.logger)
+	hostname := m.NodeID
+	if hostname != "" && !strings.HasSuffix(hostname, ".") {
+		hostname += "."
+	}
+	provider := NewMDNSProvider(service, domain, hostname, m.logger)
 	return m.Add(provider)
 }
 
@@ -62,14 +68,15 @@ func (m *Manager) GetPeers() []ports.Peer {
 	return result
 }
 
-func (m *Manager) Start(ctx context.Context, address string, port int) error {
+func (m *Manager) Start(ctx context.Context, address string, port int, grpcPort int) error {
 	m.mu.Lock()
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.mu.Unlock()
 
 	bootMetadata := metadata.GetGlobalBootstrapMetadata()
 	nodeMetadata := metadata.ExtendMetadata(map[string]string{
-		"version": "1.0.0",
+		"version":   "1.0.0",
+		"grpc_port": strconv.Itoa(grpcPort),
 	}, bootMetadata)
 
 	node := ports.NodeInfo{
@@ -176,10 +183,8 @@ func (m *Manager) handleEvent(event ports.Event) {
 	switch event.Type {
 	case ports.PeerAdded, ports.PeerUpdated:
 		m.peers[event.Peer.ID] = event.Peer
-		m.logger.Debug("peer updated", "id", event.Peer.ID, "address", event.Peer.Address)
 	case ports.PeerRemoved:
 		delete(m.peers, event.Peer.ID)
-		m.logger.Debug("peer removed", "id", event.Peer.ID)
 	}
 }
 

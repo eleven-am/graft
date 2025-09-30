@@ -30,15 +30,10 @@ func NewRaftClusterManager(raftNode ports.RaftNode, minimumNodes int, logger *sl
 
 func (rcm *RaftClusterManager) GetActiveNodes() []string {
 	clusterInfo := rcm.raftNode.GetClusterInfo()
-	health := rcm.raftNode.GetHealth()
-
-	if !health.Healthy {
-		return []string{}
-	}
 
 	activeNodes := make([]string, 0, len(clusterInfo.Members))
 	for _, member := range clusterInfo.Members {
-		if member.State != ports.NodeFollower && member.State != ports.NodeLeader {
+		if member.State != ports.NodeFollower && member.State != ports.NodeLeader && member.State != ports.NodeCandidate {
 			continue
 		}
 		activeNodes = append(activeNodes, member.ID)

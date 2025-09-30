@@ -94,4 +94,120 @@ type RaftNode interface {
 	WaitForLeader(ctx context.Context) error
 }
 
+// -----------------------------------------------------------------------------
+// Raft v2 experimental interfaces (subject to refinement)
+// -----------------------------------------------------------------------------
+
+// RaftController represents the lifecycle and command surface of a Raft node.
+type RaftController interface {
+	Start(ctx context.Context, opts domain.RaftControllerOptions) error
+	Stop() error
+
+	WaitForLeadership(ctx context.Context) error
+	LeadershipInfo() RaftLeadershipInfo
+
+	Apply(cmd domain.Command, timeout time.Duration) (*domain.CommandResult, error)
+	Demote(ctx context.Context, peer RaftPeer) error
+
+	Metadata() map[string]string
+}
+
+// RaftLeadershipState enumerates high-level leadership states emitted by the controller.
+type RaftLeadershipState string
+
+const (
+	RaftLeadershipUnknown     RaftLeadershipState = "unknown"
+	RaftLeadershipProvisional RaftLeadershipState = "provisional"
+	RaftLeadershipLeader      RaftLeadershipState = "leader"
+	RaftLeadershipFollower    RaftLeadershipState = "follower"
+	RaftLeadershipJoining     RaftLeadershipState = "joining"
+	RaftLeadershipDemoted     RaftLeadershipState = "demoted"
+)
+
+// RaftLeadershipInfo describes the current leadership view of the controller.
+type RaftLeadershipInfo struct {
+	State         RaftLeadershipState
+	LeaderID      string
+	LeaderAddress string
+	Term          uint64
+}
+
+// RaftPeer identifies a peer in the cluster.
+type RaftPeer struct {
+	ID       string
+	Address  string
+	Metadata map[string]string
+}
+
+// BootstrapCoordinator drives bootstrap/join flows based on discovery events.
+type BootstrapCoordinator interface {
+	Start(ctx context.Context) error
+	Stop() error
+	Events() <-chan BootstrapEvent
+}
+
+// BootstrapEventType enumerates state transitions emitted during bootstrap.
+type BootstrapEventType string
+
+const (
+	BootstrapEventProvisional BootstrapEventType = "provisional"
+	BootstrapEventLeader      BootstrapEventType = "leader"
+	BootstrapEventFollower    BootstrapEventType = "follower"
+	BootstrapEventJoinStart   BootstrapEventType = "join_start"
+	BootstrapEventJoinSuccess BootstrapEventType = "join_success"
+	BootstrapEventJoinFailed  BootstrapEventType = "join_failed"
+	BootstrapEventDemotion    BootstrapEventType = "demotion"
+)
+
+// BootstrapEvent represents a high-level bootstrap transition notification.
+type BootstrapEvent struct {
+	Type      BootstrapEventType
+	Timestamp time.Time
+	NodeID    string
+	Details   map[string]string
+}
+
+// ReadinessState enumerates readiness states published to consumers.
+type ReadinessState string
+
+const (
+	ReadinessStateUnknown ReadinessState = "unknown"
+	ReadinessStatePending ReadinessState = "pending"
+	ReadinessStateReady   ReadinessState = "ready"
+	ReadinessStatePaused  ReadinessState = "paused"
+)
+
+// ReadinessGate coordinates readiness checks for workflow intake and health.
+type ReadinessGate interface {
+	SetState(state ReadinessState)
+	State() ReadinessState
+	IsReady() bool
+	WaitUntilReady(ctx context.Context) error
+}
+
+// RaftTransportFactory creates transport implementations suitable for the controller.
+type RaftTransportFactory interface {
+	Create(ctx context.Context, bindAddr string, handler RaftRPCHandler) (RaftTransport, string, error)
+}
+
+// RaftTransport represents the transport layer used by the controller.
+type RaftTransport interface {
+	Close() error
+}
+
+// RaftRPCHandler abstracts handling of Raft RPC payloads.
+type RaftRPCHandler interface {
+	HandleRPC(ctx context.Context, data []byte) ([]byte, error)
+}
+
+// RaftStorageFactory creates storage implementations for Raft metadata/logs.
+type RaftStorageFactory interface {
+	Open(ctx context.Context, nodeID string) (RaftStorage, error)
+}
+
+// RaftStorage represents the log/state storage backing a controller.
+type RaftStorage interface {
+	Close() error
+}
+
 // Tracing interfaces moved to ports/tracing.go

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/helpers/metadata"
 	"github.com/eleven-am/graft/internal/mocks"
 	"github.com/eleven-am/graft/internal/ports"
@@ -200,6 +201,7 @@ func createBootstrapTestManager(t *testing.T) (*Manager, *mocks.MockRaftNode, *m
 
 	mockRaft := mocks.NewMockRaftNode(t)
 	mockEngine := mocks.NewMockEnginePort(t)
+	mockTransport := mocks.NewMockTransportPort(t)
 
 	mockRaft.EXPECT().GetBootMetadata().Return("test-boot-id", time.Now().UnixNano()).Maybe()
 	mockRaft.EXPECT().GetHealth().Return(ports.HealthStatus{Healthy: true}).Maybe()
@@ -213,17 +215,26 @@ func createBootstrapTestManager(t *testing.T) (*Manager, *mocks.MockRaftNode, *m
 	mockEngine.EXPECT().ProcessTrigger(mock.Anything).Return(nil).Maybe()
 	mockEngine.EXPECT().Stop().Return(nil).Maybe()
 
+	mockTransport.EXPECT().SendJoinRequest(mock.Anything, mock.Anything, mock.Anything).Return(&ports.JoinResponse{Accepted: true}, nil).Maybe()
+	mockTransport.EXPECT().Stop().Return(nil).Maybe()
+
 	ctx, cancel := context.WithCancel(context.Background())
 
 	manager := &Manager{
 		nodeID:           "test-node",
 		raftAdapter:      mockRaft,
 		engine:           mockEngine,
+		transport:        mockTransport,
 		readinessManager: readiness.NewManager(),
 		workflowIntakeOk: true,
-		logger:           slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError})),
-		ctx:              ctx,
-		cancel:           cancel,
+		grpcPort:         9090,
+		config: &domain.Config{
+			NodeID:   "test-node",
+			BindAddr: "127.0.0.1:9090",
+		},
+		logger: slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelError})),
+		ctx:    ctx,
+		cancel: cancel,
 	}
 
 	return manager, mockRaft, mockEngine

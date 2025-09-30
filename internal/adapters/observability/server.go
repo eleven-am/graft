@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/eleven-am/graft/internal/helpers/netutil"
 	"github.com/eleven-am/graft/internal/ports"
 )
 
@@ -101,8 +102,13 @@ func (s *Server) Start(ctx context.Context) error {
 	mux.HandleFunc("/debug/pprof/", s.handlePprof)
 	mux.HandleFunc("/", s.handleRoot)
 
+	listener, actualPort, err := netutil.ListenTCP("", s.port)
+	if err != nil {
+		return err
+	}
+	s.port = actualPort
+
 	s.server = &http.Server{
-		Addr:         fmt.Sprintf(":%d", s.port),
 		Handler:      s.withLogging(mux),
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
@@ -112,7 +118,7 @@ func (s *Server) Start(ctx context.Context) error {
 	s.logger.Info("starting observability server", "port", s.port)
 
 	go func() {
-		if err := s.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := s.server.Serve(listener); err != nil && err != http.ErrServerClosed {
 			s.logger.Error("observability server error", "error", err)
 		}
 	}()

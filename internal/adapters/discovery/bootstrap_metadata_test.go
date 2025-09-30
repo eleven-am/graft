@@ -19,7 +19,7 @@ func TestManagerBootstrapMetadataPropagation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := manager.Start(ctx, "127.0.0.1", 8080)
+	err := manager.Start(ctx, "127.0.0.1", 8080, 9080)
 	if err != nil {
 		t.Fatalf("Failed to start discovery manager: %v", err)
 	}
