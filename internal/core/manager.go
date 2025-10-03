@@ -472,6 +472,12 @@ func (m *Manager) Stop() error {
 		m.transport.Stop()
 	}
 
+	if m.raftAdapter != nil {
+		if err := m.raftAdapter.Stop(); err != nil {
+			m.logger.Error("failed to stop raft adapter", "error", err)
+		}
+	}
+
 	return nil
 }
 
