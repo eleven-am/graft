@@ -562,6 +562,8 @@ func (r *Runtime) ClusterInfo() ports.ClusterInfo {
 					state = ports.NodeCandidate
 				case raft.Follower:
 					state = ports.NodeFollower
+				default:
+					panic("unhandled default case")
 				}
 			} else if leaderAddr != "" && string(srv.Address) == string(leaderAddr) {
 				state = ports.NodeLeader
