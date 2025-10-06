@@ -6,9 +6,11 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -153,6 +155,112 @@ func (sm *StateManager) Stop() error {
 	sm.cancel()
 	sm.flushBatch()
 	sm.wg.Wait()
+	return nil
+}
+
+func (sm *StateManager) cleanupBatchesForWorkflow(workflowID string) error {
+	entries, err := sm.storage.ListByPrefix(domain.WorkflowBatchPrefix)
+	if err != nil {
+		return err
+	}
+
+	for _, entry := range entries {
+		if len(entry.Value) == 0 {
+			continue
+		}
+
+		var batch domain.BatchedStateUpdate
+		if err := json.Unmarshal(entry.Value, &batch); err != nil {
+			if sm.logger != nil {
+				sm.logger.Warn("failed to unmarshal batch during workflow cleanup", slog.String("batch_key", entry.Key), slog.String("workflow_id", workflowID), slog.String("error", err.Error()))
+			}
+			continue
+		}
+
+		filteredIDs := make([]string, 0, len(batch.WorkflowIDs))
+		for _, id := range batch.WorkflowIDs {
+			if id == workflowID {
+				continue
+			}
+			filteredIDs = append(filteredIDs, id)
+		}
+
+		filteredUpdates := make([]domain.StateUpdate, 0, len(batch.Updates))
+		for _, update := range batch.Updates {
+			if update.WorkflowID == workflowID {
+				continue
+			}
+			filteredUpdates = append(filteredUpdates, update)
+		}
+
+		if len(filteredIDs) == len(batch.WorkflowIDs) && len(filteredUpdates) == len(batch.Updates) {
+			continue
+		}
+
+		if len(filteredIDs) == 0 && len(filteredUpdates) == 0 {
+			if err := sm.storage.Delete(entry.Key); err != nil && !domain.IsNotFound(err) {
+				return err
+			}
+			continue
+		}
+
+		batch.WorkflowIDs = filteredIDs
+		batch.Updates = filteredUpdates
+
+		data, err := json.Marshal(batch)
+		if err != nil {
+			if sm.logger != nil {
+				sm.logger.Warn("failed to marshal batch during workflow cleanup", slog.String("batch_key", entry.Key), slog.String("workflow_id", workflowID), slog.String("error", err.Error()))
+			}
+			continue
+		}
+
+		if err := sm.storage.Put(entry.Key, data, 0); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// DeleteWorkflow removes all persisted state associated with the specified workflow.
+func (sm *StateManager) DeleteWorkflow(ctx context.Context, workflowID string) error {
+	workflowID = strings.TrimSpace(workflowID)
+	if workflowID == "" {
+		return domain.NewValidationError("workflow id is required", nil)
+	}
+
+	var combinedErr error
+
+	if err := sm.storage.Delete(domain.WorkflowStateKey(workflowID)); err != nil && !domain.IsNotFound(err) {
+		combinedErr = errors.Join(combinedErr, err)
+	}
+
+	snapshotPrefix := fmt.Sprintf("%s%s:", domain.WorkflowSnapshotPrefix, workflowID)
+	if _, err := sm.storage.DeleteByPrefix(snapshotPrefix); err != nil {
+		combinedErr = errors.Join(combinedErr, err)
+	}
+
+	executionPrefix := fmt.Sprintf("workflow:execution:%s:", workflowID)
+	if _, err := sm.storage.DeleteByPrefix(executionPrefix); err != nil {
+		combinedErr = errors.Join(combinedErr, err)
+	}
+
+	if err := sm.cleanupBatchesForWorkflow(workflowID); err != nil {
+		combinedErr = errors.Join(combinedErr, err)
+	}
+
+	sm.mu.Lock()
+	delete(sm.pendingBatch, workflowID)
+	delete(sm.snapshots, workflowID)
+	delete(sm.deltas, workflowID)
+	delete(sm.stats, workflowID)
+	sm.mu.Unlock()
+
+	if combinedErr != nil {
+		return domain.NewDiscoveryError("state_manager", "delete_workflow", combinedErr)
+	}
+
 	return nil
 }
 

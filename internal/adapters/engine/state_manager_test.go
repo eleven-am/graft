@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"testing"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/mocks"
+	"github.com/eleven-am/graft/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 )
@@ -194,6 +196,45 @@ func TestOptimizedStateManager_StatisticsTracking(t *testing.T) {
 	assert.Equal(t, "workflow-1", stats.WorkflowID)
 	assert.True(t, stats.StateSize > 0)
 	assert.False(t, stats.LastChangeTimestamp.IsZero())
+}
+
+func TestStateManager_DeleteWorkflow(t *testing.T) {
+	storage := &mocks.MockStoragePort{}
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	sm := NewStateManager(storage, logger)
+	defer sm.Stop()
+
+	workflowID := "workflow-1"
+
+	sm.mu.Lock()
+	sm.pendingBatch[workflowID] = &domain.StateUpdate{WorkflowID: workflowID}
+	sm.snapshots[workflowID] = &domain.WorkflowStateSnapshot{WorkflowID: workflowID}
+	sm.deltas[workflowID] = []domain.StateDelta{{Operation: "set"}}
+	sm.stats[workflowID] = &domain.WorkflowStatistics{WorkflowID: workflowID}
+	sm.mu.Unlock()
+
+	storage.On("Delete", domain.WorkflowStateKey(workflowID)).Return(nil)
+	snapshotPrefix := fmt.Sprintf("%s%s:", domain.WorkflowSnapshotPrefix, workflowID)
+	storage.On("DeleteByPrefix", snapshotPrefix).Return(0, nil)
+	storage.On("ListByPrefix", domain.WorkflowBatchPrefix).Return([]ports.KeyValueVersion{}, nil)
+
+	ctx := context.Background()
+	err := sm.DeleteWorkflow(ctx, workflowID)
+	assert.NoError(t, err)
+
+	sm.mu.RLock()
+	_, existsPending := sm.pendingBatch[workflowID]
+	_, existsSnapshots := sm.snapshots[workflowID]
+	_, existsDeltas := sm.deltas[workflowID]
+	_, existsStats := sm.stats[workflowID]
+	sm.mu.RUnlock()
+
+	assert.False(t, existsPending)
+	assert.False(t, existsSnapshots)
+	assert.False(t, existsDeltas)
+	assert.False(t, existsStats)
+
+	storage.AssertExpectations(t)
 }
 
 func TestOptimizedStateManager_BatchTimeout(t *testing.T) {

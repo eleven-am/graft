@@ -25,6 +25,7 @@ type StateManagerPort interface {
 	SaveWorkflowState(ctx context.Context, workflow *domain.WorkflowInstance) error
 	LoadWorkflowState(ctx context.Context, workflowID string) (*domain.WorkflowInstance, error)
 	UpdateWorkflowState(ctx context.Context, workflowID string, updateFn func(*domain.WorkflowInstance) error) error
+	DeleteWorkflow(ctx context.Context, workflowID string) error
 	Stop() error
 }
 

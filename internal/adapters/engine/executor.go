@@ -4,10 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	json "github.com/eleven-am/graft/internal/xjson"
 	"log/slog"
 	"math/rand"
 	"time"
+
+	json "github.com/eleven-am/graft/internal/xjson"
 
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/ports"
@@ -523,6 +524,12 @@ func (e *Executor) publishWorkflowCompletedEvent(ctx context.Context, workflowID
 	eventKey := fmt.Sprintf("workflow:%s:completed", workflowID)
 	if err := e.storage.Put(eventKey, eventBytes, 0); err != nil {
 		return domain.NewDiscoveryError("executor", "publish_workflow_completed_event", err)
+	}
+
+	if err := e.stateManager.DeleteWorkflow(ctx, workflowID); err != nil {
+		e.logger.Warn("failed to cleanup workflow state after completion",
+			"workflow_id", workflowID,
+			"error", err)
 	}
 
 	return nil

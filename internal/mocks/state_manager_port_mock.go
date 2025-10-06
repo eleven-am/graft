@@ -221,6 +221,53 @@ func (_c *MockStateManagerPort_UpdateWorkflowState_Call) RunAndReturn(run func(c
 	return _c
 }
 
+// DeleteWorkflow provides a mock function with given fields: ctx, workflowID
+func (_m *MockStateManagerPort) DeleteWorkflow(ctx context.Context, workflowID string) error {
+	ret := _m.Called(ctx, workflowID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeleteWorkflow")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) error); ok {
+		r0 = rf(ctx, workflowID)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockStateManagerPort_DeleteWorkflow_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeleteWorkflow'
+type MockStateManagerPort_DeleteWorkflow_Call struct {
+	*mock.Call
+}
+
+// DeleteWorkflow is a helper method to define mock.On call
+//   - ctx context.Context
+//   - workflowID string
+func (_e *MockStateManagerPort_Expecter) DeleteWorkflow(ctx interface{}, workflowID interface{}) *MockStateManagerPort_DeleteWorkflow_Call {
+	return &MockStateManagerPort_DeleteWorkflow_Call{Call: _e.mock.On("DeleteWorkflow", ctx, workflowID)}
+}
+
+func (_c *MockStateManagerPort_DeleteWorkflow_Call) Run(run func(ctx context.Context, workflowID string)) *MockStateManagerPort_DeleteWorkflow_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *MockStateManagerPort_DeleteWorkflow_Call) Return(_a0 error) *MockStateManagerPort_DeleteWorkflow_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockStateManagerPort_DeleteWorkflow_Call) RunAndReturn(run func(context.Context, string) error) *MockStateManagerPort_DeleteWorkflow_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // NewMockStateManagerPort creates a new instance of MockStateManagerPort. It also registers a testing interface on the mock and a cleanup function to assert the mocks expectations.
 // The first argument is typically a *testing.T value.
 func NewMockStateManagerPort(t interface {
