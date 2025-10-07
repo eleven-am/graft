@@ -488,7 +488,10 @@ func (m *Manager) patternMatches(pattern, key string) bool {
 }
 
 func (m *Manager) BroadcastCommand(ctx context.Context, devCmd *domain.DevCommand) error {
-	internalCmd := devCmd.ToInternalCommand()
+	internalCmd, err := devCmd.ToInternalCommand()
+	if err != nil {
+		return domain.NewDiscoveryError("event-manager", "marshal-dev-command", err)
+	}
 
 	if m.storage == nil {
 		return domain.NewDiscoveryError("event-manager", "broadcast-dev-command", domain.ErrNotStarted)

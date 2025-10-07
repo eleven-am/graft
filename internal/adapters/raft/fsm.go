@@ -232,8 +232,13 @@ func (f *FSM) applyAtomicIncrement(cmd domain.Command) *domain.CommandResult {
 
 		versionKey := fmt.Sprintf("v:%s", cmd.Key)
 		if vItem, err := txn.Get([]byte(versionKey)); err == nil {
-			versionBytes, _ := vItem.ValueCopy(nil)
-			_ = json.Unmarshal(versionBytes, &currentVersion)
+			versionBytes, err := vItem.ValueCopy(nil)
+			if err != nil {
+				return fmt.Errorf("copy version for key %s: %w", cmd.Key, err)
+			}
+			if err := json.Unmarshal(versionBytes, &currentVersion); err != nil {
+				return fmt.Errorf("decode version for key %s: %w", cmd.Key, err)
+			}
 		}
 		return nil
 	}); err != nil {
@@ -257,7 +262,10 @@ func (f *FSM) applyAtomicIncrement(cmd domain.Command) *domain.CommandResult {
 
 	if err := f.db.Update(func(txn *badger.Txn) error {
 		versionKey := fmt.Sprintf("v:%s", cmd.Key)
-		versionBytes, _ := json.Marshal(newVersion)
+		versionBytes, err := json.Marshal(newVersion)
+		if err != nil {
+			return fmt.Errorf("encode version for key %s: %w", cmd.Key, err)
+		}
 		if err := txn.Set([]byte(cmd.Key), newValueBytes); err != nil {
 			return err
 		}
@@ -489,14 +497,22 @@ func (f *FSM) getAuthoritativeVersion(txn *badger.Txn, key string) (int64, error
 		return 0, err
 	}
 	var version int64
-	bytes, _ := item.ValueCopy(nil)
-	_ = json.Unmarshal(bytes, &version)
+	bytes, err := item.ValueCopy(nil)
+	if err != nil {
+		return 0, fmt.Errorf("copy version for key %s: %w", key, err)
+	}
+	if err := json.Unmarshal(bytes, &version); err != nil {
+		return 0, fmt.Errorf("decode version for key %s: %w", key, err)
+	}
 	return version, nil
 }
 
 func (f *FSM) writeValueAndVersion(txn *badger.Txn, key string, value []byte, newVersion int64, ttlSeconds int64) error {
 	versionKey := fmt.Sprintf("v:%s", key)
-	versionBytes, _ := json.Marshal(newVersion)
+	versionBytes, err := json.Marshal(newVersion)
+	if err != nil {
+		return fmt.Errorf("encode version for key %s: %w", key, err)
+	}
 	if err := txn.Set([]byte(key), value); err != nil {
 		return err
 	}
@@ -506,7 +522,10 @@ func (f *FSM) writeValueAndVersion(txn *badger.Txn, key string, value []byte, ne
 	if ttlSeconds > 0 {
 		ttlKey := fmt.Sprintf("ttl:%s", key)
 		expires := time.Now().Add(time.Duration(ttlSeconds) * time.Second)
-		ttlBytes, _ := json.Marshal(expires)
+		ttlBytes, err := json.Marshal(expires)
+		if err != nil {
+			return fmt.Errorf("encode ttl for key %s: %w", key, err)
+		}
 		if err := txn.Set([]byte(ttlKey), ttlBytes); err != nil {
 			return err
 		}

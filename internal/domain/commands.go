@@ -182,15 +182,18 @@ type DevCommand struct {
 
 type CommandHandler func(ctx context.Context, from string, params interface{}) error
 
-func (dc *DevCommand) ToInternalCommand() *Command {
-	payload, _ := json.Marshal(dc)
+func (dc *DevCommand) ToInternalCommand() (*Command, error) {
+	payload, err := json.Marshal(dc)
+	if err != nil {
+		return nil, fmt.Errorf("marshal dev command %s: %w", dc.Command, err)
+	}
 	return &Command{
 		Type:      CommandTypeDev,
 		Key:       "dev-cmd:" + dc.Command,
 		Value:     payload,
 		RequestID: generateRequestID(),
 		Timestamp: time.Now(),
-	}
+	}, nil
 }
 
 func generateRequestID() string {
