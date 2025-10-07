@@ -170,6 +170,27 @@ func TestQueue_ClaimOrdering(t *testing.T) {
 	mockStorage.AssertExpectations(t)
 }
 
+func TestQueue_ClaimProcessAfterDecodeError(t *testing.T) {
+	mockStorage := &mocks.MockStoragePort{}
+	mockEventManager := &mocks.MockEventManager{}
+	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+
+	payload := []byte("{\"process_after\":\"not-a-time\"}")
+	queueItem := domain.NewQueueItem(payload, 1)
+	itemBytes, _ := queueItem.ToBytes()
+
+	mockStorage.On("GetNext", "queue:test:ready:").Return(
+		"queue:test:ready:00000000000000000001", itemBytes, true, nil).Once()
+
+	data, claimID, exists, err := queue.Claim()
+	assert.Error(t, err)
+	assert.False(t, exists)
+	assert.Nil(t, data)
+	assert.Empty(t, claimID)
+
+	mockStorage.AssertExpectations(t)
+}
+
 func TestQueue_Complete(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}

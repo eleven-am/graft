@@ -47,6 +47,7 @@ func TestManagerBootstrapHandoff(t *testing.T) {
 		assert.Equal(t, readiness.StateDetecting, manager.readinessManager.GetState())
 
 		mockRaft.ExpectedCalls = nil
+		mockRaft.EXPECT().Stop().Return(nil).Maybe()
 		mockRaft.EXPECT().IsProvisional().Return(false).Times(1)
 
 		seniorPeer := ports.Peer{

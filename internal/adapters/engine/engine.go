@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	json "github.com/eleven-am/graft/internal/xjson"
 	"log/slog"
@@ -178,6 +179,16 @@ func (e *Engine) ProcessTrigger(trigger domain.WorkflowTrigger) error {
 func (e *Engine) GetWorkflowStatus(workflowID string) (*domain.WorkflowStatus, error) {
 	workflow, err := e.stateManager.LoadWorkflowState(e.ctx, workflowID)
 	if err != nil {
+		if errors.Is(err, domain.ErrNotFound) {
+			archived, archiveErr := e.loadArchivedWorkflowStatus(workflowID)
+			if archiveErr == nil {
+				return archived, nil
+			}
+			if errors.Is(archiveErr, domain.ErrNotFound) {
+				return nil, domain.NewDiscoveryError("engine", "load_workflow", err)
+			}
+			return nil, domain.NewDiscoveryError("engine", "load_workflow_archive", archiveErr)
+		}
 		return nil, domain.NewDiscoveryError("engine", "load_workflow", err)
 	}
 
@@ -215,6 +226,46 @@ func (e *Engine) GetWorkflowStatus(workflowID string) (*domain.WorkflowStatus, e
 		ExecutingNodes: executingNodes,
 		PendingNodes:   pendingNodes,
 		LastError:      workflow.LastError,
+	}
+
+	return status, nil
+}
+
+func (e *Engine) loadArchivedWorkflowStatus(workflowID string) (*domain.WorkflowStatus, error) {
+	eventKey := fmt.Sprintf("workflow:%s:completed", workflowID)
+	data, _, exists, err := e.storage.Get(eventKey)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, domain.ErrNotFound
+	}
+
+	var event domain.WorkflowCompletedEvent
+	if err := json.Unmarshal(data, &event); err != nil {
+		return nil, err
+	}
+
+	var currentState json.RawMessage
+	if event.FinalState != nil {
+		stateBytes, err := json.Marshal(event.FinalState)
+		if err != nil {
+			return nil, err
+		}
+		currentState = stateBytes
+	}
+
+	startedAt := event.CompletedAt.Add(-event.Duration)
+
+	status := &domain.WorkflowStatus{
+		WorkflowID:     workflowID,
+		Status:         domain.WorkflowStateCompleted,
+		CurrentState:   currentState,
+		StartedAt:      startedAt,
+		CompletedAt:    &event.CompletedAt,
+		ExecutedNodes:  []domain.ExecutedNodeData{},
+		ExecutingNodes: []domain.ExecutingNodeData{},
+		PendingNodes:   []domain.NodeConfig{},
 	}
 
 	return status, nil

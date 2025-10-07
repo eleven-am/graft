@@ -135,8 +135,11 @@ func (q *Queue) Claim() (item []byte, claimID string, exists bool, err error) {
 		var workItem struct {
 			ProcessAfter time.Time `json:"process_after"`
 		}
-		if err := json.Unmarshal(queueItem.Data, &workItem); err != nil {
-			workItem.ProcessAfter = time.Time{}
+		dataStr := string(queueItem.Data)
+		if strings.Contains(dataStr, "\"process_after\"") {
+			if err := json.Unmarshal(queueItem.Data, &workItem); err != nil {
+				return nil, "", false, fmt.Errorf("queue %s sequence %d: decode process_after metadata: %w", q.name, queueItem.Sequence, err)
+			}
 		}
 
 		if workItem.ProcessAfter.IsZero() || workItem.ProcessAfter.Before(now) || workItem.ProcessAfter.Equal(now) {

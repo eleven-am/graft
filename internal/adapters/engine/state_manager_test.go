@@ -216,6 +216,8 @@ func TestStateManager_DeleteWorkflow(t *testing.T) {
 	storage.On("Delete", domain.WorkflowStateKey(workflowID)).Return(nil)
 	snapshotPrefix := fmt.Sprintf("%s%s:", domain.WorkflowSnapshotPrefix, workflowID)
 	storage.On("DeleteByPrefix", snapshotPrefix).Return(0, nil)
+	executionPrefix := fmt.Sprintf("workflow:execution:%s:", workflowID)
+	storage.On("DeleteByPrefix", executionPrefix).Return(0, nil)
 	storage.On("ListByPrefix", domain.WorkflowBatchPrefix).Return([]ports.KeyValueVersion{}, nil)
 
 	ctx := context.Background()

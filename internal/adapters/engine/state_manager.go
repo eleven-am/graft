@@ -79,7 +79,9 @@ func NewStateManager(storage ports.StoragePort, logger *slog.Logger) *StateManag
 // SaveWorkflowState saves workflow state using the configured optimization strategy
 func (sm *StateManager) SaveWorkflowState(ctx context.Context, workflow *domain.WorkflowInstance) error {
 
-	sm.updateStatistics(workflow)
+	if err := sm.updateStatistics(workflow); err != nil {
+		return domain.NewDiscoveryError("state_manager", "update_statistics", err)
+	}
 	stats := sm.getStatistics(workflow.ID)
 
 	if workflow.Version <= 1 {
@@ -119,7 +121,10 @@ func (sm *StateManager) UpdateWorkflowState(ctx context.Context, workflowID stri
 			return domain.NewDiscoveryError("state_manager", "load_workflow_for_update", err)
 		}
 
-		oldState := sm.cloneWorkflow(workflow)
+		oldState, cloneErr := sm.cloneWorkflow(workflow)
+		if cloneErr != nil {
+			return domain.NewDiscoveryError("state_manager", "clone_workflow", cloneErr)
+		}
 
 		if err := updateFn(workflow); err != nil {
 			return domain.NewDiscoveryError("state_manager", "update_function", err)
@@ -346,9 +351,15 @@ func (sm *StateManager) saveIncremental(ctx context.Context, workflow *domain.Wo
 	deltaCount := len(sm.deltas[workflow.ID])
 	needsFullSnapshot := deltaCount >= maxIncrementalDeltasDefault
 
-	var snapshot domain.WorkflowStateSnapshot
+	var (
+		snapshot domain.WorkflowStateSnapshot
+		err      error
+	)
 	if needsFullSnapshot {
-		snapshot = sm.createFullSnapshot(workflow)
+		snapshot, err = sm.createFullSnapshot(workflow)
+		if err != nil {
+			return domain.NewDiscoveryError("state_manager", "create_full_snapshot", err)
+		}
 		sm.deltas[workflow.ID] = nil
 	} else {
 		snapshot = sm.createIncrementalSnapshot(workflow)
@@ -441,7 +452,12 @@ func (sm *StateManager) decompressData(data []byte) ([]byte, error) {
 	return io.ReadAll(gz)
 }
 
-func (sm *StateManager) updateStatistics(workflow *domain.WorkflowInstance) {
+func (sm *StateManager) updateStatistics(workflow *domain.WorkflowInstance) error {
+	data, err := json.Marshal(workflow)
+	if err != nil {
+		return fmt.Errorf("marshal workflow statistics: %w", err)
+	}
+
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -457,9 +473,9 @@ func (sm *StateManager) updateStatistics(workflow *domain.WorkflowInstance) {
 		stats.ChangeFrequency = 1.0 / timeSince.Seconds()
 	}
 
-	data, _ := json.Marshal(workflow)
 	stats.StateSize = int64(len(data))
 	stats.LastChangeTimestamp = now
+	return nil
 }
 
 func (sm *StateManager) getStatistics(workflowID string) *domain.WorkflowStatistics {
@@ -472,11 +488,16 @@ func (sm *StateManager) getStatistics(workflowID string) *domain.WorkflowStatist
 	return stats
 }
 
-func (sm *StateManager) cloneWorkflow(workflow *domain.WorkflowInstance) *domain.WorkflowInstance {
-	data, _ := json.Marshal(workflow)
+func (sm *StateManager) cloneWorkflow(workflow *domain.WorkflowInstance) (*domain.WorkflowInstance, error) {
+	data, err := json.Marshal(workflow)
+	if err != nil {
+		return nil, fmt.Errorf("marshal workflow clone: %w", err)
+	}
 	var clone domain.WorkflowInstance
-	json.Unmarshal(data, &clone)
-	return &clone
+	if err := json.Unmarshal(data, &clone); err != nil {
+		return nil, fmt.Errorf("unmarshal workflow clone: %w", err)
+	}
+	return &clone, nil
 }
 
 func (sm *StateManager) createStateDelta(oldState, newState *domain.WorkflowInstance) domain.StateDelta {
@@ -495,8 +516,11 @@ func (sm *StateManager) addDelta(workflowID string, delta domain.StateDelta) {
 	sm.deltas[workflowID] = append(sm.deltas[workflowID], delta)
 }
 
-func (sm *StateManager) createFullSnapshot(workflow *domain.WorkflowInstance) domain.WorkflowStateSnapshot {
-	data, _ := json.Marshal(workflow)
+func (sm *StateManager) createFullSnapshot(workflow *domain.WorkflowInstance) (domain.WorkflowStateSnapshot, error) {
+	data, err := json.Marshal(workflow)
+	if err != nil {
+		return domain.WorkflowStateSnapshot{}, fmt.Errorf("marshal full snapshot: %w", err)
+	}
 	checksum := sm.calculateChecksum(data)
 	snapshot := domain.WorkflowStateSnapshot{
 		WorkflowID:   workflow.ID,
@@ -511,13 +535,15 @@ func (sm *StateManager) createFullSnapshot(workflow *domain.WorkflowInstance) do
 	snapshot.Checksum = checksum
 	stats := sm.getStatistics(workflow.ID)
 	if stats.StateSize >= 1024 {
-		if compressed, err := sm.compressData(data); err == nil {
-			snapshot.CompressedData = compressed
-			snapshot.CompressedSize = int64(len(compressed))
-			snapshot.RawData = nil
+		compressed, err := sm.compressData(data)
+		if err != nil {
+			return domain.WorkflowStateSnapshot{}, fmt.Errorf("compress full snapshot: %w", err)
 		}
+		snapshot.CompressedData = compressed
+		snapshot.CompressedSize = int64(len(compressed))
+		snapshot.RawData = nil
 	}
-	return snapshot
+	return snapshot, nil
 }
 
 func (sm *StateManager) createIncrementalSnapshot(workflow *domain.WorkflowInstance) domain.WorkflowStateSnapshot {

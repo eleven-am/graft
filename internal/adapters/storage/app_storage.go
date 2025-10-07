@@ -107,10 +107,10 @@ func readTTL(txn *badger.Txn, key string) (*time.Time, error) {
 		return nil, err
 	}
 	var expireAt time.Time
-	if json.Unmarshal(ttlBytes, &expireAt) == nil {
-		return &expireAt, nil
+	if err := json.Unmarshal(ttlBytes, &expireAt); err != nil {
+		return nil, fmt.Errorf("decode ttl for key %s: %w", key, err)
 	}
-	return nil, nil
+	return &expireAt, nil
 }
 
 func (s *AppStorage) Get(key string) (value []byte, version int64, exists bool, err error) {
@@ -207,9 +207,11 @@ func (s *AppStorage) GetMetadata(key string) (*ports.KeyMetadata, error) {
 	}
 
 	err = s.db.View(func(txn *badger.Txn) error {
-		if exp, e := readTTL(txn, key); e == nil {
-			metadata.ExpireAt = exp
+		exp, e := readTTL(txn, key)
+		if e != nil {
+			return e
 		}
+		metadata.ExpireAt = exp
 		return nil
 	})
 
@@ -407,8 +409,13 @@ func (s *AppStorage) ExpireAt(key string, expireTime time.Time) error {
 	}
 
 	ttlKey := fmt.Sprintf("ttl:%s", key)
-	ttlBytes, _ := json.Marshal(expireTime)
-	return s.db.Update(func(txn *badger.Txn) error { return txn.Set([]byte(ttlKey), ttlBytes) })
+	ttlBytes, err := json.Marshal(expireTime)
+	if err != nil {
+		return fmt.Errorf("encode ttl for key %s: %w", key, err)
+	}
+	return s.db.Update(func(txn *badger.Txn) error {
+		return txn.Set([]byte(ttlKey), ttlBytes)
+	})
 }
 
 func (s *AppStorage) GetTTL(key string) (time.Duration, error) {
@@ -447,15 +454,16 @@ func (s *AppStorage) CleanExpired() (cleanedCount int, err error) {
 			item := it.Item()
 			ttlBytes, err := item.ValueCopy(nil)
 			if err != nil {
-				continue
+				return err
 			}
 
 			var expireAt time.Time
-			if json.Unmarshal(ttlBytes, &expireAt) == nil {
-				if now.After(expireAt) {
-					key := string(item.Key())[4:]
-					keysToDelete = append(keysToDelete, key)
-				}
+			if err := json.Unmarshal(ttlBytes, &expireAt); err != nil {
+				return fmt.Errorf("decode ttl for key %s: %w", string(item.Key()), err)
+			}
+			if now.After(expireAt) {
+				key := string(item.Key())[4:]
+				keysToDelete = append(keysToDelete, key)
 			}
 		}
 		return nil
@@ -565,7 +573,10 @@ func (t *transaction) Put(key string, value []byte, version int64) error {
 
 func (t *transaction) PutWithTTL(key string, value []byte, version int64, ttl time.Duration) error {
 	versionKey := fmt.Sprintf("v:%s", key)
-	versionBytes, _ := json.Marshal(version)
+	versionBytes, err := json.Marshal(version)
+	if err != nil {
+		return fmt.Errorf("encode version for key %s: %w", key, err)
+	}
 
 	if err := t.txn.Set([]byte(key), value); err != nil {
 		return err
@@ -576,7 +587,10 @@ func (t *transaction) PutWithTTL(key string, value []byte, version int64, ttl ti
 	if ttl > 0 {
 		ttlKey := fmt.Sprintf("ttl:%s", key)
 		expireAt := time.Now().Add(ttl)
-		ttlBytes, _ := json.Marshal(expireAt)
+		ttlBytes, err := json.Marshal(expireAt)
+		if err != nil {
+			return fmt.Errorf("encode ttl for key %s: %w", key, err)
+		}
 		if err := t.txn.Set([]byte(ttlKey), ttlBytes); err != nil {
 			return err
 		}
@@ -588,9 +602,15 @@ func (t *transaction) Delete(key string) error {
 	versionKey := fmt.Sprintf("v:%s", key)
 	ttlKey := fmt.Sprintf("ttl:%s", key)
 
-	t.txn.Delete([]byte(key))
-	t.txn.Delete([]byte(versionKey))
-	t.txn.Delete([]byte(ttlKey))
+	if err := t.txn.Delete([]byte(key)); err != nil {
+		return err
+	}
+	if err := t.txn.Delete([]byte(versionKey)); err != nil {
+		return err
+	}
+	if err := t.txn.Delete([]byte(ttlKey)); err != nil {
+		return err
+	}
 
 	return nil
 }
@@ -619,9 +639,11 @@ func (t *transaction) GetMetadata(key string) (*ports.KeyMetadata, error) {
 		Updated: time.Now(),
 	}
 
-	if exp, e := readTTL(t.txn, key); e == nil {
-		metadata.ExpireAt = exp
+	exp, err := readTTL(t.txn, key)
+	if err != nil {
+		return nil, err
 	}
+	metadata.ExpireAt = exp
 
 	return metadata, nil
 }

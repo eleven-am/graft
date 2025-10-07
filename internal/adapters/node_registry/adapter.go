@@ -219,11 +219,14 @@ func (a *NodeAdapter) buildArguments(ctx context.Context, state json.RawMessage,
 			args[i] = reflect.ValueOf(ctx)
 		} else {
 			var dataToUnmarshal json.RawMessage
+			var source string
 
 			if dataParamIndex == 0 {
 				dataToUnmarshal = state
+				source = "state"
 			} else if dataParamIndex == 1 {
 				dataToUnmarshal = config
+				source = "config"
 			} else {
 				return nil, fmt.Errorf("unexpected parameter count")
 			}
@@ -233,10 +236,9 @@ func (a *NodeAdapter) buildArguments(ctx context.Context, state json.RawMessage,
 
 			if len(dataToUnmarshal) > 0 {
 				if err := json.Unmarshal(dataToUnmarshal, ptr.Interface()); err != nil {
-					args[i] = reflect.Zero(paramType)
-				} else {
-					args[i] = ptr.Elem()
+					return nil, fmt.Errorf("node %s: decode %s parameter %d: %w", a.nodeName, source, i, err)
 				}
+				args[i] = ptr.Elem()
 			} else {
 				args[i] = reflect.Zero(paramType)
 			}
