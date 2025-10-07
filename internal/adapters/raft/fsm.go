@@ -3,6 +3,7 @@ package raft
 import (
 	"bytes"
 	stdjson "encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sync"
@@ -160,7 +161,7 @@ func (f *FSM) applyCAS(cmd domain.Command) *domain.CommandResult {
 	if err := f.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(cmd.Key))
 		if err != nil {
-			if err == badger.ErrKeyNotFound {
+			if errors.Is(err, badger.ErrKeyNotFound) {
 				return nil
 			}
 			return err
@@ -216,7 +217,7 @@ func (f *FSM) applyAtomicIncrement(cmd domain.Command) *domain.CommandResult {
 	if err := f.db.View(func(txn *badger.Txn) error {
 		item, err := txn.Get([]byte(cmd.Key))
 		if err != nil {
-			if err == badger.ErrKeyNotFound {
+			if errors.Is(err, badger.ErrKeyNotFound) {
 				return nil
 			}
 			return err
@@ -491,7 +492,7 @@ func (f *FSM) getAuthoritativeVersion(txn *badger.Txn, key string) (int64, error
 	versionKey := fmt.Sprintf("v:%s", key)
 	item, err := txn.Get([]byte(versionKey))
 	if err != nil {
-		if err == badger.ErrKeyNotFound {
+		if errors.Is(err, badger.ErrKeyNotFound) {
 			return 0, nil
 		}
 		return 0, err

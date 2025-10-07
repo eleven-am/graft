@@ -6,6 +6,7 @@ import (
 	json "github.com/eleven-am/graft/internal/xjson"
 	"log/slog"
 	"math/rand"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,14 @@ func NewQueue(name string, storage ports.StoragePort, eventManager ports.EventMa
 	}
 
 	return q
+}
+
+func (q *Queue) newQueueError(message string, cause error, opts ...domain.ErrorOption) *domain.DomainError {
+	merged := []domain.ErrorOption{domain.WithComponent("queue.Queue"), domain.WithContextDetail("queue_name", q.name)}
+	if len(opts) > 0 {
+		merged = append(merged, opts...)
+	}
+	return domain.NewResourceError(message, cause, merged...)
 }
 
 func (q *Queue) Enqueue(item []byte) error {
@@ -138,7 +147,13 @@ func (q *Queue) Claim() (item []byte, claimID string, exists bool, err error) {
 		dataStr := string(queueItem.Data)
 		if strings.Contains(dataStr, "\"process_after\"") {
 			if err := json.Unmarshal(queueItem.Data, &workItem); err != nil {
-				return nil, "", false, fmt.Errorf("queue %s sequence %d: decode process_after metadata: %w", q.name, queueItem.Sequence, err)
+				return nil, "", false, q.newQueueError(
+					"failed to decode process_after metadata",
+					err,
+					domain.WithContextDetail("sequence", strconv.FormatInt(queueItem.Sequence, 10)),
+					domain.WithContextDetail("storage_key", currentKey),
+					domain.WithContextDetail("operation", "claim"),
+				)
 			}
 		}
 

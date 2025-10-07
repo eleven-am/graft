@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strconv"
 
+	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/ports"
 	json "github.com/goccy/go-json"
 )
@@ -28,44 +30,57 @@ type NodeAdapter struct {
 	hasCanStart bool
 }
 
+const nodeAdapterComponent = "node_registry.NodeAdapter"
+
+func newNodeAdapterConfigError(message string, cause error, opts ...domain.ErrorOption) *domain.DomainError {
+	merged := []domain.ErrorOption{domain.WithComponent(nodeAdapterComponent)}
+	if len(opts) > 0 {
+		merged = append(merged, opts...)
+	}
+	return domain.NewConfigurationError(message, cause, merged...)
+}
+
 func NewNodeAdapter(node interface{}) (*NodeAdapter, error) {
 	if node == nil {
-		return nil, fmt.Errorf("node cannot be nil")
+		return nil, newNodeAdapterConfigError("node cannot be nil", nil)
 	}
 
 	nodeValue := reflect.ValueOf(node)
+	nodeType := nodeValue.Type()
+	typeDetail := domain.WithContextDetail("node_type", nodeType.String())
 
 	getNameMethod := nodeValue.MethodByName("GetName")
 	if !getNameMethod.IsValid() {
-		return nil, fmt.Errorf("node must have GetName() method")
+		return nil, newNodeAdapterConfigError("node must have GetName() method", nil, typeDetail)
 	}
 
 	getNameType := getNameMethod.Type()
 	if getNameType.NumIn() != 0 {
-		return nil, fmt.Errorf("GetName() must take no parameters")
+		return nil, newNodeAdapterConfigError("GetName() must take no parameters", nil, typeDetail)
 	}
 	if getNameType.NumOut() != 1 || getNameType.Out(0).Kind() != reflect.String {
-		return nil, fmt.Errorf("GetName() must return exactly one string")
+		return nil, newNodeAdapterConfigError("GetName() must return exactly one string", nil, typeDetail)
 	}
 
 	nameResults := getNameMethod.Call(nil)
 	nodeName := nameResults[0].String()
+	nodeNameDetail := domain.WithContextDetail("node_name", nodeName)
 
 	executeMethod := nodeValue.MethodByName("Execute")
 	if !executeMethod.IsValid() {
-		return nil, fmt.Errorf("node must have Execute() method")
+		return nil, newNodeAdapterConfigError("node must have Execute() method", nil, typeDetail, nodeNameDetail)
 	}
 
 	executeType := executeMethod.Type()
 	if executeType.NumIn() > 3 {
-		return nil, fmt.Errorf("Execute() can have at most 3 parameters")
+		return nil, newNodeAdapterConfigError("Execute() can have at most 3 parameters", nil, typeDetail, nodeNameDetail)
 	}
 	if executeType.NumOut() != 2 {
-		return nil, fmt.Errorf("Execute() must return exactly 2 values")
+		return nil, newNodeAdapterConfigError("Execute() must return exactly 2 values", nil, typeDetail, nodeNameDetail)
 	}
 
-	if err := validateExecuteReturns(executeType); err != nil {
-		return nil, fmt.Errorf("Execute() return validation failed: %w", err)
+	if err := validateExecuteReturns(executeType, nodeName); err != nil {
+		return nil, err
 	}
 
 	executeParamTypes, executeHasCtx, executeCtxIndex := extractParamTypes(executeType)
@@ -81,10 +96,10 @@ func NewNodeAdapter(node interface{}) (*NodeAdapter, error) {
 		canStartType := canStartMethod.Type()
 
 		if canStartType.NumIn() > 3 {
-			return nil, fmt.Errorf("CanStart() can have at most 3 parameters")
+			return nil, newNodeAdapterConfigError("CanStart() can have at most 3 parameters", nil, typeDetail, nodeNameDetail)
 		}
 		if canStartType.NumOut() != 1 || canStartType.Out(0).Kind() != reflect.Bool {
-			return nil, fmt.Errorf("CanStart() must return exactly one bool")
+			return nil, newNodeAdapterConfigError("CanStart() must return exactly one bool", nil, typeDetail, nodeNameDetail)
 		}
 
 		canStartParamTypes, canStartHasCtx, canStartCtxIndex = extractParamTypes(canStartType)
@@ -127,7 +142,11 @@ func (a *NodeAdapter) CanStart(ctx context.Context, state json.RawMessage, confi
 func (a *NodeAdapter) Execute(ctx context.Context, state json.RawMessage, config json.RawMessage) (*ports.NodeResult, error) {
 	args, err := a.buildArguments(ctx, state, config, a.executeParamTypes, a.executeHasCtx, a.executeCtxIndex)
 	if err != nil {
-		return nil, fmt.Errorf("failed to build arguments: %w", err)
+		return nil, newNodeAdapterConfigError(
+			"failed to build arguments",
+			err,
+			domain.WithContextDetail("node_name", a.nodeName),
+		)
 	}
 
 	results := a.executeMethod.Call(args)
@@ -228,7 +247,11 @@ func (a *NodeAdapter) buildArguments(ctx context.Context, state json.RawMessage,
 				dataToUnmarshal = config
 				source = "config"
 			} else {
-				return nil, fmt.Errorf("unexpected parameter count")
+				return nil, newNodeAdapterConfigError(
+					"unexpected parameter count for node adapter",
+					nil,
+					domain.WithContextDetail("node_name", a.nodeName),
+				)
 			}
 			dataParamIndex++
 
@@ -236,7 +259,13 @@ func (a *NodeAdapter) buildArguments(ctx context.Context, state json.RawMessage,
 
 			if len(dataToUnmarshal) > 0 {
 				if err := json.Unmarshal(dataToUnmarshal, ptr.Interface()); err != nil {
-					return nil, fmt.Errorf("node %s: decode %s parameter %d: %w", a.nodeName, source, i, err)
+					return nil, newNodeAdapterConfigError(
+						fmt.Sprintf("failed to decode %s parameter", source),
+						err,
+						domain.WithContextDetail("node_name", a.nodeName),
+						domain.WithContextDetail("parameter_index", strconv.Itoa(i)),
+						domain.WithContextDetail("parameter_source", source),
+					)
 				}
 				args[i] = ptr.Elem()
 			} else {
@@ -248,15 +277,18 @@ func (a *NodeAdapter) buildArguments(ctx context.Context, state json.RawMessage,
 	return args, nil
 }
 
-func validateExecuteReturns(methodType reflect.Type) error {
+func validateExecuteReturns(methodType reflect.Type, nodeName string) error {
 	firstReturn := methodType.Out(0)
+	signatureDetail := domain.WithContextDetail("method_signature", methodType.String())
+	nodeNameDetail := domain.WithContextDetail("node_name", nodeName)
+
 	if firstReturn.Kind() != reflect.Ptr && firstReturn.Kind() != reflect.Interface {
-		return fmt.Errorf("first return must be a pointer or interface")
+		return newNodeAdapterConfigError("Execute() first return must be a pointer or interface", nil, signatureDetail, nodeNameDetail)
 	}
 
 	errorType := reflect.TypeOf((*error)(nil)).Elem()
 	if !methodType.Out(1).Implements(errorType) {
-		return fmt.Errorf("second return must be error")
+		return newNodeAdapterConfigError("Execute() second return must implement error", nil, signatureDetail, nodeNameDetail)
 	}
 
 	return nil

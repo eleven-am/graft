@@ -324,7 +324,14 @@ func (e *Engine) StopWorkflow(ctx context.Context, workflowID string) error {
 	if err == nil {
 		e.metrics.IncrementWorkflowsFailed()
 
-		if emitErr := e.emitWorkflowLifecycleEvent(workflowID, "failed", fmt.Errorf("workflow stopped by request")); emitErr != nil {
+		workflowErr := newWorkflowError(
+			engineComponent,
+			"workflow stopped by request",
+			nil,
+			domain.WithWorkflowID(workflowID),
+			domain.WithSeverity(domain.SeverityInfo),
+		)
+		if emitErr := e.emitWorkflowLifecycleEvent(workflowID, "failed", workflowErr); emitErr != nil {
 			e.logger.Error("failed to emit workflow failed event", "workflow_id", workflowID, "error", emitErr)
 		}
 	}
@@ -345,7 +352,8 @@ func (e *Engine) processWork() {
 				processed, err := e.processNextItem()
 				if err != nil {
 					delay := backoff.NextDelay()
-					e.logger.Debug("processWork error, backing off", "error", err, "delay", delay)
+					attrs := append([]any{"delay", delay}, errorLogAttrs(err)...)
+					e.logger.Debug("processWork error, backing off", attrs...)
 
 					select {
 					case <-time.After(delay):
@@ -365,7 +373,8 @@ func (e *Engine) processWork() {
 				processed, err := e.processNextItem()
 				if err != nil {
 					delay := backoff.NextDelay()
-					e.logger.Debug("processWork periodic error, backing off", "error", err, "delay", delay)
+					attrs := append([]any{"delay", delay}, errorLogAttrs(err)...)
+					e.logger.Debug("processWork periodic error, backing off", attrs...)
 
 					select {
 					case <-time.After(delay):
@@ -591,12 +600,25 @@ func (e *Engine) GetMetrics() domain.ExecutionMetrics {
 func (e *Engine) emitWorkflowStartedEvent(event domain.WorkflowStartedEvent) error {
 	eventBytes, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("failed to marshal workflow started event: %w", err)
+		return newWorkflowError(
+			engineComponent,
+			"failed to marshal workflow started event",
+			err,
+			domain.WithWorkflowID(event.WorkflowID),
+			domain.WithContextDetail("event", "workflow_started"),
+		)
 	}
 
 	eventKey := fmt.Sprintf("workflow:%s:started", event.WorkflowID)
 	if err := e.storage.Put(eventKey, eventBytes, 0); err != nil {
-		return fmt.Errorf("failed to store workflow started event: %w", err)
+		return newWorkflowStorageError(
+			engineComponent,
+			"failed to store workflow started event",
+			err,
+			domain.WithWorkflowID(event.WorkflowID),
+			domain.WithContextDetail("event", "workflow_started"),
+			domain.WithContextDetail("storage_key", eventKey),
+		)
 	}
 
 	return nil
@@ -615,12 +637,25 @@ func (e *Engine) emitWorkflowLifecycleEvent(workflowID, eventType string, reason
 
 	eventBytes, err := json.Marshal(eventData)
 	if err != nil {
-		return fmt.Errorf("failed to marshal workflow %s event: %w", eventType, err)
+		return newWorkflowError(
+			engineComponent,
+			"failed to marshal workflow lifecycle event",
+			err,
+			domain.WithWorkflowID(workflowID),
+			domain.WithContextDetail("event", eventType),
+		)
 	}
 
 	eventKey := fmt.Sprintf("workflow:%s:%s", workflowID, eventType)
 	if err := e.storage.Put(eventKey, eventBytes, 0); err != nil {
-		return fmt.Errorf("failed to store workflow %s event: %w", eventType, err)
+		return newWorkflowStorageError(
+			engineComponent,
+			"failed to store workflow lifecycle event",
+			err,
+			domain.WithWorkflowID(workflowID),
+			domain.WithContextDetail("event", eventType),
+			domain.WithContextDetail("storage_key", eventKey),
+		)
 	}
 
 	return nil

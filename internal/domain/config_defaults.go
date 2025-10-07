@@ -378,7 +378,13 @@ func initializeClusterID(config *Config) error {
 
 	newClusterID := uuid.New().String()
 	if err := saveClusterID(persistenceFile, newClusterID, config.NodeID, config.Logger); err != nil {
-		return fmt.Errorf("failed to save new cluster ID: %w", err)
+		return NewStorageError(
+			"failed to save new cluster ID",
+			err,
+			WithComponent("domain.initializeClusterID"),
+			WithContextDetail("persistence_file", persistenceFile),
+			WithNodeID(config.NodeID),
+		)
 	}
 
 	config.ClusterID = newClusterID
@@ -392,7 +398,12 @@ func loadClusterID(persistenceFile string, logger *slog.Logger) (string, error) 
 		if os.IsNotExist(err) {
 			return "", nil
 		}
-		return "", fmt.Errorf("failed to read cluster persistence file: %w", err)
+		return "", NewStorageError(
+			"failed to read cluster persistence file",
+			err,
+			WithComponent("domain.loadClusterID"),
+			WithContextDetail("persistence_file", persistenceFile),
+		)
 	}
 
 	var persistence ClusterPersistence
@@ -406,7 +417,12 @@ func loadClusterID(persistenceFile string, logger *slog.Logger) (string, error) 
 
 func saveClusterID(persistenceFile, clusterID, nodeID string, logger *slog.Logger) error {
 	if err := os.MkdirAll(filepath.Dir(persistenceFile), 0755); err != nil {
-		return fmt.Errorf("failed to create persistence directory: %w", err)
+		return NewStorageError(
+			"failed to create persistence directory",
+			err,
+			WithComponent("domain.saveClusterID"),
+			WithContextDetail("persistence_file", persistenceFile),
+		)
 	}
 
 	persistence := ClusterPersistence{
@@ -417,11 +433,21 @@ func saveClusterID(persistenceFile, clusterID, nodeID string, logger *slog.Logge
 
 	data, err := json.MarshalIndent(persistence, "", "  ")
 	if err != nil {
-		return fmt.Errorf("failed to marshal cluster persistence: %w", err)
+		return NewStorageError(
+			"failed to marshal cluster persistence",
+			err,
+			WithComponent("domain.saveClusterID"),
+			WithContextDetail("persistence_file", persistenceFile),
+		)
 	}
 
 	if err := os.WriteFile(persistenceFile, data, 0644); err != nil {
-		return fmt.Errorf("failed to write cluster persistence file: %w", err)
+		return NewStorageError(
+			"failed to write cluster persistence file",
+			err,
+			WithComponent("domain.saveClusterID"),
+			WithContextDetail("persistence_file", persistenceFile),
+		)
 	}
 
 	return nil

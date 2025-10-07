@@ -3,6 +3,8 @@ package netutil
 import (
 	"fmt"
 	"net"
+
+	"github.com/eleven-am/graft/internal/domain"
 )
 
 // ListenTCP creates a TCP listener on the specified address and port.
@@ -12,7 +14,12 @@ func ListenTCP(host string, port int) (net.Listener, int, error) {
 	addr := fmt.Sprintf("%s:%d", host, port)
 	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, 0, fmt.Errorf("failed to listen on %s: %w", addr, err)
+		return nil, 0, domain.NewNetworkError(
+			fmt.Sprintf("failed to listen on %s", addr),
+			err,
+			domain.WithComponent("helpers.netutil.ListenTCP"),
+			domain.WithContextDetail("address", addr),
+		)
 	}
 
 	actualPort := listener.Addr().(*net.TCPAddr).Port

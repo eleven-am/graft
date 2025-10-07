@@ -346,26 +346,55 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 
 	host, portStr, err := net.SplitHostPort(m.config.BindAddr)
 	if err != nil {
-		return fmt.Errorf("invalid bind address: %w", err)
+		return domain.NewConfigurationError(
+			"invalid bind address",
+			err,
+			domain.WithComponent("core.Manager.Start"),
+			domain.WithContextDetail("bind_addr", m.config.BindAddr),
+		)
 	}
 	p, err := strconv.Atoi(portStr)
 	if err != nil {
-		return fmt.Errorf("invalid bind port: %w", err)
+		return domain.NewConfigurationError(
+			"invalid bind port",
+			err,
+			domain.WithComponent("core.Manager.Start"),
+			domain.WithContextDetail("bind_port", portStr),
+		)
 	}
 
 	if err := m.discovery.Start(m.ctx, host, p, grpcPort); err != nil {
-		return fmt.Errorf("failed to start discovery: %w", err)
+		return domain.NewDomainErrorWithCategory(
+			domain.CategoryDiscovery,
+			"failed to start discovery",
+			err,
+			domain.WithComponent("core.Manager.Start"),
+			domain.WithContextDetail("host", host),
+			domain.WithContextDetail("port", strconv.Itoa(p)),
+			domain.WithContextDetail("grpc_port", strconv.Itoa(grpcPort)),
+		)
 	}
 
 	existingPeers, err := m.waitForDiscovery(ctx, m.config.Raft.DiscoveryTimeout)
 	if err != nil {
-		return fmt.Errorf("discovery wait failed: %w", err)
+		return domain.NewDomainErrorWithCategory(
+			domain.CategoryDiscovery,
+			"discovery wait failed",
+			err,
+			domain.WithComponent("core.Manager.Start"),
+			domain.WithContextDetail("timeout", m.config.Raft.DiscoveryTimeout.String()),
+		)
 	}
 
 	readiness.LogPeerMetadata(existingPeers, m.logger)
 
 	if err := m.raftAdapter.Start(ctx, existingPeers); err != nil {
-		return fmt.Errorf("failed to start raft node: %w", err)
+		return domain.NewRaftError(
+			"failed to start raft node",
+			err,
+			domain.WithComponent("core.Manager.Start"),
+			domain.WithContextDetail("existing_peer_count", strconv.Itoa(len(existingPeers))),
+		)
 	}
 
 	m.raftAdapter.SetReadinessCallback(func(ready bool) {
@@ -401,15 +430,28 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	}
 
 	if err := m.loadBalancer.Start(m.ctx); err != nil {
-		return fmt.Errorf("failed to start load balancer: %w", err)
+		return domain.NewDomainErrorWithCategory(
+			domain.CategoryResource,
+			"failed to start load balancer",
+			err,
+			domain.WithComponent("core.Manager.Start"),
+		)
 	}
 
 	if err := m.engine.Start(m.ctx); err != nil {
-		return fmt.Errorf("failed to start engine: %w", err)
+		return domain.NewWorkflowError(
+			"failed to start engine",
+			err,
+			domain.WithComponent("core.Manager.Start"),
+		)
 	}
 
 	if err := m.eventManager.Start(m.ctx); err != nil {
-		return fmt.Errorf("failed to start event manager: %w", err)
+		return domain.NewWorkflowError(
+			"failed to start event manager",
+			err,
+			domain.WithComponent("core.Manager.Start"),
+		)
 	}
 
 	if m.observability != nil {

@@ -454,7 +454,13 @@ func (sm *StateManager) decompressData(data []byte) ([]byte, error) {
 func (sm *StateManager) updateStatistics(workflow *domain.WorkflowInstance) error {
 	data, err := json.Marshal(workflow)
 	if err != nil {
-		return fmt.Errorf("marshal workflow statistics: %w", err)
+		return newWorkflowError(
+			stateManagerComponent,
+			"failed to marshal workflow statistics",
+			err,
+			domain.WithWorkflowID(workflow.ID),
+			domain.WithContextDetail("operation", "update_statistics"),
+		)
 	}
 
 	sm.mu.Lock()
@@ -490,11 +496,23 @@ func (sm *StateManager) getStatistics(workflowID string) *domain.WorkflowStatist
 func (sm *StateManager) cloneWorkflow(workflow *domain.WorkflowInstance) (*domain.WorkflowInstance, error) {
 	data, err := json.Marshal(workflow)
 	if err != nil {
-		return nil, fmt.Errorf("marshal workflow clone: %w", err)
+		return nil, newWorkflowError(
+			stateManagerComponent,
+			"failed to marshal workflow clone",
+			err,
+			domain.WithWorkflowID(workflow.ID),
+			domain.WithContextDetail("operation", "clone_workflow"),
+		)
 	}
 	var clone domain.WorkflowInstance
 	if err := json.Unmarshal(data, &clone); err != nil {
-		return nil, fmt.Errorf("unmarshal workflow clone: %w", err)
+		return nil, newWorkflowError(
+			stateManagerComponent,
+			"failed to unmarshal workflow clone",
+			err,
+			domain.WithWorkflowID(workflow.ID),
+			domain.WithContextDetail("operation", "clone_workflow"),
+		)
 	}
 	return &clone, nil
 }
@@ -518,7 +536,13 @@ func (sm *StateManager) addDelta(workflowID string, delta domain.StateDelta) {
 func (sm *StateManager) createFullSnapshot(workflow *domain.WorkflowInstance) (domain.WorkflowStateSnapshot, error) {
 	data, err := json.Marshal(workflow)
 	if err != nil {
-		return domain.WorkflowStateSnapshot{}, fmt.Errorf("marshal full snapshot: %w", err)
+		return domain.WorkflowStateSnapshot{}, newWorkflowError(
+			stateManagerComponent,
+			"failed to marshal full snapshot",
+			err,
+			domain.WithWorkflowID(workflow.ID),
+			domain.WithContextDetail("operation", "create_full_snapshot"),
+		)
 	}
 	checksum := sm.calculateChecksum(data)
 	snapshot := domain.WorkflowStateSnapshot{
@@ -536,7 +560,13 @@ func (sm *StateManager) createFullSnapshot(workflow *domain.WorkflowInstance) (d
 	if stats.StateSize >= 1024 {
 		compressed, err := sm.compressData(data)
 		if err != nil {
-			return domain.WorkflowStateSnapshot{}, fmt.Errorf("compress full snapshot: %w", err)
+			return domain.WorkflowStateSnapshot{}, newWorkflowError(
+				stateManagerComponent,
+				"failed to compress full snapshot",
+				err,
+				domain.WithWorkflowID(workflow.ID),
+				domain.WithContextDetail("operation", "create_full_snapshot"),
+			)
 		}
 		snapshot.CompressedData = compressed
 		snapshot.CompressedSize = int64(len(compressed))

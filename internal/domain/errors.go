@@ -108,6 +108,71 @@ type DomainError struct {
 	UserFacing bool          `json:"user_facing"`
 }
 
+type ErrorOption func(*DomainError)
+
+func WithSeverity(severity ErrorSeverity) ErrorOption {
+	return func(err *DomainError) {
+		err.Severity = severity
+	}
+}
+
+func WithCode(code string) ErrorOption {
+	return func(err *DomainError) {
+		err.Code = code
+	}
+}
+
+func WithRetryable(retryable bool) ErrorOption {
+	return func(err *DomainError) {
+		err.Retryable = retryable
+	}
+}
+
+func WithUserFacing(userFacing bool) ErrorOption {
+	return func(err *DomainError) {
+		err.UserFacing = userFacing
+	}
+}
+
+func WithComponent(component string) ErrorOption {
+	return func(err *DomainError) {
+		err.Context.Component = component
+	}
+}
+
+func WithOperation(operation string) ErrorOption {
+	return func(err *DomainError) {
+		err.Context.Operation = operation
+	}
+}
+
+func WithNodeID(nodeID string) ErrorOption {
+	return func(err *DomainError) {
+		err.Context.NodeID = nodeID
+	}
+}
+
+func WithWorkflowID(workflowID string) ErrorOption {
+	return func(err *DomainError) {
+		err.Context.WorkflowID = workflowID
+	}
+}
+
+func WithRequestID(requestID string) ErrorOption {
+	return func(err *DomainError) {
+		err.Context.RequestID = requestID
+	}
+}
+
+func WithContextDetail(key, value string) ErrorOption {
+	return func(err *DomainError) {
+		if err.Context.Details == nil {
+			err.Context.Details = make(map[string]string)
+		}
+		err.Context.Details[key] = value
+	}
+}
+
 type ErrorContext struct {
 	NodeID     string            `json:"node_id,omitempty"`
 	WorkflowID string            `json:"workflow_id,omitempty"`
@@ -166,11 +231,11 @@ func (e *DomainError) WithOperation(operation string) *DomainError {
 	return e
 }
 
-func NewDomainError(message string, cause error) *DomainError {
-	return NewDomainErrorWithCategory(CategoryUnknown, message, cause)
+func NewDomainError(message string, cause error, opts ...ErrorOption) *DomainError {
+	return NewDomainErrorWithCategory(CategoryUnknown, message, cause, opts...)
 }
 
-func NewDomainErrorWithCategory(category ErrorCategory, message string, cause error) *DomainError {
+func NewDomainErrorWithCategory(category ErrorCategory, message string, cause error, opts ...ErrorOption) *DomainError {
 	err := &DomainError{
 		Category:   category,
 		Severity:   SeverityError,
@@ -181,6 +246,12 @@ func NewDomainErrorWithCategory(category ErrorCategory, message string, cause er
 		Timestamp:  time.Now(),
 		Retryable:  isRetryable(category, cause),
 		UserFacing: isUserFacing(category),
+	}
+
+	for _, opt := range opts {
+		if opt != nil {
+			opt(err)
+		}
 	}
 
 	err.captureCallSite()
@@ -307,15 +378,63 @@ func NewVersionMismatchError(key string, expected, actual int64) *StorageError {
 }
 
 var (
-	ErrAlreadyStarted  = errors.New("adapter already started")
-	ErrAlreadyShutdown = errors.New("already shutdown")
-	ErrNotStarted      = errors.New("adapter not started")
-	ErrNotFound        = errors.New("resource not found")
-	ErrInvalidConfig   = errors.New("invalid configuration")
-	ErrTimeout         = errors.New("operation timeout")
-	ErrConnection      = errors.New("connection error")
-	ErrInvalidInput    = errors.New("invalid input")
-	ErrNodeNotReady    = errors.New("node not ready to execute")
+	ErrAlreadyStarted = NewDomainErrorWithCategory(
+		CategoryConfiguration,
+		"adapter already started",
+		nil,
+		WithCode("SYSTEM_ALREADY_STARTED"),
+		WithSeverity(SeverityWarning),
+	)
+	ErrAlreadyShutdown = NewDomainErrorWithCategory(
+		CategoryConfiguration,
+		"already shutdown",
+		nil,
+		WithCode("SYSTEM_ALREADY_SHUTDOWN"),
+		WithSeverity(SeverityInfo),
+	)
+	ErrNotStarted = NewDomainErrorWithCategory(
+		CategoryConfiguration,
+		"adapter not started",
+		nil,
+		WithCode("SYSTEM_NOT_STARTED"),
+		WithSeverity(SeverityWarning),
+	)
+	ErrNotFound = NewDomainErrorWithCategory(
+		CategoryStorage,
+		"resource not found",
+		nil,
+		WithCode("RESOURCE_NOT_FOUND"),
+	)
+	ErrInvalidConfig = NewDomainErrorWithCategory(
+		CategoryConfiguration,
+		"invalid configuration",
+		nil,
+		WithCode("CONFIG_INVALID"),
+	)
+	ErrTimeout = NewDomainErrorWithCategory(
+		CategoryTimeout,
+		"operation timeout",
+		nil,
+		WithCode("OPERATION_TIMEOUT"),
+	)
+	ErrConnection = NewDomainErrorWithCategory(
+		CategoryNetwork,
+		"connection error",
+		nil,
+		WithCode("NETWORK_CONNECTION_ERROR"),
+	)
+	ErrInvalidInput = NewDomainErrorWithCategory(
+		CategoryValidation,
+		"invalid input",
+		nil,
+		WithCode("VALIDATION_INVALID_INPUT"),
+	)
+	ErrNodeNotReady = NewDomainErrorWithCategory(
+		CategoryWorkflow,
+		"node not ready to execute",
+		nil,
+		WithCode("WORKFLOW_NODE_NOT_READY"),
+	)
 )
 
 type DiscoveryError struct {
@@ -433,40 +552,40 @@ func GetErrorContext(err error) *ErrorContext {
 }
 
 // Convenience constructors for common error types
-func NewValidationError(message string, cause error) *DomainError {
-	return NewDomainErrorWithCategory(CategoryValidation, message, cause)
+func NewValidationError(message string, cause error, opts ...ErrorOption) *DomainError {
+	return NewDomainErrorWithCategory(CategoryValidation, message, cause, opts...)
 }
 
-func NewNetworkError(message string, cause error) *DomainError {
-	return NewDomainErrorWithCategory(CategoryNetwork, message, cause)
+func NewNetworkError(message string, cause error, opts ...ErrorOption) *DomainError {
+	return NewDomainErrorWithCategory(CategoryNetwork, message, cause, opts...)
 }
 
-func NewStorageError(message string, cause error) *DomainError {
-	return NewDomainErrorWithCategory(CategoryStorage, message, cause)
+func NewStorageError(message string, cause error, opts ...ErrorOption) *DomainError {
+	return NewDomainErrorWithCategory(CategoryStorage, message, cause, opts...)
 }
 
-func NewRaftError(message string, cause error) *DomainError {
-	return NewDomainErrorWithCategory(CategoryRaft, message, cause)
+func NewRaftError(message string, cause error, opts ...ErrorOption) *DomainError {
+	return NewDomainErrorWithCategory(CategoryRaft, message, cause, opts...)
 }
 
-func NewWorkflowError(message string, cause error) *DomainError {
-	return NewDomainErrorWithCategory(CategoryWorkflow, message, cause)
+func NewWorkflowError(message string, cause error, opts ...ErrorOption) *DomainError {
+	return NewDomainErrorWithCategory(CategoryWorkflow, message, cause, opts...)
 }
 
-func NewTimeoutError(message string, cause error) *DomainError {
-	return NewDomainErrorWithCategory(CategoryTimeout, message, cause)
+func NewTimeoutError(message string, cause error, opts ...ErrorOption) *DomainError {
+	return NewDomainErrorWithCategory(CategoryTimeout, message, cause, opts...)
 }
 
-func NewConfigurationError(message string, cause error) *DomainError {
-	return NewDomainErrorWithCategory(CategoryConfiguration, message, cause)
+func NewConfigurationError(message string, cause error, opts ...ErrorOption) *DomainError {
+	return NewDomainErrorWithCategory(CategoryConfiguration, message, cause, opts...)
 }
 
-func NewPermissionError(message string, cause error) *DomainError {
-	return NewDomainErrorWithCategory(CategoryPermission, message, cause)
+func NewPermissionError(message string, cause error, opts ...ErrorOption) *DomainError {
+	return NewDomainErrorWithCategory(CategoryPermission, message, cause, opts...)
 }
 
-func NewResourceError(message string, cause error) *DomainError {
-	return NewDomainErrorWithCategory(CategoryResource, message, cause)
+func NewResourceError(message string, cause error, opts ...ErrorOption) *DomainError {
+	return NewDomainErrorWithCategory(CategoryResource, message, cause, opts...)
 }
 
 type ErrNotLeader struct {

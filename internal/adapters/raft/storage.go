@@ -10,6 +10,7 @@ import (
 	"log/slog"
 
 	"github.com/dgraph-io/badger/v3"
+	"github.com/eleven-am/graft/internal/domain"
 	"github.com/hashicorp/raft"
 	raftbadger "github.com/rfyiamcool/raft-badger"
 )
@@ -20,6 +21,16 @@ type Storage struct {
 	stableStore   raft.StableStore
 	snapshotStore raft.SnapshotStore
 	stateDB       *badger.DB
+}
+
+const storageComponent = "adapters.raft.Storage"
+
+func newRaftStorageError(message string, cause error, opts ...domain.ErrorOption) *domain.DomainError {
+	merged := []domain.ErrorOption{domain.WithComponent(storageComponent)}
+	if len(opts) > 0 {
+		merged = append(merged, opts...)
+	}
+	return domain.NewStorageError(message, cause, merged...)
 }
 
 // StorageConfig captures the directories used by the storage implementation.
@@ -33,11 +44,15 @@ func NewStorage(cfg StorageConfig, logger *slog.Logger) (*Storage, error) {
 	}
 
 	if cfg.DataDir == "" {
-		return nil, fmt.Errorf("raft: storage requires data directory")
+		return nil, newRaftStorageError("data directory is required", nil)
 	}
 
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
-		return nil, fmt.Errorf("raft: create data dir %s: %w", cfg.DataDir, err)
+		return nil, newRaftStorageError(
+			"failed to create data directory",
+			err,
+			domain.WithContextDetail("data_dir", cfg.DataDir),
+		)
 	}
 
 	logPath := filepath.Join(cfg.DataDir, "raft-log")
@@ -45,7 +60,11 @@ func NewStorage(cfg StorageConfig, logger *slog.Logger) (*Storage, error) {
 	statePath := filepath.Join(cfg.DataDir, "state")
 
 	if err := os.MkdirAll(snapshotPath, 0o755); err != nil {
-		return nil, fmt.Errorf("raft: create snapshot dir %s: %w", snapshotPath, err)
+		return nil, newRaftStorageError(
+			"failed to create snapshot directory",
+			err,
+			domain.WithContextDetail("snapshot_dir", snapshotPath),
+		)
 	}
 
 	logOpts := badger.DefaultOptions(logPath)
@@ -53,13 +72,21 @@ func NewStorage(cfg StorageConfig, logger *slog.Logger) (*Storage, error) {
 
 	store, err := raftbadger.New(raftbadger.Config{DataPath: logPath}, &logOpts)
 	if err != nil {
-		return nil, fmt.Errorf("raft: open raft log store: %w", err)
+		return nil, newRaftStorageError(
+			"failed to open raft log store",
+			err,
+			domain.WithContextDetail("log_path", logPath),
+		)
 	}
 
 	snapshotStore, err := raft.NewFileSnapshotStore(snapshotPath, 3, os.Stderr)
 	if err != nil {
 		_ = store.Close()
-		return nil, fmt.Errorf("raft: open snapshot store: %w", err)
+		return nil, newRaftStorageError(
+			"failed to open snapshot store",
+			err,
+			domain.WithContextDetail("snapshot_dir", snapshotPath),
+		)
 	}
 
 	stateOpts := badger.DefaultOptions(statePath)
@@ -68,7 +95,11 @@ func NewStorage(cfg StorageConfig, logger *slog.Logger) (*Storage, error) {
 	stateDB, err := badger.Open(stateOpts)
 	if err != nil {
 		_ = store.Close()
-		return nil, fmt.Errorf("raft: open state db: %w", err)
+		return nil, newRaftStorageError(
+			"failed to open state database",
+			err,
+			domain.WithContextDetail("state_path", statePath),
+		)
 	}
 
 	return &Storage{

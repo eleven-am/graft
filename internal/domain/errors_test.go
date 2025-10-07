@@ -63,7 +63,7 @@ func TestErrorWithContext(t *testing.T) {
 func TestErrorCategorization(t *testing.T) {
 	testCases := []struct {
 		name               string
-		constructor        func(string, error) *DomainError
+		constructor        func(string, error, ...ErrorOption) *DomainError
 		expectedCategory   ErrorCategory
 		expectedRetryable  bool
 		expectedUserFacing bool

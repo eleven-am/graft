@@ -68,7 +68,12 @@ func (t *GRPCTransport) Start(ctx context.Context, bindAddr string, port int) er
 	if t.cfg.EnableTLS && t.cfg.TLSCertFile != "" && t.cfg.TLSKeyFile != "" {
 		cert, err := tls.LoadX509KeyPair(t.cfg.TLSCertFile, t.cfg.TLSKeyFile)
 		if err != nil {
-			return fmt.Errorf("failed to load tls certs: %w", err)
+			return newTransportConfigError(
+				"failed to load TLS certificates",
+				err,
+				domain.WithContextDetail("cert_file", t.cfg.TLSCertFile),
+				domain.WithContextDetail("key_file", t.cfg.TLSKeyFile),
+			)
 		}
 		tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
 		if t.cfg.TLSCAFile != "" {
@@ -521,7 +526,12 @@ func (t *GRPCTransport) SendPublishLoad(ctx context.Context, nodeAddr string, up
 		t.logger.Debug("load update rejected",
 			"node_addr", nodeAddr,
 			"message", resp.Message)
-		return fmt.Errorf("load update rejected: %s", resp.Message)
+		return newTransportResourceError(
+			"load update rejected",
+			nil,
+			domain.WithContextDetail("node_addr", nodeAddr),
+			domain.WithContextDetail("message", resp.Message),
+		)
 	}
 
 	return nil

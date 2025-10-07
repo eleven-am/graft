@@ -3,7 +3,6 @@ package raft
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 	"sync"
 	"time"
@@ -16,6 +15,19 @@ import (
 	"github.com/hashicorp/go-hclog"
 	"github.com/hashicorp/raft"
 )
+
+const runtimeComponent = "adapters.raft.Runtime"
+
+func (r *Runtime) raftError(message string, cause error, opts ...domain.ErrorOption) *domain.DomainError {
+	merged := []domain.ErrorOption{domain.WithComponent(runtimeComponent)}
+	if r != nil && r.options.NodeID != "" {
+		merged = append(merged, domain.WithNodeID(r.options.NodeID))
+	}
+	if len(opts) > 0 {
+		merged = append(merged, opts...)
+	}
+	return domain.NewRaftError(message, cause, merged...)
+}
 
 // StorageResources captures the raft storage handles required by the runtime.
 type StorageResources struct {
@@ -131,7 +143,11 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 	storage, err := r.deps.StorageProvider.Create(runtimeCtx, opts)
 	if err != nil {
 		cancel()
-		return fmt.Errorf("raft: storage init failed: %w", err)
+		return r.raftError(
+			"storage initialization failed",
+			err,
+			domain.WithContextDetail("data_dir", opts.DataDir),
+		)
 	}
 
 	r.mu.Lock()
@@ -142,14 +158,21 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 	if err != nil {
 		cancel()
 		r.closeStores()
-		return fmt.Errorf("raft: fsm init failed: %w", err)
+		return r.raftError(
+			"state machine initialization failed",
+			err,
+		)
 	}
 
 	transport, advertise, err := r.deps.TransportProvider.Create(runtimeCtx, opts)
 	if err != nil {
 		cancel()
 		r.closeStores()
-		return fmt.Errorf("raft: transport init failed: %w", err)
+		return r.raftError(
+			"transport initialization failed",
+			err,
+			domain.WithContextDetail("bind_address", opts.BindAddress),
+		)
 	}
 
 	config := r.buildRaftConfig(opts)
@@ -165,7 +188,11 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 			cancel()
 			r.closeTransport(transport)
 			r.closeStores()
-			return fmt.Errorf("raft: bootstrap failed: %w", err)
+			return r.raftError(
+				"bootstrap failed",
+				err,
+				domain.WithContextDetail("peer_count", strconv.Itoa(len(opts.Peers))),
+			)
 		}
 	}
 
@@ -175,7 +202,10 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 		cancel()
 		r.closeTransport(transport)
 		r.closeStores()
-		return fmt.Errorf("raft: new raft failed: %w", err)
+		return r.raftError(
+			"raft instance creation failed",
+			err,
+		)
 	}
 	r.deps.Logger.Debug("raft instance created successfully", "node_id", opts.NodeID)
 
@@ -269,7 +299,12 @@ func (r *Runtime) Apply(cmd domain.Command, timeout time.Duration) (*domain.Comm
 
 	data, err := cmd.Marshal()
 	if err != nil {
-		return nil, fmt.Errorf("raft: marshal command failed: %w", err)
+		return nil, r.raftError(
+			"command marshal failed",
+			err,
+			domain.WithContextDetail("command_type", strconv.Itoa(int(cmd.Type))),
+			domain.WithRequestID(cmd.RequestID),
+		)
 	}
 
 	future := instance.Apply(data, timeout)
@@ -279,7 +314,13 @@ func (r *Runtime) Apply(cmd domain.Command, timeout time.Duration) (*domain.Comm
 
 	res, ok := future.Response().(*domain.CommandResult)
 	if !ok {
-		return nil, fmt.Errorf("raft: command response type mismatch")
+		return nil, r.raftError(
+			"command response type mismatch",
+			nil,
+			domain.WithContextDetail("command_type", strconv.Itoa(int(cmd.Type))),
+			domain.WithRequestID(cmd.RequestID),
+			domain.WithSeverity(domain.SeverityCritical),
+		)
 	}
 
 	return res, nil

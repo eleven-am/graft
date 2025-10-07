@@ -116,7 +116,15 @@ func (e *Executor) ExecuteNodeWithRetry(ctx context.Context, workflowID, nodeNam
 					"node_name", nodeName,
 					"panic", r)
 
-				err = fmt.Errorf("node execution panicked: %v", r)
+				panicErr := fmt.Errorf("panic: %v", r)
+				err = newWorkflowError(
+					executorComponent,
+					"node execution panicked",
+					panicErr,
+					domain.WithWorkflowID(workflowID),
+					domain.WithContextDetail("node_name", nodeName),
+					domain.WithSeverity(domain.SeverityCritical),
+				)
 
 				e.metrics.IncrementNodesFailed()
 			}
@@ -579,12 +587,27 @@ func (e *Executor) emitNodeStartedEvent(workflowCtx *domain.WorkflowContext, con
 
 	eventBytes, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("failed to marshal node started event: %w", err)
+		return newWorkflowError(
+			executorComponent,
+			"failed to marshal node started event",
+			err,
+			domain.WithWorkflowID(workflowCtx.WorkflowID),
+			domain.WithContextDetail("node_name", workflowCtx.NodeName),
+			domain.WithContextDetail("event", "node_started"),
+		)
 	}
 
 	eventKey := fmt.Sprintf("workflow:%s:node:%s:started", workflowCtx.WorkflowID, workflowCtx.NodeName)
 	if err := e.storage.Put(eventKey, eventBytes, 0); err != nil {
-		return fmt.Errorf("failed to store node started event (using version 0): %w", err)
+		return newWorkflowStorageError(
+			executorComponent,
+			"failed to store node started event",
+			err,
+			domain.WithWorkflowID(workflowCtx.WorkflowID),
+			domain.WithContextDetail("node_name", workflowCtx.NodeName),
+			domain.WithContextDetail("event", "node_started"),
+			domain.WithContextDetail("storage_key", eventKey),
+		)
 	}
 
 	return nil
@@ -608,12 +631,27 @@ func (e *Executor) emitNodeCompletedEvent(workflowCtx *domain.WorkflowContext, r
 
 	eventBytes, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("failed to marshal node completed event: %w", err)
+		return newWorkflowError(
+			executorComponent,
+			"failed to marshal node completed event",
+			err,
+			domain.WithWorkflowID(workflowCtx.WorkflowID),
+			domain.WithContextDetail("node_name", workflowCtx.NodeName),
+			domain.WithContextDetail("event", "node_completed"),
+		)
 	}
 
 	eventKey := fmt.Sprintf("workflow:%s:node:%s:completed", workflowCtx.WorkflowID, workflowCtx.NodeName)
 	if err := e.storage.Put(eventKey, eventBytes, 0); err != nil {
-		return fmt.Errorf("failed to store node completed event: %w", err)
+		return newWorkflowStorageError(
+			executorComponent,
+			"failed to store node completed event",
+			err,
+			domain.WithWorkflowID(workflowCtx.WorkflowID),
+			domain.WithContextDetail("node_name", workflowCtx.NodeName),
+			domain.WithContextDetail("event", "node_completed"),
+			domain.WithContextDetail("storage_key", eventKey),
+		)
 	}
 
 	return nil
@@ -634,12 +672,27 @@ func (e *Executor) emitNodeErrorEvent(workflowCtx *domain.WorkflowContext, curre
 
 	eventBytes, err := json.Marshal(event)
 	if err != nil {
-		return fmt.Errorf("failed to marshal node error event: %w", err)
+		return newWorkflowError(
+			executorComponent,
+			"failed to marshal node error event",
+			err,
+			domain.WithWorkflowID(workflowCtx.WorkflowID),
+			domain.WithContextDetail("node_name", workflowCtx.NodeName),
+			domain.WithContextDetail("event", "node_error"),
+		)
 	}
 
 	eventKey := fmt.Sprintf("workflow:%s:node:%s:error", workflowCtx.WorkflowID, workflowCtx.NodeName)
 	if err := e.storage.Put(eventKey, eventBytes, 0); err != nil {
-		return fmt.Errorf("failed to store node error event: %w", err)
+		return newWorkflowStorageError(
+			executorComponent,
+			"failed to store node error event",
+			err,
+			domain.WithWorkflowID(workflowCtx.WorkflowID),
+			domain.WithContextDetail("node_name", workflowCtx.NodeName),
+			domain.WithContextDetail("event", "node_error"),
+			domain.WithContextDetail("storage_key", eventKey),
+		)
 	}
 
 	return nil
