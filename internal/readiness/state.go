@@ -47,8 +47,11 @@ func (m *Manager) SetState(state State) {
 	oldState := m.state
 	m.state = state
 
-	if oldState != StateReady && state == StateReady {
+	switch {
+	case oldState != StateReady && state == StateReady:
 		close(m.waitChan)
+	case oldState == StateReady && state != StateReady:
+		m.waitChan = make(chan struct{})
 	}
 }
 
@@ -63,12 +66,16 @@ func (m *Manager) IsReady() bool {
 }
 
 func (m *Manager) WaitUntilReady(ctx context.Context) error {
-	if m.IsReady() {
+	m.mu.RLock()
+	if m.state == StateReady {
+		m.mu.RUnlock()
 		return nil
 	}
+	waitChan := m.waitChan
+	m.mu.RUnlock()
 
 	select {
-	case <-m.waitChan:
+	case <-waitChan:
 		return nil
 	case <-ctx.Done():
 		return ctx.Err()

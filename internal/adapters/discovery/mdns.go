@@ -2,6 +2,7 @@ package discovery
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -13,6 +14,8 @@ import (
 	"github.com/eleven-am/graft/internal/ports"
 	"github.com/hashicorp/mdns"
 )
+
+var mdnsQueryContext = mdns.QueryContext
 
 type MDNSProvider struct {
 	mu       sync.RWMutex
@@ -26,6 +29,7 @@ type MDNSProvider struct {
 	domain   string
 	host     string
 	events   chan ports.Event
+	wg       sync.WaitGroup
 }
 
 func NewMDNSProvider(service, domain, host string, logger *slog.Logger) *MDNSProvider {
@@ -60,13 +64,20 @@ func (m *MDNSProvider) Start(ctx context.Context, announce ports.NodeInfo) error
 
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.nodeInfo = announce
+	if m.events == nil {
+		m.events = make(chan ports.Event, 100)
+	}
 	m.logger.Debug("starting mDNS discovery provider")
 
 	if err := m.announce(); err != nil {
 		return err
 	}
 
-	go m.discoveryLoop()
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		m.discoveryLoop()
+	}()
 
 	m.logger.Debug("mDNS discovery provider started")
 	return nil
@@ -74,26 +85,36 @@ func (m *MDNSProvider) Start(ctx context.Context, announce ports.NodeInfo) error
 
 func (m *MDNSProvider) Stop() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	if m.cancel == nil {
+		m.mu.Unlock()
 		return domain.NewDiscoveryError("mdns", "stop", domain.ErrNotStarted)
 	}
 
+	cancel := m.cancel
+	server := m.server
+	events := m.events
+
 	m.logger.Debug("stopping mDNS discovery provider")
 
-	if m.server != nil {
-		m.server.Shutdown()
-		m.server = nil
+	m.cancel = nil
+	m.ctx = nil
+	m.server = nil
+	m.peers = make(map[string]ports.Peer)
+	m.events = nil
+
+	m.mu.Unlock()
+
+	if server != nil {
+		server.Shutdown()
 	}
 
-	m.cancel()
-	m.ctx = nil
-	m.cancel = nil
-	m.peers = make(map[string]ports.Peer)
+	cancel()
+	m.wg.Wait()
 
 	m.logger.Debug("mDNS discovery provider stopped")
-	close(m.events)
+	if events != nil {
+		close(events)
+	}
 	return nil
 }
 
@@ -161,8 +182,6 @@ func (m *MDNSProvider) discoveryLoop() {
 	ticker := time.NewTicker(10 * time.Second)
 	defer ticker.Stop()
 
-	m.performDiscovery()
-
 	for {
 		m.mu.RLock()
 		ctx := m.ctx
@@ -172,30 +191,42 @@ func (m *MDNSProvider) discoveryLoop() {
 			return
 		}
 
+		m.performDiscovery(ctx)
+
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			m.performDiscovery()
 		}
 	}
 }
 
-func (m *MDNSProvider) performDiscovery() {
-	entries := make(chan *mdns.ServiceEntry, 100)
-	defer close(entries)
+func (m *MDNSProvider) performDiscovery(ctx context.Context) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
+	entries := make(chan *mdns.ServiceEntry, 100)
+	var wg sync.WaitGroup
 	seen := make(map[string]struct{})
 
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
+
 		for entry := range entries {
+			if ctx.Err() != nil {
+				return
+			}
+
 			if id, peer, changed := m.processMDNSEntry(entry); id != "" {
 				seen[id] = struct{}{}
 				if changed && peer != nil {
 					select {
 					case m.events <- ports.Event{Type: ports.PeerUpdated, Peer: *peer}:
+					case <-ctx.Done():
+						return
 					default:
-
 					}
 				}
 			}
@@ -209,12 +240,16 @@ func (m *MDNSProvider) performDiscovery() {
 		Entries: entries,
 	}
 
-	if err := mdns.Query(params); err != nil {
+	if err := mdnsQueryContext(ctx, params); err != nil && !errors.Is(err, context.Canceled) {
 		m.logger.Error("mDNS query failed", "error", err)
-		return
 	}
 
-	time.Sleep(100 * time.Millisecond)
+	close(entries)
+	wg.Wait()
+
+	if ctx.Err() != nil {
+		return
+	}
 
 	m.mu.Lock()
 	for id, p := range m.peers {
@@ -225,6 +260,9 @@ func (m *MDNSProvider) performDiscovery() {
 			delete(m.peers, id)
 			select {
 			case m.events <- ports.Event{Type: ports.PeerRemoved, Peer: p}:
+			case <-ctx.Done():
+				m.mu.Unlock()
+				return
 			default:
 			}
 		}

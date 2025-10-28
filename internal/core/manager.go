@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -115,6 +116,8 @@ type ClusterMetrics struct {
 	FailedWorkflows    int `json:"failed_workflows"`
 	NodesExecuted      int `json:"nodes_executed"`
 }
+
+var ErrDiscoveryStopped = errors.New("discovery stopped before finding any peers")
 
 type ClusterInfo struct {
 	NodeID   string         `json:"node_id"`
@@ -796,11 +799,57 @@ func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) (
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	<-timeoutCtx.Done()
-
 	peers := m.discovery.GetPeers()
-	m.logger.Info("discovery phase complete", "peers_found", len(peers))
-	return peers, nil
+	if len(peers) > 0 {
+		m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "initial_snapshot")
+		return peers, nil
+	}
+
+	events, unsubscribe := m.discovery.Subscribe()
+	defer unsubscribe()
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-timeoutCtx.Done():
+			if err := timeoutCtx.Err(); err != nil {
+				if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+					return nil, fmt.Errorf("discovery wait aborted: %w", err)
+				}
+				if errors.Is(err, context.DeadlineExceeded) {
+					peers = m.discovery.GetPeers()
+					m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "timeout")
+					return peers, nil
+				}
+				return nil, fmt.Errorf("discovery wait aborted: %w", err)
+			}
+			peers = m.discovery.GetPeers()
+			m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "timeout")
+			return peers, nil
+		case _, ok := <-events:
+			if !ok {
+				peers = m.discovery.GetPeers()
+				if len(peers) == 0 {
+					return nil, fmt.Errorf("discovery stopped before peers found: %w", ErrDiscoveryStopped)
+				}
+				m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "events_closed")
+				return peers, nil
+			}
+			peers = m.discovery.GetPeers()
+			if len(peers) > 0 {
+				m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "event")
+				return peers, nil
+			}
+		case <-ticker.C:
+			peers = m.discovery.GetPeers()
+			if len(peers) > 0 {
+				m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "tick")
+				return peers, nil
+			}
+		}
+	}
 }
 
 type WorkflowTrigger struct {
@@ -1167,7 +1216,8 @@ func (m *Manager) watchForSeniorPeers() {
 
 	m.logger.Info("starting senior peer detection for provisional leader")
 
-	discoveryEvents := m.discovery.Events()
+	discoveryEvents, unsubscribe := m.discovery.Subscribe()
+	defer unsubscribe()
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 

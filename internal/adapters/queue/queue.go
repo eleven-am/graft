@@ -123,15 +123,13 @@ func (q *Queue) Claim() (item []byte, claimID string, exists bool, err error) {
 
 	prefix := fmt.Sprintf("queue:%s:ready:", q.name)
 	now := time.Now()
-	maxSkips := 100
-	skipped := 0
 
 	currentKey, value, itemExists, err := q.storage.GetNext(prefix)
 	if err != nil {
 		return nil, "", false, err
 	}
 
-	for itemExists && skipped < maxSkips {
+	for itemExists {
 		queueItem, err := domain.QueueItemFromBytes(value)
 		if err != nil {
 			currentKey, value, itemExists, err = q.storage.GetNextAfter(prefix, currentKey)
@@ -188,7 +186,6 @@ func (q *Queue) Claim() (item []byte, claimID string, exists bool, err error) {
 			return queueItem.Data, claimID, true, nil
 		}
 
-		skipped++
 		currentKey, value, itemExists, err = q.storage.GetNextAfter(prefix, currentKey)
 		if err != nil {
 			return nil, "", false, err

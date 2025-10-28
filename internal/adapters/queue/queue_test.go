@@ -2,6 +2,8 @@ package queue
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -267,6 +269,72 @@ func TestQueue_WaitForItemIgnoreDelete(t *testing.T) {
 		t.Fatal("Should timeout since no events sent")
 	case <-time.After(50 * time.Millisecond):
 	}
+}
+
+func TestQueue_ClaimSkipsDeferredBeyondLimit(t *testing.T) {
+	mockStorage := &mocks.MockStoragePort{}
+	queue := NewQueue("test", mockStorage, nil, nil)
+
+	const deferredCount = 150
+	prefix := "queue:test:ready:"
+
+	keys := make([]string, deferredCount+1)
+	values := make([][]byte, deferredCount+1)
+
+	future := time.Now().Add(2 * time.Hour)
+	for i := 0; i < deferredCount; i++ {
+		seq := int64(i + 1)
+		metadata := struct {
+			ProcessAfter time.Time `json:"process_after"`
+		}{ProcessAfter: future}
+		payload, err := json.Marshal(metadata)
+		if err != nil {
+			t.Fatalf("failed to marshal payload: %v", err)
+		}
+		item := domain.NewQueueItem(payload, seq)
+		itemBytes, err := item.ToBytes()
+		if err != nil {
+			t.Fatalf("failed to encode queue item: %v", err)
+		}
+		keys[i] = fmt.Sprintf("%s%020d", prefix, seq)
+		values[i] = itemBytes
+	}
+
+	readySeq := int64(deferredCount + 1)
+	readyItem := domain.NewQueueItem([]byte("{\"data\":\"ready\"}"), readySeq)
+	readyBytes, err := readyItem.ToBytes()
+	if err != nil {
+		t.Fatalf("failed to encode ready item: %v", err)
+	}
+	keys[deferredCount] = fmt.Sprintf("%s%020d", prefix, readySeq)
+	values[deferredCount] = readyBytes
+
+	mockStorage.On("GetNext", prefix).Return(keys[0], values[0], true, nil).Once()
+
+	index := 0
+	mockStorage.EXPECT().GetNextAfter(prefix, mock.Anything).RunAndReturn(func(string, string) (string, []byte, bool, error) {
+		index++
+		if index >= len(keys) {
+			return "", nil, false, nil
+		}
+		return keys[index], values[index], true, nil
+	})
+
+	mockStorage.On("BatchWrite", mock.MatchedBy(func(ops []ports.WriteOp) bool {
+		if len(ops) != 2 {
+			return false
+		}
+		return ops[0].Type == ports.OpDelete && ops[0].Key == keys[deferredCount] &&
+			ops[1].Type == ports.OpPut
+	})).Return(nil).Once()
+
+	data, claimID, exists, err := queue.Claim()
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.NotEmpty(t, claimID)
+	require.Equal(t, []byte("{\"data\":\"ready\"}"), data)
+
+	mockStorage.AssertExpectations(t)
 }
 
 func TestQueue_Close(t *testing.T) {

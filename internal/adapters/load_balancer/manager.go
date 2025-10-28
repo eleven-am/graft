@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime"
 	rmetrics "runtime/metrics"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -529,6 +530,8 @@ func (m *Manager) publishLocalMetrics() {
 	m.mu.RLock()
 	tp := m.transport
 	provider := m.getPeerAddrs
+	baseCtx := m.ctx
+	logger := m.logger
 	update := ports.LoadUpdate{
 		NodeID:          m.nodeID,
 		ActiveWorkflows: int(len(m.executionUnits)),
@@ -544,16 +547,66 @@ func (m *Manager) publishLocalMetrics() {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
-	defer cancel()
-	for _, addr := range provider() {
-		_ = tp.SendPublishLoad(ctx, addr, update)
+	if baseCtx != nil && baseCtx.Err() != nil {
+		return
+	}
+
+	addresses := provider()
+	for _, addr := range addresses {
+		parent := context.Background()
+		if baseCtx != nil {
+			parent = baseCtx
+		}
+		publishCtx, cancel := context.WithTimeout(parent, time.Second)
+		err := tp.SendPublishLoad(publishCtx, addr, update)
+		cancel()
+		if err != nil && logger != nil {
+			logger.Warn("failed to publish load", "address", addr, "error", err)
+		}
+		if baseCtx != nil && baseCtx.Err() != nil {
+			break
+		}
 	}
 }
 
 func (m *Manager) convertToNodeMetrics(clusterLoad map[string]*ports.NodeLoad) []NodeMetrics {
+	if len(clusterLoad) == 0 {
+		return nil
+	}
 
-	return nil
+	metrics := make([]NodeMetrics, 0, len(clusterLoad))
+	for _, load := range clusterLoad {
+		if load == nil {
+			continue
+		}
+
+		active := len(load.ExecutionUnits)
+		if active == 0 && load.TotalWeight > 0 {
+			active = int(math.Round(load.TotalWeight))
+		}
+
+		lastUpdated := time.Unix(load.LastUpdated, 0)
+		available := load.LastUpdated > 0
+
+		metrics = append(metrics, NodeMetrics{
+			NodeID:          load.NodeID,
+			ResponseTime:    load.RecentLatencyMs,
+			CpuUsage:        0,
+			MemoryUsage:     0,
+			ConnectionCount: active,
+			ErrorRate:       load.RecentErrorRate,
+			Pressure:        load.TotalWeight,
+			ActiveWorkflows: active,
+			LastUpdated:     lastUpdated,
+			Available:       available,
+		})
+	}
+
+	sort.Slice(metrics, func(i, j int) bool {
+		return metrics[i].NodeID < metrics[j].NodeID
+	})
+
+	return metrics
 }
 
 func (m *Manager) handleFailurePolicy(reason string, err error) bool {

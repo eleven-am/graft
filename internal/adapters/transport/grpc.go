@@ -58,6 +58,12 @@ func (t *GRPCTransport) Start(ctx context.Context, bindAddr string, port int) er
 	if err != nil {
 		return err
 	}
+	cleanupListener := true
+	defer func() {
+		if cleanupListener {
+			_ = listener.Close()
+		}
+	}()
 	t.port = actualPort
 
 	serverOpts := []grpc.ServerOption{}
@@ -78,13 +84,23 @@ func (t *GRPCTransport) Start(ctx context.Context, bindAddr string, port int) er
 		tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
 		if t.cfg.TLSCAFile != "" {
 			caPem, err := os.ReadFile(t.cfg.TLSCAFile)
-			if err == nil {
-				pool := x509.NewCertPool()
-				if pool.AppendCertsFromPEM(caPem) {
-					tlsCfg.ClientCAs = pool
-					tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
-				}
+			if err != nil {
+				return newTransportConfigError(
+					"failed to read TLS CA bundle",
+					err,
+					domain.WithContextDetail("ca_file", t.cfg.TLSCAFile),
+				)
 			}
+			pool := x509.NewCertPool()
+			if !pool.AppendCertsFromPEM(caPem) {
+				return newTransportConfigError(
+					"failed to parse TLS CA bundle",
+					fmt.Errorf("no certificates found"),
+					domain.WithContextDetail("ca_file", t.cfg.TLSCAFile),
+				)
+			}
+			tlsCfg.ClientCAs = pool
+			tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
 		}
 		serverOpts = append(serverOpts, grpc.Creds(credentials.NewTLS(tlsCfg)))
 	}
@@ -95,6 +111,7 @@ func (t *GRPCTransport) Start(ctx context.Context, bindAddr string, port int) er
 	actualAddr := listener.Addr().String()
 	t.logger.Info("starting gRPC transport", "address", actualAddr)
 
+	cleanupListener = false
 	go func() {
 		if err := t.server.Serve(listener); err != nil {
 			t.logger.Error("gRPC server error", "error", err)
