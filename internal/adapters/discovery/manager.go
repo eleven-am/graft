@@ -78,6 +78,7 @@ func (m *Manager) Start(ctx context.Context, address string, port int, grpcPort 
 	m.mu.Lock()
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.events = make(chan ports.Event, 100)
+	managerCtx := m.ctx
 	m.mu.Unlock()
 
 	bootMetadata := metadata.GetGlobalBootstrapMetadata()
@@ -94,7 +95,7 @@ func (m *Manager) Start(ctx context.Context, address string, port int, grpcPort 
 	}
 
 	for _, provider := range m.providers {
-		if err := provider.Start(ctx, node); err != nil {
+		if err := provider.Start(managerCtx, node); err != nil {
 			return err
 		}
 
@@ -294,6 +295,8 @@ func (m *Manager) sendToSubscriber(id int, ch chan ports.Event, event ports.Even
 	defer func() {
 		if r := recover(); r != nil {
 			shouldPrune = true
+			continueSending = true
+			m.logger.Debug("recovered from subscriber send", "subscriber_id", id, "error", r)
 		}
 	}()
 

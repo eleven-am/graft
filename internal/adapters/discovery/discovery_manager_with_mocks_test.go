@@ -389,7 +389,8 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 		logger := slog.Default()
 		manager := NewManager("test-node-closed", logger)
 
-		manager.ctx, _ = context.WithCancel(context.Background())
+		manager.ctx, manager.cancel = context.WithCancel(context.Background())
+		t.Cleanup(manager.cancel)
 		require.NotNil(t, manager.ctx)
 
 		sub1, unsub1 := manager.Subscribe()
@@ -438,6 +439,47 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 		unsub2()
 	})
 
+	t.Run("ManagerCancelsProviderContextOnStop", func(t *testing.T) {
+		metadata.ResetGlobalBootstrapMetadata()
+		logger := slog.Default()
+		manager := NewManager("test-node-context", logger)
+
+		eventChan := make(chan ports.Event)
+		mockProvider := mocks.NewMockProvider(t)
+
+		var startCtx context.Context
+
+		mockProvider.EXPECT().Name().Return("mock-provider")
+		mockProvider.EXPECT().Start(mock.Anything, mock.Anything).
+			Run(func(ctx context.Context, _ ports.NodeInfo) {
+				startCtx = ctx
+			}).
+			Return(nil)
+		mockProvider.EXPECT().Events().Return((<-chan ports.Event)(eventChan))
+		mockProvider.EXPECT().Snapshot().Return([]ports.Peer{}).Maybe()
+
+		err := manager.Add(mockProvider)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		err = manager.Start(ctx, "127.0.0.1", 8080, 9080)
+		require.NoError(t, err)
+		require.NotNil(t, startCtx)
+
+		mockProvider.EXPECT().Stop().Return(nil)
+		close(eventChan)
+
+		err = manager.Stop()
+		require.NoError(t, err)
+
+		require.Eventually(t, func() bool {
+			return startCtx.Err() != nil
+		}, time.Second, 10*time.Millisecond)
+		assert.ErrorIs(t, startCtx.Err(), context.Canceled)
+	})
+
 	t.Run("ManagerStopCanBeCalledMultipleTimes", func(t *testing.T) {
 		metadata.ResetGlobalBootstrapMetadata()
 		logger := slog.Default()
@@ -477,7 +519,8 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 func TestSendToSubscriberRecover(t *testing.T) {
 	logger := slog.Default()
 	manager := NewManager("test-node-send", logger)
-	manager.ctx, _ = context.WithCancel(context.Background())
+	manager.ctx, manager.cancel = context.WithCancel(context.Background())
+	t.Cleanup(manager.cancel)
 
 	ch := make(chan ports.Event)
 	close(ch)
