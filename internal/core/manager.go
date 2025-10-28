@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math/rand"
 	"net"
 	"path/filepath"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/eleven-am/graft/internal/adapters/circuit_breaker"
 	"github.com/eleven-am/graft/internal/adapters/cluster"
+	"github.com/eleven-am/graft/internal/adapters/connector_registry"
 	"github.com/eleven-am/graft/internal/adapters/discovery"
 	"github.com/eleven-am/graft/internal/adapters/engine"
 	"github.com/eleven-am/graft/internal/adapters/events"
@@ -36,44 +38,54 @@ import (
 )
 
 type Manager struct {
-	engine          ports.EnginePort
-	storage         ports.StoragePort
-	queue           ports.QueuePort
-	nodeRegistry    ports.NodeRegistryPort
-	transport       ports.TransportPort
-	discovery       *discovery.Manager
-	raftAdapter     ports.RaftNode
-	eventManager    ports.EventManager
-	loadBalancer    ports.LoadBalancer
-	clusterManager  ports.ClusterManager
-	observability   *observability.Server
-	circuitBreakers ports.CircuitBreakerProvider
-	rateLimiters    ports.RateLimiterProvider
-	tracing         ports.TracingProvider
+	engine            ports.EnginePort
+	storage           ports.StoragePort
+	queue             ports.QueuePort
+	nodeRegistry      ports.NodeRegistryPort
+	connectorRegistry ports.ConnectorRegistryPort
+	transport         ports.TransportPort
+	discovery         *discovery.Manager
+	raftAdapter       ports.RaftNode
+	eventManager      ports.EventManager
+	loadBalancer      ports.LoadBalancer
+	clusterManager    ports.ClusterManager
+	observability     *observability.Server
+	circuitBreakers   ports.CircuitBreakerProvider
+	rateLimiters      ports.RateLimiterProvider
+	tracing           ports.TracingProvider
 
-	config           *domain.Config
-	logger           *slog.Logger
-	nodeID           string
-	grpcPort         int
-	readinessManager *readiness.Manager
-	workflowIntakeMu sync.RWMutex
-	workflowIntakeOk bool
+	config                 *domain.Config
+	logger                 *slog.Logger
+	nodeID                 string
+	grpcPort               int
+	readinessManager       *readiness.Manager
+	workflowIntakeMu       sync.RWMutex
+	workflowIntakeOk       bool
+	connectorMu            sync.RWMutex
+	connectors             map[string]*connectorHandle
+	connectorObserversOnce sync.Once
+	connectorWatchersOnce  sync.Once
+	connectorWatcherMu     sync.Mutex
+	connectorWatcherUnsub  func()
+	connectorRandMu        sync.Mutex
+	connectorRand          *rand.Rand
 
 	ctx    context.Context
 	cancel context.CancelFunc
 }
 
 type managerProviders struct {
-	newEventManager   func(ports.StoragePort, string, *slog.Logger) ports.EventManager
-	newRaftStorage    func(dataDir string, logger *slog.Logger) (*raft.Storage, error)
-	newRaftNode       func(cfg *raft.Config, storage *raft.Storage, events ports.EventManager, appTransport ports.TransportPort, logger *slog.Logger) (ports.RaftNode, error)
-	newAppStorage     func(raft ports.RaftNode, db *badger.DB, logger *slog.Logger) ports.StoragePort
-	newNodeRegistry   func(*slog.Logger) ports.NodeRegistryPort
-	newClusterManager func(ports.RaftNode, int, *slog.Logger) ports.ClusterManager
-	newLoadBalancer   func(ports.EventManager, string, ports.ClusterManager, *load_balancer.Config, *slog.Logger) ports.LoadBalancer
-	newQueue          func(name string, storage ports.StoragePort, events ports.EventManager, logger *slog.Logger) ports.QueuePort
-	newEngine         func(domain.EngineConfig, string, ports.NodeRegistryPort, ports.QueuePort, ports.StoragePort, ports.EventManager, ports.LoadBalancer, *slog.Logger) ports.EnginePort
-	newTransport      func(*slog.Logger, domain.TransportConfig) ports.TransportPort
+	newEventManager      func(ports.StoragePort, string, *slog.Logger) ports.EventManager
+	newRaftStorage       func(dataDir string, logger *slog.Logger) (*raft.Storage, error)
+	newRaftNode          func(cfg *raft.Config, storage *raft.Storage, events ports.EventManager, appTransport ports.TransportPort, logger *slog.Logger) (ports.RaftNode, error)
+	newAppStorage        func(raft ports.RaftNode, db *badger.DB, logger *slog.Logger) ports.StoragePort
+	newNodeRegistry      func(*slog.Logger) ports.NodeRegistryPort
+	newConnectorRegistry func(*slog.Logger) ports.ConnectorRegistryPort
+	newClusterManager    func(ports.RaftNode, int, *slog.Logger) ports.ClusterManager
+	newLoadBalancer      func(ports.EventManager, string, ports.ClusterManager, *load_balancer.Config, *slog.Logger) ports.LoadBalancer
+	newQueue             func(name string, storage ports.StoragePort, events ports.EventManager, logger *slog.Logger) ports.QueuePort
+	newEngine            func(domain.EngineConfig, string, ports.NodeRegistryPort, ports.QueuePort, ports.StoragePort, ports.EventManager, ports.LoadBalancer, *slog.Logger) ports.EnginePort
+	newTransport         func(*slog.Logger, domain.TransportConfig) ports.TransportPort
 }
 
 func defaultProviders() managerProviders {
@@ -90,7 +102,8 @@ func defaultProviders() managerProviders {
 		newAppStorage: func(r ports.RaftNode, db *badger.DB, l *slog.Logger) ports.StoragePort {
 			return storage.NewAppStorage(r, db, l)
 		},
-		newNodeRegistry: func(l *slog.Logger) ports.NodeRegistryPort { return node_registry.NewManager(l) },
+		newNodeRegistry:      func(l *slog.Logger) ports.NodeRegistryPort { return node_registry.NewManager(l) },
+		newConnectorRegistry: func(l *slog.Logger) ports.ConnectorRegistryPort { return connector_registry.NewManager(l) },
 		newClusterManager: func(r ports.RaftNode, min int, l *slog.Logger) ports.ClusterManager {
 			return cluster.NewRaftClusterManager(r, min, l)
 		},
@@ -208,6 +221,7 @@ func NewWithConfig(config *domain.Config) *Manager {
 	}
 
 	nodeRegistryManager := prov.newNodeRegistry(logger)
+	connectorRegistryManager := prov.newConnectorRegistry(logger)
 
 	clusterManager := prov.newClusterManager(raftAdapter, 1, logger)
 
@@ -267,24 +281,26 @@ func NewWithConfig(config *domain.Config) *Manager {
 	}
 
 	manager := &Manager{
-		config:           config,
-		logger:           logger,
-		nodeID:           config.NodeID,
-		discovery:        discoveryManager,
-		raftAdapter:      raftAdapter,
-		storage:          appStorage,
-		eventManager:     eventManager,
-		nodeRegistry:     nodeRegistryManager,
-		queue:            queueAdapter,
-		engine:           engineAdapter,
-		loadBalancer:     loadBalancerManager,
-		clusterManager:   clusterManager,
-		circuitBreakers:  circuitBreakerProvider,
-		rateLimiters:     rateLimiterProvider,
-		tracing:          tracingProvider,
-		transport:        appTransport,
-		readinessManager: readiness.NewManager(),
-		workflowIntakeOk: true,
+		config:            config,
+		logger:            logger,
+		nodeID:            config.NodeID,
+		discovery:         discoveryManager,
+		raftAdapter:       raftAdapter,
+		storage:           appStorage,
+		eventManager:      eventManager,
+		nodeRegistry:      nodeRegistryManager,
+		connectorRegistry: connectorRegistryManager,
+		queue:             queueAdapter,
+		engine:            engineAdapter,
+		loadBalancer:      loadBalancerManager,
+		clusterManager:    clusterManager,
+		circuitBreakers:   circuitBreakerProvider,
+		rateLimiters:      rateLimiterProvider,
+		tracing:           tracingProvider,
+		transport:         appTransport,
+		readinessManager:  readiness.NewManager(),
+		workflowIntakeOk:  true,
+		connectors:        make(map[string]*connectorHandle),
 	}
 
 	if config.Observability.Enabled {
@@ -457,6 +473,9 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 		)
 	}
 
+	m.initConnectorObservers()
+	m.startConnectorWatchers()
+
 	if m.observability != nil {
 		go func() {
 			if err := m.observability.Start(m.ctx); err != nil {
@@ -492,6 +511,9 @@ func (m *Manager) Stop() error {
 	if m.cancel != nil {
 		m.cancel()
 	}
+
+	m.stopConnectorWatchers()
+	m.stopAllConnectors()
 
 	if m.discovery != nil {
 		m.discovery.Stop()

@@ -168,7 +168,7 @@ func (n *MyProcessor) GetName() string {
 func (n *MyProcessor) Execute(ctx context.Context, state MyState, config MyConfig) (graft.NodeResult, error) {
     // Your business logic with full type safety
     result := processData(state.Data, config.BatchSize)
-    
+
     return graft.NodeResult{
         Data: MyResult{
             Processed: result,
@@ -177,6 +177,40 @@ func (n *MyProcessor) Execute(ctx context.Context, state MyState, config MyConfi
     }, nil
 }
 ```
+
+### Connector Usage
+
+Connectors keep long-lived external listeners (queues, streams, webhooks) balanced across the cluster. Register the connector implementation once, then start it with configs that expose a stable ID so duplicate submissions coalesce.
+
+```go
+type OrdersConfig struct {
+    QueueARN string `json:"queue_arn"`
+    Region   string `json:"region"`
+}
+
+func (c *OrdersConfig) GetID() string { return c.QueueARN }
+
+type SQSConnector struct{}
+
+func (c *SQSConnector) GetName() string { return "sqs" }
+func (c *SQSConnector) Start(ctx context.Context, cfg *OrdersConfig) error {
+    // create AWS client, stream messages into workflows
+    return nil
+}
+func (c *SQSConnector) Stop(ctx context.Context, cfg *OrdersConfig) error {
+    // close clients, flush offsets
+    return nil
+}
+
+manager.RegisterConnector(&SQSConnector{})
+
+orders := &OrdersConfig{QueueARN: "arn:aws:sqs:...:orders", Region: "us-east-1"}
+if err := manager.StartConnector("sqs", orders); err != nil {
+    log.Fatal(err)
+}
+```
+
+The manager persists the config, every node watches for it, and the load balancer picks the least-loaded owner for the lease. If a node stops or the cluster grows, another peer automatically reacquires the lease and restarts the connector with the same config.
 
 For detailed architecture information, see [Architecture Documentation](./docs/ARCHITECTURE.md).
 

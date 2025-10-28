@@ -93,3 +93,39 @@ func TestPressureTieBreakPrefersLowerPressure(t *testing.T) {
 		t.Fatalf("expected peer to win due to lower pressure in tie")
 	}
 }
+
+func TestConnectorLoadInfluencesScheduling(t *testing.T) {
+	events := &mocks.MockEventManager{}
+	events.On("OnNodeStarted", mock.Anything).Return(nil)
+	events.On("OnNodeCompleted", mock.Anything).Return(nil)
+	events.On("OnNodeError", mock.Anything).Return(nil)
+
+	cfg := &Config{}
+	m := NewManager(events, "node-a", nil, cfg, nil)
+
+	if err := m.RegisterConnectorLoad("conn-1", 1); err != nil {
+		t.Fatalf("unexpected error registering connector load: %v", err)
+	}
+
+	_ = m.ReceiveLoadUpdate(ports.LoadUpdate{NodeID: "node-b", ActiveWorkflows: 0, TotalWeight: 0, Pressure: 0})
+
+	should, err := m.ShouldExecuteNode("node-a", "wf-connector", "connector-node")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if should {
+		t.Fatalf("expected peer to execute when local node already owns connector load")
+	}
+
+	if err := m.DeregisterConnectorLoad("conn-1"); err != nil {
+		t.Fatalf("unexpected error deregistering connector load: %v", err)
+	}
+
+	should, err = m.ShouldExecuteNode("node-a", "wf-connector", "connector-node")
+	if err != nil {
+		t.Fatalf("unexpected err: %v", err)
+	}
+	if !should {
+		t.Fatalf("expected local node to execute once connector load removed")
+	}
+}

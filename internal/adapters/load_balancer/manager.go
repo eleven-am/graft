@@ -369,6 +369,65 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 	return selected.id == m.nodeID, nil
 }
 
+func (m *Manager) RegisterConnectorLoad(connectorID string, weight float64) error {
+	connectorID = strings.TrimSpace(connectorID)
+	if connectorID == "" {
+		return domain.NewValidationError("connector id cannot be empty", nil,
+			domain.WithComponent("load-balancer"))
+	}
+
+	if weight <= 0 {
+		weight = 1
+	}
+
+	key := connectorWorkloadKey(connectorID)
+
+	m.mu.Lock()
+	if existing, exists := m.executionUnits[key]; exists {
+		if existing != weight {
+			m.totalWeight -= existing
+			if m.totalWeight < 0 {
+				m.totalWeight = 0
+			}
+			m.executionUnits[key] = weight
+			m.totalWeight += weight
+		}
+		m.mu.Unlock()
+		return nil
+	}
+
+	m.executionUnits[key] = weight
+	m.totalWeight += weight
+	m.mu.Unlock()
+
+	m.requestPublish()
+	return nil
+}
+
+func (m *Manager) DeregisterConnectorLoad(connectorID string) error {
+	connectorID = strings.TrimSpace(connectorID)
+	if connectorID == "" {
+		return domain.NewValidationError("connector id cannot be empty", nil,
+			domain.WithComponent("load-balancer"))
+	}
+
+	key := connectorWorkloadKey(connectorID)
+
+	m.mu.Lock()
+	if weight, exists := m.executionUnits[key]; exists {
+		delete(m.executionUnits, key)
+		m.totalWeight -= weight
+		if m.totalWeight < 0 {
+			m.totalWeight = 0
+		}
+		m.mu.Unlock()
+		m.requestPublish()
+		return nil
+	}
+	m.mu.Unlock()
+	return nil
+}
+
 func (m *Manager) getInMemoryClusterLoad() map[string]*ports.NodeLoad {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -710,6 +769,10 @@ func (m *Manager) collectLocalPressure() float64 {
 		p = 2
 	}
 	return p
+}
+
+func connectorWorkloadKey(connectorID string) string {
+	return "connector::" + connectorID
 }
 
 // sampleCPUUsage estimates CPU usage as process CPU seconds over wall time since last sample.

@@ -198,6 +198,18 @@ Design (minimal, always-on):
 - Telemetry: nodes periodically publish `{active_workflows, pressure}` via gRPC; peers use this for consistent decisions.
 
 Rationale:
+
+### 13. Connectors (`internal/core/manager_connectors.go`)
+
+Purpose: Coordinate long-lived external listeners (e.g., queues, streams) so they remain singleton per config across the cluster.
+
+Design:
+- Configs are stored in Raft-backed storage keyed by `GetID()` so every node sees the same intent.
+- Each manager instance spins up a connector handle that watches storage changes and contends for a lease record.
+- Before starting, the handle asks the load balancer whether this node should own the connector; accepted owners register connector load until they stop.
+- Heartbeats renew the lease. If the owner dies, releases, or the cluster gains a new node, the lease is cleared and another peer restarts the connector with the same config.
+
+Result: connector work is spread evenly, fails over automatically, and rebalances when cluster capacity changes without introducing a separate coordination service.
 - Zero knobs: no algorithms to choose, no weights to maintain.
 - Predictable fairness: defaults to count-based balancing; pressure only nudges ties.
 - Deterministic cluster-wide behavior: all nodes see the same peer telemetry.

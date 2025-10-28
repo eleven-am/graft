@@ -129,6 +129,8 @@ type Manager interface {
     Stop(ctx context.Context) error
     RegisterNode(node interface{}) error
     UnregisterNode(nodeName string) error
+    RegisterConnector(connector interface{}) error
+    StartConnector(connectorName string, config interface{ GetID() string }) error
     StartWorkflow(trigger WorkflowTrigger) error
     GetWorkflowState(workflowID string) (*WorkflowStatus, error)
     GetClusterInfo() ClusterInfo
@@ -168,6 +170,16 @@ type Manager interface {
 - Removes a previously registered node
 - Returns error if node doesn't exist
 - Active workflows using the node will continue
+
+**RegisterConnector(connector interface{}) error**
+- Registers a long-lived connector implementation (listeners, stream consumers)
+- Connector must provide `GetName()`, `Start(ctx, *Config) error`, and `Stop(ctx, *Config) error`
+- Registration is idempotent across the cluster; duplicates are rejected by name
+
+**StartConnector(connectorName string, config interface{ GetID() string }) error**
+- Persists the provided config (must return a stable ID) and requests the connector to start
+- All nodes watch for configs; the load balancer selects an owner and restarts it on failure or rebalance
+- Subsequent calls with the same config ID are ignored unless the payload changes
 
 **StartWorkflow(trigger WorkflowTrigger) error**
 - Initiates a new workflow execution
@@ -275,7 +287,7 @@ type NodeResult struct {
 
 Graft automatically extracts type information from the Execute method signature using reflection:
 - Config type from the third parameter
-- State type from the second parameter  
+- State type from the second parameter
 - Result type from NodeResult.Data
 
 This eliminates the need for schema methods while maintaining type safety.
@@ -286,6 +298,33 @@ This eliminates the need for schema methods while maintaining type safety.
 - Returns unique identifier for the node type
 - Used for workflow configuration and routing
 - Must be consistent across cluster restarts
+
+### Connector Basics
+
+Connectors are long-lived listeners managed separately from workflow nodes. They are registered like nodes but are scheduled via leases and the load balancer so only one node owns a given config ID at a time.
+
+1. Define a config struct with `GetID() string` returning a stable identifier (for example a queue ARN or topic name).
+2. Implement `GetName() string`, `Start(ctx, *Config) error`, and `Stop(ctx, *Config) error` on your connector.
+3. Call `manager.RegisterConnector(&Connector{})` once at startup, then `manager.StartConnector("name", cfg)` for each config you need.
+
+```go
+type BillingConfig struct {
+    Topic string `json:"topic"`
+}
+
+func (c *BillingConfig) GetID() string { return c.Topic }
+
+type KafkaConnector struct{}
+
+func (c *KafkaConnector) GetName() string { return "kafka" }
+func (c *KafkaConnector) Start(ctx context.Context, cfg *BillingConfig) error { /* subscribe & emit workflows */ return nil }
+func (c *KafkaConnector) Stop(ctx context.Context, cfg *BillingConfig) error  { /* close consumers */ return nil }
+
+manager.RegisterConnector(&KafkaConnector{})
+manager.StartConnector("kafka", &BillingConfig{Topic: "billing"})
+```
+
+The manager persists each config, every node watches for changes, and the least-loaded node claims the lease. When ownership changes (failure, shutdown, new peer), the next node restarts the connector with the same config.
 
 ### Optional Interfaces
 
