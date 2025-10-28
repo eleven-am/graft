@@ -21,15 +21,21 @@ type Manager struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	events    chan ports.Event
+	wg        sync.WaitGroup
+
+	subscribers    map[int]chan ports.Event
+	subscribersMu  sync.RWMutex
+	nextSubscriber int
 }
 
 func NewManager(nodeID string, logger *slog.Logger) *Manager {
 	return &Manager{
-		NodeID:    nodeID,
-		logger:    logger.With("component", "discovery", "subcomponent", "manager"),
-		providers: make([]ports.Provider, 0),
-		peers:     make(map[string]ports.Peer),
-		events:    make(chan ports.Event, 100),
+		NodeID:      nodeID,
+		logger:      logger.With("component", "discovery", "subcomponent", "manager"),
+		providers:   make([]ports.Provider, 0),
+		peers:       make(map[string]ports.Peer),
+		events:      make(chan ports.Event, 100),
+		subscribers: make(map[int]chan ports.Event),
 	}
 }
 
@@ -71,6 +77,7 @@ func (m *Manager) GetPeers() []ports.Peer {
 func (m *Manager) Start(ctx context.Context, address string, port int, grpcPort int) error {
 	m.mu.Lock()
 	m.ctx, m.cancel = context.WithCancel(ctx)
+	m.events = make(chan ports.Event, 100)
 	m.mu.Unlock()
 
 	bootMetadata := metadata.GetGlobalBootstrapMetadata()
@@ -91,10 +98,18 @@ func (m *Manager) Start(ctx context.Context, address string, port int, grpcPort 
 			return err
 		}
 
-		go m.watchProvider(provider)
+		m.wg.Add(1)
+		go func(p ports.Provider) {
+			defer m.wg.Done()
+			m.watchProvider(p)
+		}(provider)
 	}
 
-	go m.aggregateEvents()
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		m.aggregateEvents()
+	}()
 
 	go m.snapshotLoop()
 
@@ -117,9 +132,17 @@ func (m *Manager) Stop() error {
 		}
 	}
 
-	close(m.events)
+	m.wg.Wait()
+
 	m.providers = nil
 	m.peers = make(map[string]ports.Peer)
+	m.ctx = nil
+	m.cancel = nil
+
+	m.subscribersMu.Lock()
+	m.subscribers = make(map[int]chan ports.Event)
+	m.nextSubscriber = 0
+	m.subscribersMu.Unlock()
 
 	return nil
 }
@@ -138,12 +161,18 @@ func (m *Manager) watchProvider(provider ports.Provider) {
 			if !ok {
 				return
 			}
-			m.events <- event
+			select {
+			case <-m.ctx.Done():
+				return
+			case m.events <- event:
+			}
 		}
 	}
 }
 
 func (m *Manager) aggregateEvents() {
+	defer m.closeSubscribers()
+
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -153,6 +182,7 @@ func (m *Manager) aggregateEvents() {
 				return
 			}
 			m.handleEvent(event)
+			m.broadcastEvent(event)
 		}
 	}
 }
@@ -204,6 +234,72 @@ func (m *Manager) updateSnapshots() {
 	m.peers = allPeers
 }
 
-func (m *Manager) Events() <-chan ports.Event {
-	return m.events
+func (m *Manager) Subscribe() (<-chan ports.Event, func()) {
+	m.subscribersMu.Lock()
+	defer m.subscribersMu.Unlock()
+
+	id := m.nextSubscriber
+	m.nextSubscriber++
+
+	ch := make(chan ports.Event, 10)
+	m.subscribers[id] = ch
+
+	unsubscribe := func() {
+		m.removeSubscriber(id)
+	}
+
+	return ch, unsubscribe
+}
+
+func (m *Manager) broadcastEvent(event ports.Event) {
+	m.subscribersMu.RLock()
+	subscribers := make([]chan ports.Event, 0, len(m.subscribers))
+	for _, ch := range m.subscribers {
+		subscribers = append(subscribers, ch)
+	}
+	m.subscribersMu.RUnlock()
+
+	for _, ch := range subscribers {
+		if !m.sendToSubscriber(ch, event) {
+			return
+		}
+	}
+}
+
+func (m *Manager) sendToSubscriber(ch chan ports.Event, event ports.Event) bool {
+	defer func() {
+		if r := recover(); r != nil {
+			// subscriber channel closed concurrently; ignore
+		}
+	}()
+
+	select {
+	case ch <- event:
+		return true
+	case <-m.ctx.Done():
+		return false
+	}
+}
+
+func (m *Manager) removeSubscriber(id int) {
+	m.subscribersMu.Lock()
+	ch, ok := m.subscribers[id]
+	if ok {
+		delete(m.subscribers, id)
+	}
+	m.subscribersMu.Unlock()
+
+	if ok {
+		close(ch)
+	}
+}
+
+func (m *Manager) closeSubscribers() {
+	m.subscribersMu.Lock()
+	defer m.subscribersMu.Unlock()
+
+	for id, ch := range m.subscribers {
+		close(ch)
+		delete(m.subscribers, id)
+	}
 }

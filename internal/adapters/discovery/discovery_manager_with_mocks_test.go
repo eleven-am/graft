@@ -11,6 +11,7 @@ import (
 	"github.com/eleven-am/graft/internal/ports"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
@@ -239,5 +240,104 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 		close(eventChan)
 		err = manager.Stop()
 		assert.NoError(t, err)
+	})
+
+	t.Run("ManagerBroadcastsEventsToMultipleSubscribers", func(t *testing.T) {
+		metadata.ResetGlobalBootstrapMetadata()
+		logger := slog.Default()
+		manager := NewManager("test-node-broadcast", logger)
+
+		eventChan := make(chan ports.Event, 10)
+		mockProvider := mocks.NewMockProvider(t)
+
+		mockProvider.EXPECT().Name().Return("mock-provider")
+		mockProvider.EXPECT().Start(mock.Anything, mock.Anything).Return(nil)
+		mockProvider.EXPECT().Events().Return((<-chan ports.Event)(eventChan))
+		mockProvider.EXPECT().Snapshot().Return([]ports.Peer{}).Maybe()
+
+		err := manager.Add(mockProvider)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		err = manager.Start(ctx, "127.0.0.1", 8080, 9080)
+		require.NoError(t, err)
+
+		sub1, unsub1 := manager.Subscribe()
+		sub2, unsub2 := manager.Subscribe()
+
+		peer := ports.Peer{ID: "peer-1", Address: "127.0.0.1", Port: 8086}
+		eventChan <- ports.Event{Type: ports.PeerAdded, Peer: peer}
+
+		select {
+		case evt := <-sub1:
+			assert.Equal(t, peer.ID, evt.Peer.ID)
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for subscriber 1")
+		}
+
+		select {
+		case evt := <-sub2:
+			assert.Equal(t, peer.ID, evt.Peer.ID)
+		case <-time.After(time.Second):
+			t.Fatal("timed out waiting for subscriber 2")
+		}
+
+		unsub1()
+		unsub2()
+
+		select {
+		case _, ok := <-sub1:
+			assert.False(t, ok)
+		case <-time.After(time.Second):
+			t.Fatal("subscriber 1 channel not closed")
+		}
+
+		select {
+		case _, ok := <-sub2:
+			assert.False(t, ok)
+		case <-time.After(time.Second):
+			t.Fatal("subscriber 2 channel not closed")
+		}
+
+		mockProvider.EXPECT().Stop().Return(nil)
+		err = manager.Stop()
+		assert.NoError(t, err)
+	})
+
+	t.Run("ManagerStopCanBeCalledMultipleTimes", func(t *testing.T) {
+		metadata.ResetGlobalBootstrapMetadata()
+		logger := slog.Default()
+		manager := NewManager("test-node-stop", logger)
+
+		eventChan := make(chan ports.Event, 1)
+		mockProvider := mocks.NewMockProvider(t)
+
+		mockProvider.EXPECT().Name().Return("mock-provider")
+		mockProvider.EXPECT().Start(mock.Anything, mock.Anything).Return(nil)
+		mockProvider.EXPECT().Events().Return((<-chan ports.Event)(eventChan))
+		mockProvider.EXPECT().Snapshot().Return([]ports.Peer{}).Maybe()
+
+		err := manager.Add(mockProvider)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+
+		err = manager.Start(ctx, "127.0.0.1", 8080, 9080)
+		require.NoError(t, err)
+
+		// trigger at least one event send to exercise shutdown path
+		eventChan <- ports.Event{Type: ports.PeerRemoved, Peer: ports.Peer{ID: "peer-stop"}}
+
+		mockProvider.EXPECT().Stop().Return(nil)
+		err = manager.Stop()
+		assert.NoError(t, err)
+
+		assert.NotPanics(t, func() {
+			err = manager.Stop()
+			assert.NoError(t, err)
+		})
 	})
 }
