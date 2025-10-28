@@ -2,7 +2,10 @@ package discovery
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"reflect"
+	"sync"
 	"testing"
 	"time"
 
@@ -258,7 +261,7 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 		err := manager.Add(mockProvider)
 		require.NoError(t, err)
 
-		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 
 		err = manager.Start(ctx, "127.0.0.1", 8080, 9080)
@@ -306,6 +309,135 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 		assert.NoError(t, err)
 	})
 
+	t.Run("ManagerKeepsBroadcastingWhenSubscriberBacksUp", func(t *testing.T) {
+		metadata.ResetGlobalBootstrapMetadata()
+		logger := slog.Default()
+		manager := NewManager("test-node-stall", logger)
+
+		eventChan := make(chan ports.Event, 10)
+		mockProvider := mocks.NewMockProvider(t)
+
+		mockProvider.EXPECT().Name().Return("mock-provider")
+		mockProvider.EXPECT().Start(mock.Anything, mock.Anything).Return(nil)
+		mockProvider.EXPECT().Events().Return((<-chan ports.Event)(eventChan))
+		mockProvider.EXPECT().Snapshot().Return([]ports.Peer{}).Maybe()
+
+		err := manager.Add(mockProvider)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		err = manager.Start(ctx, "127.0.0.1", 8080, 9080)
+		require.NoError(t, err)
+
+		_, unsubStalled := manager.Subscribe()
+		activeSub, unsubActive := manager.Subscribe()
+
+		var receivedMu sync.Mutex
+		received := make([]string, 0, 11)
+
+		done := make(chan struct{})
+
+		go func() {
+			for i := 0; i < 11; i++ {
+				select {
+				case evt := <-activeSub:
+					receivedMu.Lock()
+					received = append(received, evt.Peer.ID)
+					receivedMu.Unlock()
+					if len(received) == 11 {
+						close(done)
+					}
+				case <-time.After(2 * time.Second):
+					return
+				}
+			}
+		}()
+
+		for i := 0; i < 11; i++ {
+			peer := ports.Peer{ID: fmt.Sprintf("peer-%d", i)}
+			eventChan <- ports.Event{Type: ports.PeerAdded, Peer: peer}
+		}
+
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for active subscriber to receive events")
+		}
+
+		receivedMu.Lock()
+		assert.Len(t, received, 11)
+		receivedMu.Unlock()
+
+		require.Eventually(t, func() bool {
+			manager.subscribersMu.RLock()
+			defer manager.subscribersMu.RUnlock()
+			return len(manager.subscribers) == 1
+		}, time.Second, 10*time.Millisecond)
+
+		unsubStalled()
+		unsubActive()
+
+		mockProvider.EXPECT().Stop().Return(nil)
+		err = manager.Stop()
+		assert.NoError(t, err)
+	})
+
+	t.Run("ManagerContinuesBroadcastAfterSubscriberChannelClosed", func(t *testing.T) {
+		metadata.ResetGlobalBootstrapMetadata()
+		logger := slog.Default()
+		manager := NewManager("test-node-closed", logger)
+
+		manager.ctx, _ = context.WithCancel(context.Background())
+		require.NotNil(t, manager.ctx)
+
+		sub1, unsub1 := manager.Subscribe()
+		sub2, unsub2 := manager.Subscribe()
+
+		manager.subscribersMu.RLock()
+		var rawSub1 chan ports.Event
+		var rawSub2 chan ports.Event
+		for _, ch := range manager.subscribers {
+			switch reflect.ValueOf(ch).Pointer() {
+			case reflect.ValueOf(sub1).Pointer():
+				rawSub1 = ch
+			case reflect.ValueOf(sub2).Pointer():
+				rawSub2 = ch
+			}
+		}
+		manager.subscribersMu.RUnlock()
+
+		require.NotNil(t, rawSub1)
+		require.Equal(t, reflect.ValueOf(sub1).Pointer(), reflect.ValueOf(rawSub1).Pointer())
+		require.NotNil(t, rawSub2)
+		require.Equal(t, reflect.ValueOf(sub2).Pointer(), reflect.ValueOf(rawSub2).Pointer())
+
+		closeSubscriberChannel(rawSub1)
+
+		manager.subscribersMu.RLock()
+		require.Len(t, manager.subscribers, 2)
+		manager.subscribersMu.RUnlock()
+
+		peer := ports.Peer{ID: "peer-after-close"}
+		manager.broadcastEvent(ports.Event{Type: ports.PeerAdded, Peer: peer})
+
+		select {
+		case evt, ok := <-rawSub2:
+			require.True(t, ok, "second subscriber channel closed prematurely")
+			assert.Equal(t, peer.ID, evt.Peer.ID)
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("timed out waiting for second subscriber")
+		}
+
+		manager.subscribersMu.RLock()
+		assert.Len(t, manager.subscribers, 1)
+		manager.subscribersMu.RUnlock()
+
+		unsub1()
+		unsub2()
+	})
+
 	t.Run("ManagerStopCanBeCalledMultipleTimes", func(t *testing.T) {
 		metadata.ResetGlobalBootstrapMetadata()
 		logger := slog.Default()
@@ -340,4 +472,17 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 			assert.NoError(t, err)
 		})
 	})
+}
+
+func TestSendToSubscriberRecover(t *testing.T) {
+	logger := slog.Default()
+	manager := NewManager("test-node-send", logger)
+	manager.ctx, _ = context.WithCancel(context.Background())
+
+	ch := make(chan ports.Event)
+	close(ch)
+
+	cont, prune := manager.sendToSubscriber(0, ch, ports.Event{})
+	assert.True(t, cont)
+	assert.True(t, prune)
 }

@@ -152,4 +152,31 @@ func TestManagerWaitForDiscovery(t *testing.T) {
 
 		assert.NoError(t, manager.Stop())
 	})
+
+	t.Run("returns error when discovery stops without peers", func(t *testing.T) {
+		provider := newTestDiscoveryProvider()
+
+		manager := discovery.NewManager("test-node", logger)
+		require.NoError(t, manager.Add(provider))
+
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		require.NoError(t, manager.Start(ctx, "127.0.0.1", 8080, 9080))
+
+		coreManager := &Manager{logger: logger, discovery: manager}
+
+		stopErrCh := make(chan error, 1)
+		go func() {
+			time.Sleep(100 * time.Millisecond)
+			stopErrCh <- manager.Stop()
+		}()
+
+		peers, err := coreManager.waitForDiscovery(ctx, time.Second)
+		require.Error(t, err)
+		assert.ErrorIs(t, err, ErrDiscoveryStopped)
+		assert.Nil(t, peers)
+
+		require.NoError(t, <-stopErrCh)
+	})
 }

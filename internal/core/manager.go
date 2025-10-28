@@ -117,6 +117,8 @@ type ClusterMetrics struct {
 	NodesExecuted      int `json:"nodes_executed"`
 }
 
+var ErrDiscoveryStopped = errors.New("discovery stopped before finding any peers")
+
 type ClusterInfo struct {
 	NodeID   string         `json:"node_id"`
 	Status   string         `json:"status"`
@@ -829,6 +831,9 @@ func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) (
 		case _, ok := <-events:
 			if !ok {
 				peers = m.discovery.GetPeers()
+				if len(peers) == 0 {
+					return nil, fmt.Errorf("discovery stopped before peers found: %w", ErrDiscoveryStopped)
+				}
 				m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "events_closed")
 				return peers, nil
 			}
