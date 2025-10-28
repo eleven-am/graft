@@ -502,7 +502,6 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 		err = manager.Start(ctx, "127.0.0.1", 8080, 9080)
 		require.NoError(t, err)
 
-		// trigger at least one event send to exercise shutdown path
 		eventChan <- ports.Event{Type: ports.PeerRemoved, Peer: ports.Peer{ID: "peer-stop"}}
 
 		mockProvider.EXPECT().Stop().Return(nil)

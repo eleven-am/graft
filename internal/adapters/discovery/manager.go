@@ -350,7 +350,7 @@ func (m *Manager) pruneSubscribers(ids []int) {
 func closeSubscriberChannel(ch chan ports.Event) {
 	defer func() {
 		if r := recover(); r != nil {
-			// channel was already closed by another goroutine
+
 		}
 	}()
 

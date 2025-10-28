@@ -13,7 +13,6 @@ func TestManagerWaitUntilReadyResetsAfterRegression(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
 
-	// Initial wait should block until state becomes ready.
 	done := make(chan error, 1)
 	go func() {
 		done <- mgr.WaitUntilReady(ctx)
@@ -31,7 +30,6 @@ func TestManagerWaitUntilReadyResetsAfterRegression(t *testing.T) {
 		t.Fatalf("expected wait to succeed after readiness, got %v", err)
 	}
 
-	// Regress back to detecting and ensure waits no longer return immediately.
 	mgr.SetState(StateDetecting)
 
 	regressionCtx, regressionCancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
@@ -47,7 +45,6 @@ func TestManagerWaitUntilReadyResetsAfterRegression(t *testing.T) {
 		t.Fatalf("wait returned too quickly after regression")
 	}
 
-	// Transition to ready again should unblock new waits immediately.
 	mgr.SetState(StateReady)
 	if err := mgr.WaitUntilReady(context.Background()); err != nil {
 		t.Fatalf("expected immediate success after readiness restored, got %v", err)
