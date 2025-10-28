@@ -69,6 +69,7 @@ type Manager struct {
 	// Local pressure sampling (CPU and memory)
 	lastCPUSampleSeconds float64
 	lastCPUSampleTime    time.Time
+	cpuSampleMu          sync.Mutex
 
 	// test hook: when set, used to compute local pressure instead of sampling
 	pressureFn func() float64
@@ -830,13 +831,15 @@ func connectorWorkloadKey(connectorID string) string {
 
 // sampleCPUUsage estimates CPU usage as process CPU seconds over wall time since last sample.
 func (m *Manager) sampleCPUUsage() float64 {
+	m.cpuSampleMu.Lock()
+	defer m.cpuSampleMu.Unlock()
 
-	var s = rmetrics.Sample{Name: "/process/cpu:seconds"}
-	rmetrics.Read([]rmetrics.Sample{s})
+	samples := []rmetrics.Sample{{Name: "/process/cpu:seconds"}}
+	rmetrics.Read(samples)
 
 	var cpuSeconds float64
-	if s.Value.Kind() == rmetrics.KindFloat64 {
-		cpuSeconds = s.Value.Float64()
+	if samples[0].Value.Kind() == rmetrics.KindFloat64 {
+		cpuSeconds = samples[0].Value.Float64()
 	} else {
 
 		cpuSeconds = float64(runtime.NumGoroutine()) * 0.001

@@ -381,6 +381,11 @@ func (h *connectorHandle) runWithLease() error {
 			if h.logger != nil {
 				h.logger.Info("connector context cancelled", "error", err)
 			}
+			select {
+			case req := <-h.releaseCh:
+				close(req.ack)
+			default:
+			}
 			return context.Canceled
 		case req := <-h.releaseCh:
 			if req.reason == releaseReasonRebalance {
@@ -398,7 +403,13 @@ func (h *connectorHandle) runWithLease() error {
 			}
 			return err
 		case err := <-errCh:
+			runCancel()
 			h.manager.releaseConnectorLease(h, false)
+			select {
+			case req := <-h.releaseCh:
+				close(req.ack)
+			default:
+			}
 			if err == nil {
 				return fmt.Errorf("connector stopped without error")
 			}
@@ -469,7 +480,15 @@ func (h *connectorHandle) requestRelease(reason connectorReleaseReason) {
 		return
 	case h.releaseCh <- req:
 	}
-	<-req.ack
+	select {
+	case <-req.ack:
+		return
+	case <-time.After(5 * time.Second):
+		if h.logger != nil {
+			h.logger.Warn("timeout waiting for connector release acknowledgment", "connector", h.name, "connector_id", h.id, "reason", string(reason))
+		}
+		return
+	}
 }
 
 func (h *connectorHandle) stop() {
@@ -838,7 +857,7 @@ func (m *Manager) releaseConnectorLease(handle *connectorHandle, force bool) {
 		return
 	}
 
-	if record.Owner != m.nodeID {
+	if !force && record.Owner != m.nodeID {
 		if m.logger != nil {
 			m.logger.Debug("skipping connector lease release; ownership moved", "connector", handle.name, "connector_id", handle.id, "current_owner", record.Owner)
 		}

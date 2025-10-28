@@ -34,7 +34,7 @@ import (
 	"github.com/eleven-am/graft/internal/ports"
 	"github.com/eleven-am/graft/internal/readiness"
 
-	badger "github.com/dgraph-io/badger/v3"
+	"github.com/dgraph-io/badger/v3"
 )
 
 type Manager struct {
