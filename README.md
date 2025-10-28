@@ -144,9 +144,9 @@ Each node watches connector configs. Only one node holds the lease at a time; if
 Start the same binary in multiple terminals. Give each process a unique node ID, raft bind address, gRPC port, and data directory before calling `graft.New`. A minimal pattern looks like this:
 
 ```go
-nodeID := os.Getenv("GRAFT_NODE_ID")          // e.g. "node-1"
-raftAddr := os.Getenv("GRAFT_RAFT_ADDR")      // e.g. "127.0.0.1:7100"
-grpcPort, _ := strconv.Atoi(os.Getenv("GRAFT_GRPC_PORT"))
+nodeID := os.Getenv("GRAFT_NODE_ID")                                  // e.g. "node-1"
+raftAddr := os.Getenv("GRAFT_RAFT_ADDR")                              // e.g. "127.0.0.1:7100"
+grpcPort, _ := strconv.Atoi(os.Getenv("GRAFT_GRPC_PORT")) // handle errors in production
 dataDir := os.Getenv("GRAFT_DATA_DIR")
 
 manager := graft.New(nodeID, raftAddr, dataDir, logger)
@@ -160,14 +160,14 @@ GRAFT_NODE_ID=node-1 \
 GRAFT_RAFT_ADDR=127.0.0.1:7100 \
 GRAFT_GRPC_PORT=9001 \
 GRAFT_DATA_DIR=./tmp/node-1 \
-go run ./cmd/yourservice
+go run ./path/to/main.go
 
 # Terminal 2
 GRAFT_NODE_ID=node-2 \
 GRAFT_RAFT_ADDR=127.0.0.1:7101 \
 GRAFT_GRPC_PORT=9002 \
 GRAFT_DATA_DIR=./tmp/node-2 \
-go run ./cmd/yourservice
+go run ./path/to/main.go
 ```
 
 Use the discovery helper that suits your environment (static lists, mDNS, or a custom provider). After Raft elects a leader the queue, lease store, and connectors replicate automatically.
