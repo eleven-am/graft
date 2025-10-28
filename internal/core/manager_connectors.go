@@ -838,7 +838,10 @@ func (m *Manager) releaseConnectorLease(handle *connectorHandle, force bool) {
 		return
 	}
 
-	if record.Owner != m.nodeID && !force {
+	if record.Owner != m.nodeID {
+		if m.logger != nil {
+			m.logger.Debug("skipping connector lease release; ownership moved", "connector", handle.name, "connector_id", handle.id, "current_owner", record.Owner)
+		}
 		return
 	}
 
@@ -851,11 +854,14 @@ func (m *Manager) releaseConnectorLease(handle *connectorHandle, force bool) {
 		return
 	}
 
-	if err := m.storage.Put(m.connectorLeaseKey(handle.id), data, newVersion); err != nil && m.logger != nil {
-		if !isVersionMismatch(err) {
+	if err := m.storage.Put(m.connectorLeaseKey(handle.id), data, newVersion); err != nil {
+		if m.logger != nil && !isVersionMismatch(err) {
 			m.logger.Warn("failed to release connector lease", "connector", handle.name, "connector_id", handle.id, "error", err)
 		}
+		return
 	}
+
+	handle.leaseVersion = 0
 }
 
 func (m *Manager) getConnectorLease(id string) (*connectorLeaseRecord, int64, bool, error) {
