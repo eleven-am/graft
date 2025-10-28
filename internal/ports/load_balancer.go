@@ -8,6 +8,9 @@ type LoadBalancer interface {
 
 	ShouldExecuteNode(nodeID string, workflowID string, nodeName string) (bool, error)
 
+	RegisterConnectorLoad(connectorID string, weight float64) error
+	DeregisterConnectorLoad(connectorID string) error
+
 	StartDraining() error
 	StopDraining() error
 	IsDraining() bool
