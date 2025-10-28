@@ -22,6 +22,12 @@ type ConnectorRegistryPort interface {
 	GetConnectorCount() int
 }
 
+// ConnectorLeaseCleaner exposes cleanup hooks for releasing connector leases when
+// a node fails or is explicitly removed from the cluster.
+type ConnectorLeaseCleaner interface {
+	CleanupNodeLeases(nodeID string)
+}
+
 type ConnectorRegistrationError struct {
 	ConnectorName string
 	Reason        string

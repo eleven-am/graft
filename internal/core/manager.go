@@ -69,6 +69,7 @@ type Manager struct {
 	connectorWatcherUnsub  func()
 	connectorRandMu        sync.Mutex
 	connectorRand          *rand.Rand
+	leaseManager           ports.LeaseManagerPort
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -83,9 +84,10 @@ type managerProviders struct {
 	newConnectorRegistry func(*slog.Logger) ports.ConnectorRegistryPort
 	newClusterManager    func(ports.RaftNode, int, *slog.Logger) ports.ClusterManager
 	newLoadBalancer      func(ports.EventManager, string, ports.ClusterManager, *load_balancer.Config, *slog.Logger) ports.LoadBalancer
-	newQueue             func(name string, storage ports.StoragePort, events ports.EventManager, logger *slog.Logger) ports.QueuePort
+	newQueue             func(name string, storage ports.StoragePort, events ports.EventManager, leaseManager ports.LeaseManagerPort, nodeID string, claimTTL time.Duration, logger *slog.Logger) ports.QueuePort
 	newEngine            func(domain.EngineConfig, string, ports.NodeRegistryPort, ports.QueuePort, ports.StoragePort, ports.EventManager, ports.LoadBalancer, *slog.Logger) ports.EnginePort
 	newTransport         func(*slog.Logger, domain.TransportConfig) ports.TransportPort
+	newLeaseManager      func(ports.StoragePort, *slog.Logger) ports.LeaseManagerPort
 }
 
 func defaultProviders() managerProviders {
@@ -110,14 +112,17 @@ func defaultProviders() managerProviders {
 		newLoadBalancer: func(ev ports.EventManager, nodeID string, cm ports.ClusterManager, cfg *load_balancer.Config, l *slog.Logger) ports.LoadBalancer {
 			return load_balancer.NewManager(ev, nodeID, cm, cfg, l)
 		},
-		newQueue: func(name string, s ports.StoragePort, ev ports.EventManager, l *slog.Logger) ports.QueuePort {
-			return queue.NewQueue(name, s, ev, l)
+		newQueue: func(name string, s ports.StoragePort, ev ports.EventManager, leaseManager ports.LeaseManagerPort, nodeID string, claimTTL time.Duration, l *slog.Logger) ports.QueuePort {
+			return queue.NewQueue(name, s, ev, leaseManager, nodeID, claimTTL, l)
 		},
 		newEngine: func(cfg domain.EngineConfig, nodeID string, nr ports.NodeRegistryPort, q ports.QueuePort, s ports.StoragePort, ev ports.EventManager, lb ports.LoadBalancer, l *slog.Logger) ports.EnginePort {
 			return engine.NewEngine(cfg, nodeID, nr, q, s, ev, lb, l)
 		},
 		newTransport: func(l *slog.Logger, cfg domain.TransportConfig) ports.TransportPort {
 			return transport.NewGRPCTransport(l, cfg)
+		},
+		newLeaseManager: func(s ports.StoragePort, l *slog.Logger) ports.LeaseManagerPort {
+			return storage.NewLeaseManager(s, l)
 		},
 	}
 }
@@ -248,7 +253,9 @@ func NewWithConfig(config *domain.Config) *Manager {
 		return nil
 	})
 
-	queueAdapter := prov.newQueue("main", appStorage, eventManager, logger)
+	leaseManager := prov.newLeaseManager(appStorage, logger)
+
+	queueAdapter := prov.newQueue("main", appStorage, eventManager, leaseManager, config.NodeID, 0, logger)
 	cleanup = append(cleanup, queueAdapter.Close)
 
 	engineAdapter := prov.newEngine(config.Engine, config.NodeID, nodeRegistryManager, queueAdapter, appStorage, eventManager, loadBalancerManager, logger)
@@ -301,6 +308,11 @@ func NewWithConfig(config *domain.Config) *Manager {
 		readinessManager:  readiness.NewManager(),
 		workflowIntakeOk:  true,
 		connectors:        make(map[string]*connectorHandle),
+		leaseManager:      leaseManager,
+	}
+
+	if manager.raftAdapter != nil {
+		manager.raftAdapter.SetConnectorLeaseCleaner(manager)
 	}
 
 	if config.Observability.Enabled {
@@ -622,7 +634,7 @@ func (m *Manager) GetClusterInfo() ClusterInfo {
 
 	if m.raftAdapter != nil {
 		raftInfo := m.raftAdapter.GetClusterInfo()
-		info.IsLeader = (raftInfo.Leader != nil && raftInfo.Leader.ID == m.nodeID)
+		info.IsLeader = raftInfo.Leader != nil && raftInfo.Leader.ID == m.nodeID
 
 		for _, member := range raftInfo.Members {
 			if member.ID != m.nodeID {

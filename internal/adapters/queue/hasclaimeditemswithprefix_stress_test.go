@@ -108,7 +108,7 @@ func TestQueue_HasClaimedItemsWithPrefix_BasicFunctionality(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockStorage := &mocks.MockStoragePort{}
-			queue := NewQueue("test", mockStorage, nil, nil)
+			queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 			var mockItems []ports.KeyValueVersion
 			for _, item := range tt.claimedItems {
@@ -144,7 +144,7 @@ func TestQueue_HasClaimedItemsWithPrefix_EdgeCases(t *testing.T) {
 			name: "queue closed",
 			setupQueue: func() *Queue {
 				mockStorage := &mocks.MockStoragePort{}
-				queue := NewQueue("test", mockStorage, nil, nil)
+				queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 				queue.Close()
 				return queue
 			},
@@ -157,7 +157,7 @@ func TestQueue_HasClaimedItemsWithPrefix_EdgeCases(t *testing.T) {
 			setupQueue: func() *Queue {
 				mockStorage := &mocks.MockStoragePort{}
 				mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(nil, fmt.Errorf("storage error")).Maybe()
-				return NewQueue("test", mockStorage, nil, nil)
+				return NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 			},
 			searchPrefix:   `"workflow_id":"test"`,
 			expectError:    true,
@@ -174,7 +174,7 @@ func TestQueue_HasClaimedItemsWithPrefix_EdgeCases(t *testing.T) {
 					},
 				}
 				mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(mockItems, nil).Maybe()
-				return NewQueue("test", mockStorage, nil, nil)
+				return NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 			},
 			searchPrefix:   `"workflow_id":"test"`,
 			expectError:    false,
@@ -194,7 +194,7 @@ func TestQueue_HasClaimedItemsWithPrefix_EdgeCases(t *testing.T) {
 					},
 				}
 				mockStorage.On("ListByPrefix", "queue:test:claimed:").Return(mockItems, nil).Maybe()
-				return NewQueue("test", mockStorage, nil, nil)
+				return NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 			},
 			searchPrefix:   strings.Repeat("x", 5000),
 			expectError:    false,
@@ -224,7 +224,7 @@ func TestQueue_HasClaimedItemsWithPrefix_ConcurrencyStress(t *testing.T) {
 	const numIterations = 10
 
 	mockStorage := &mocks.MockStoragePort{}
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	claimedItem := domain.NewClaimedItem([]byte(`{"workflow_id":"test-123","action":"transform"}`), "claim-1", 1)
 	itemBytes, _ := claimedItem.ToBytes()
@@ -286,7 +286,7 @@ func TestQueue_HasClaimedItemsWithPrefix_LargeDatasetStress(t *testing.T) {
 	const numItems = 10000
 
 	mockStorage := &mocks.MockStoragePort{}
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	var mockItems []ports.KeyValueVersion
 	for i := 0; i < numItems; i++ {
@@ -354,7 +354,7 @@ func TestQueue_HasClaimedItemsWithPrefix_MemoryStress(t *testing.T) {
 	const iterations = 1000
 
 	mockStorage := &mocks.MockStoragePort{}
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	var mockItems []ports.KeyValueVersion
 	for i := 0; i < 100; i++ {
@@ -394,7 +394,7 @@ func TestQueue_HasClaimedItemsWithPrefix_RaceConditionStress(t *testing.T) {
 	const duration = 2 * time.Second
 
 	mockStorage := &mocks.MockStoragePort{}
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	claimedItem := domain.NewClaimedItem([]byte(`{"workflow_id":"race-test","action":"transform"}`), "race-claim", 1)
 	itemBytes, _ := claimedItem.ToBytes()
@@ -468,7 +468,7 @@ func BenchmarkQueue_HasClaimedItemsWithPrefix_Performance(b *testing.B) {
 	for _, size := range sizes {
 		b.Run(fmt.Sprintf("Items_%d", size), func(b *testing.B) {
 			mockStorage := &mocks.MockStoragePort{}
-			queue := NewQueue("test", mockStorage, nil, nil)
+			queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 			var mockItems []ports.KeyValueVersion
 			for i := 0; i < size; i++ {

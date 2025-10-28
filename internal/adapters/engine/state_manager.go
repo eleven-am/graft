@@ -16,7 +16,7 @@ import (
 
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/ports"
-	json "github.com/goccy/go-json"
+	"github.com/goccy/go-json"
 )
 
 // StateManager provides advanced state persistence with optimizations (unified)

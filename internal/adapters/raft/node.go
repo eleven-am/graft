@@ -159,6 +159,13 @@ func (n *Node) WaitForLeader(ctx context.Context) error {
 	return n.controller.WaitForLeadership(ctx)
 }
 
+func (n *Node) SetConnectorLeaseCleaner(cleaner ports.ConnectorLeaseCleaner) {
+	if n == nil || n.runtime == nil {
+		return
+	}
+	n.runtime.SetConnectorLeaseCleaner(cleaner)
+}
+
 func (n *Node) IsLeader() bool {
 	info := n.controller.LeadershipInfo()
 	return info.State == ports.RaftLeadershipLeader && info.LeaderID == n.config.NodeID

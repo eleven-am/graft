@@ -15,10 +15,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+type leaseManagerStub struct{}
+
+func (leaseManagerStub) Key(namespace, id string) string {
+	return "lease:" + namespace + ":" + id
+}
+
+func (leaseManagerStub) TryAcquire(string, string, time.Duration, map[string]string) (*ports.LeaseRecord, bool, error) {
+	panic("not implemented")
+}
+
+func (leaseManagerStub) Renew(string, string, time.Duration) (*ports.LeaseRecord, error) {
+	panic("not implemented")
+}
+
+func (leaseManagerStub) Release(string, string) error {
+	panic("not implemented")
+}
+
+func (leaseManagerStub) ForceRelease(string) error {
+	panic("not implemented")
+}
+
+func (leaseManagerStub) Get(string) (*ports.LeaseRecord, bool, error) {
+	panic("not implemented")
+}
+
 func TestQueue_Enqueue(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
 	mockStorage.On("Put", "queue:test:ready:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
@@ -33,7 +59,7 @@ func TestQueue_Enqueue(t *testing.T) {
 func TestQueue_EnqueueMultiple(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
 	mockStorage.On("Put", "queue:test:ready:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
@@ -55,7 +81,7 @@ func TestQueue_EnqueueMultiple(t *testing.T) {
 func TestQueue_Peek(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	queueItem := domain.NewQueueItem([]byte("test data"), 1)
 	itemBytes, _ := queueItem.ToBytes()
@@ -74,7 +100,7 @@ func TestQueue_Peek(t *testing.T) {
 func TestQueue_PeekEmpty(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	mockStorage.On("GetNext", "queue:test:ready:").Return("", nil, false, nil).Once()
 
@@ -89,7 +115,7 @@ func TestQueue_PeekEmpty(t *testing.T) {
 func TestQueue_PeekOrdering(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	item1 := domain.NewQueueItem([]byte("first"), 1)
 	item1Bytes, _ := item1.ToBytes()
@@ -108,7 +134,7 @@ func TestQueue_PeekOrdering(t *testing.T) {
 func TestQueue_Claim(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	queueItem := domain.NewQueueItem([]byte("test data"), 1)
 	itemBytes, _ := queueItem.ToBytes()
@@ -136,7 +162,7 @@ func TestQueue_Claim(t *testing.T) {
 func TestQueue_ClaimEmpty(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	mockStorage.On("GetNext", "queue:test:ready:").Return("", nil, false, nil).Once()
 
@@ -152,7 +178,7 @@ func TestQueue_ClaimEmpty(t *testing.T) {
 func TestQueue_ClaimOrdering(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	item1 := domain.NewQueueItem([]byte("first"), 1)
 	item1Bytes, _ := item1.ToBytes()
@@ -175,7 +201,7 @@ func TestQueue_ClaimOrdering(t *testing.T) {
 func TestQueue_ClaimProcessAfterDecodeError(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	payload := []byte("{\"process_after\":\"not-a-time\"}")
 	queueItem := domain.NewQueueItem(payload, 1)
@@ -196,7 +222,7 @@ func TestQueue_ClaimProcessAfterDecodeError(t *testing.T) {
 func TestQueue_Complete(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	claimID := "test-claim-id"
 	expectedKey := "queue:test:claimed:test-claim-id"
@@ -212,7 +238,7 @@ func TestQueue_Complete(t *testing.T) {
 func TestQueue_Size(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	mockStorage.On("CountPrefix", "queue:test:ready:").Return(2, nil).Once()
 	mockStorage.On("CountPrefix", "queue:test:blocked:").Return(1, nil).Once()
@@ -227,7 +253,7 @@ func TestQueue_Size(t *testing.T) {
 func TestQueue_SizeEmpty(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	mockStorage.On("CountPrefix", "queue:test:ready:").Return(0, nil).Once()
 	mockStorage.On("CountPrefix", "queue:test:blocked:").Return(0, nil).Once()
@@ -241,7 +267,7 @@ func TestQueue_SizeEmpty(t *testing.T) {
 
 func TestQueue_WaitForItem(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -257,7 +283,7 @@ func TestQueue_WaitForItem(t *testing.T) {
 
 func TestQueue_WaitForItemIgnoreDelete(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
@@ -271,9 +297,60 @@ func TestQueue_WaitForItemIgnoreDelete(t *testing.T) {
 	}
 }
 
+func TestQueue_WaitForItemLeaseEvent(t *testing.T) {
+	mockStorage := &mocks.MockStoragePort{}
+	mockEvents := &mocks.MockEventManager{}
+	leaseMgr := leaseManagerStub{}
+	queue := NewQueue("test", mockStorage, mockEvents, leaseMgr, "", 0, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	readyCh := make(chan domain.Event)
+	readyUnsubCalled := false
+	readyUnsub := func() {
+		readyUnsubCalled = true
+		close(readyCh)
+	}
+
+	leasePrefix := leaseMgr.Key("queue-claim:test", "")
+	leaseCh := make(chan domain.Event)
+	leaseUnsubCalled := false
+	leaseUnsub := func() {
+		leaseUnsubCalled = true
+		close(leaseCh)
+	}
+
+	mockEvents.On("SubscribeToChannel", "queue:test:ready:").Return((<-chan domain.Event)(readyCh), readyUnsub, nil).Once()
+	mockEvents.On("SubscribeToChannel", leasePrefix).Return((<-chan domain.Event)(leaseCh), leaseUnsub, nil).Once()
+
+	waitCh := queue.WaitForItem(ctx)
+
+	select {
+	case <-waitCh:
+		t.Fatal("unexpected notification before lease event")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	leaseCh <- domain.Event{Type: domain.EventDelete, Key: leaseMgr.Key("queue-claim:test", "claim-1"), Timestamp: time.Now()}
+
+	select {
+	case <-waitCh:
+		// expected
+	case <-time.After(150 * time.Millisecond):
+		t.Fatal("expected lease delete event to signal wait channel")
+	}
+
+	cancel()
+	<-waitCh
+
+	assert.True(t, readyUnsubCalled)
+	assert.True(t, leaseUnsubCalled)
+}
+
 func TestQueue_ClaimSkipsDeferredBeyondLimit(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	const deferredCount = 150
 	prefix := "queue:test:ready:"
@@ -340,7 +417,7 @@ func TestQueue_ClaimSkipsDeferredBeyondLimit(t *testing.T) {
 func TestQueue_Close(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	err := queue.Close()
 	assert.NoError(t, err)
@@ -353,7 +430,7 @@ func TestQueue_Close(t *testing.T) {
 func TestQueue_ClosedOperations(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	queue.Close()
 
@@ -375,7 +452,7 @@ func TestQueue_ClosedOperations(t *testing.T) {
 func TestQueue_ConcurrentEnqueue(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	for i := 1; i <= 10; i++ {
 		mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(i), nil).Once()
@@ -406,7 +483,7 @@ func TestQueue_ConcurrentEnqueue(t *testing.T) {
 func TestQueue_EnqueueClaimComplete(t *testing.T) {
 	mockStorage := &mocks.MockStoragePort{}
 	mockEventManager := &mocks.MockEventManager{}
-	queue := NewQueue("test", mockStorage, mockEventManager, nil)
+	queue := NewQueue("test", mockStorage, mockEventManager, nil, "", 0, nil)
 
 	queueItem := domain.NewQueueItem([]byte("test data"), 1)
 	itemBytes, _ := queueItem.ToBytes()

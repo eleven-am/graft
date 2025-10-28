@@ -70,6 +70,8 @@ type Runtime struct {
 
 	deps RuntimeDeps
 
+	connectorCleaner ports.ConnectorLeaseCleaner
+
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -398,7 +400,37 @@ func (r *Runtime) handleObservation(obs raft.Observation) {
 	switch data := obs.Data.(type) {
 	case raft.LeaderObservation:
 		r.updateLeadership(r.mapLeaderObservation(data))
+	case raft.FailedHeartbeatObservation:
+		cleaner := r.getConnectorLeaseCleaner()
+		if cleaner != nil {
+			nodeID := string(data.PeerID)
+			if nodeID != "" {
+				go cleaner.CleanupNodeLeases(nodeID)
+			}
+		}
+	case raft.PeerObservation:
+		if data.Removed {
+			cleaner := r.getConnectorLeaseCleaner()
+			if cleaner != nil {
+				nodeID := string(data.Peer.ID)
+				if nodeID != "" {
+					go cleaner.CleanupNodeLeases(nodeID)
+				}
+			}
+		}
 	}
+}
+
+func (r *Runtime) SetConnectorLeaseCleaner(cleaner ports.ConnectorLeaseCleaner) {
+	r.mu.Lock()
+	r.connectorCleaner = cleaner
+	r.mu.Unlock()
+}
+
+func (r *Runtime) getConnectorLeaseCleaner() ports.ConnectorLeaseCleaner {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.connectorCleaner
 }
 
 func (r *Runtime) mapLeaderObservation(obs raft.LeaderObservation) ports.RaftLeadershipInfo {
@@ -591,7 +623,7 @@ func (r *Runtime) ClusterInfo() ports.ClusterInfo {
 	if future := instance.GetConfiguration(); future.Error() == nil {
 		servers := future.Configuration().Servers
 		members := make([]ports.RaftNodeInfo, 0, len(servers))
-		leaderAddr := instance.Leader()
+		leaderAddr, _ := instance.LeaderWithID()
 		currentState := instance.State()
 		for _, srv := range servers {
 			state := ports.NodeFollower

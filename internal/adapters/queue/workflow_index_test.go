@@ -57,7 +57,7 @@ func TestQueue_WorkflowIndex(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			queue := NewQueue("test", nil, nil, nil)
+			queue := NewQueue("test", nil, nil, nil, "", 0, nil)
 
 			for workflowID, sequences := range tt.workflowItems {
 				for _, seq := range sequences {
@@ -80,7 +80,7 @@ func TestQueue_WorkflowIndex(t *testing.T) {
 }
 
 func TestQueue_WorkflowIndexRemoval(t *testing.T) {
-	queue := NewQueue("test", nil, nil, nil)
+	queue := NewQueue("test", nil, nil, nil, "", 0, nil)
 
 	itemData := []byte(`{"workflow_id":"workflow-123","data":"test"}`)
 	queue.updateWorkflowIndex(itemData, 1, true)
@@ -138,7 +138,7 @@ func TestQueue_ExtractWorkflowID(t *testing.T) {
 		},
 	}
 
-	queue := NewQueue("test", nil, nil, nil)
+	queue := NewQueue("test", nil, nil, nil, "", 0, nil)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -176,7 +176,7 @@ func TestQueue_ExtractWorkflowIDFromPrefix(t *testing.T) {
 		},
 	}
 
-	queue := NewQueue("test", nil, nil, nil)
+	queue := NewQueue("test", nil, nil, nil, "", 0, nil)
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -188,7 +188,7 @@ func TestQueue_ExtractWorkflowIDFromPrefix(t *testing.T) {
 
 func TestQueue_HasItemsWithPrefixOptimized(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	itemData := []byte(`{"workflow_id":"abc123","data":"test"}`)
 	queue.updateWorkflowIndex(itemData, 1, true)
@@ -208,7 +208,7 @@ func TestQueue_HasItemsWithPrefixOptimized(t *testing.T) {
 
 func TestQueue_GetItemsWithPrefixOptimized(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	workflowData1 := []byte(`{"workflow_id":"workflow-123","data":"test1"}`)
 	workflowData2 := []byte(`{"workflow_id":"workflow-123","data":"test2"}`)
@@ -237,7 +237,7 @@ func TestQueue_GetItemsWithPrefixOptimized(t *testing.T) {
 
 func TestQueue_GetItemsWithPrefixFallback(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	queueItem := domain.NewQueueItem([]byte(`{"task_id":"task-123","data":"test"}`), 1)
 	itemBytes, _ := queueItem.ToBytes()
@@ -257,7 +257,7 @@ func TestQueue_GetItemsWithPrefixFallback(t *testing.T) {
 }
 
 func TestQueue_WorkflowIndexConcurrency(t *testing.T) {
-	queue := NewQueue("test", nil, nil, nil)
+	queue := NewQueue("test", nil, nil, nil, "", 0, nil)
 
 	done := make(chan bool, 2)
 
@@ -287,7 +287,7 @@ func TestQueue_WorkflowIndexConcurrency(t *testing.T) {
 
 // Benchmark to verify O(1) performance
 func BenchmarkQueue_WorkflowIndex(b *testing.B) {
-	queue := NewQueue("test", nil, nil, nil)
+	queue := NewQueue("test", nil, nil, nil, "", 0, nil)
 
 	for i := 0; i < 10000; i++ {
 		workflowID := fmt.Sprintf("workflow-%d", i)

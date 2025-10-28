@@ -17,29 +17,82 @@ import (
 )
 
 type Queue struct {
-	name            string
-	storage         ports.StoragePort
-	eventManager    ports.EventManager
-	logger          *slog.Logger
-	mu              sync.RWMutex
-	closed          bool
-	workflowIndex   sync.Map
-	claimedIndex    sync.Map
-	claimToWorkflow sync.Map
+	name                  string
+	storage               ports.StoragePort
+	eventManager          ports.EventManager
+	logger                *slog.Logger
+	leaseManager          ports.LeaseManagerPort
+	nodeID                string
+	claimLeaseTTL         time.Duration
+	claimLeaseNS          string
+	mu                    sync.RWMutex
+	closed                bool
+	workflowIndex         sync.Map
+	claimedIndex          sync.Map
+	claimToWorkflow       sync.Map
+	lastClaimLeaseCleanup time.Time
 }
 
-func NewQueue(name string, storage ports.StoragePort, eventManager ports.EventManager, logger *slog.Logger) *Queue {
+const (
+	defaultClaimLeaseTTL      = 5 * time.Minute
+	claimLeaseCleanupInterval = 2 * time.Second
+)
+
+func NewQueue(name string, storage ports.StoragePort, eventManager ports.EventManager, leaseManager ports.LeaseManagerPort, nodeID string, ttl time.Duration, logger *slog.Logger) *Queue {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	q := &Queue{
-		name:         name,
-		storage:      storage,
-		eventManager: eventManager,
-		logger:       logger,
+	claimTTL := ttl
+	if claimTTL <= 0 {
+		claimTTL = defaultClaimLeaseTTL
+	}
+	claimNS := ""
+	if leaseManager != nil {
+		claimNS = "queue-claim:" + name
 	}
 
-	return q
+	return &Queue{
+		name:          name,
+		storage:       storage,
+		eventManager:  eventManager,
+		logger:        logger,
+		leaseManager:  leaseManager,
+		nodeID:        nodeID,
+		claimLeaseTTL: claimTTL,
+		claimLeaseNS:  claimNS,
+	}
+}
+
+// ClaimLeaseTTL exposes the current lease TTL for claim renewals.
+func (q *Queue) ClaimLeaseTTL() time.Duration {
+	q.mu.RLock()
+	defer q.mu.RUnlock()
+	return q.claimLeaseTTL
+}
+
+// RenewClaimLease refreshes the lease for the provided claim identifier.
+func (q *Queue) RenewClaimLease(claimID string) error {
+	q.mu.RLock()
+	leaseManager := q.leaseManager
+	key := q.claimLeaseKey(claimID)
+	nodeID := q.nodeID
+	ttl := q.claimLeaseTTL
+	q.mu.RUnlock()
+
+	if leaseManager == nil || key == "" {
+		return nil
+	}
+
+	_, err := leaseManager.Renew(key, nodeID, ttl)
+	if err == nil {
+		return nil
+	}
+
+	if domain.IsLeaseOwnedByOther(err) || domain.IsLeaseNotFound(err) {
+		return domain.NewResourceError("claim lease lost", err, domain.WithComponent("queue.Queue"), domain.WithContextDetail("queue_name", q.name), domain.WithContextDetail("claim_id", claimID))
+	}
+
+	return err
 }
 
 func (q *Queue) newQueueError(message string, cause error, opts ...domain.ErrorOption) *domain.DomainError {
@@ -121,6 +174,10 @@ func (q *Queue) Claim() (item []byte, claimID string, exists bool, err error) {
 		return nil, "", false, &domain.StorageError{Type: domain.ErrClosed, Message: "queue is closed"}
 	}
 
+	if err := q.cleanupExpiredClaimLeasesLocked(); err != nil {
+		return nil, "", false, err
+	}
+
 	prefix := fmt.Sprintf("queue:%s:ready:", q.name)
 	now := time.Now()
 
@@ -163,21 +220,36 @@ func (q *Queue) Claim() (item []byte, claimID string, exists bool, err error) {
 				return nil, "", false, err
 			}
 
+			claimedKey := domain.QueueClaimedKey(q.name, claimID)
 			ops := []ports.WriteOp{
-				{
-					Type: ports.OpDelete,
-					Key:  currentKey,
-				},
-				{
-					Type:  ports.OpPut,
-					Key:   domain.QueueClaimedKey(q.name, claimID),
-					Value: claimedBytes,
-				},
+				{Type: ports.OpDelete, Key: currentKey},
+				{Type: ports.OpPut, Key: claimedKey, Value: claimedBytes},
 			}
 
-			err = q.storage.BatchWrite(ops)
-			if err != nil {
+			if err := q.storage.BatchWrite(ops); err != nil {
 				return nil, "", false, err
+			}
+
+			acquired, err := q.acquireClaimLeaseLocked(claimID)
+			if err != nil {
+				rollback := []ports.WriteOp{
+					{Type: ports.OpPut, Key: currentKey, Value: value},
+					{Type: ports.OpDelete, Key: claimedKey},
+				}
+				_ = q.storage.BatchWrite(rollback)
+				return nil, "", false, err
+			}
+			if !acquired {
+				rollback := []ports.WriteOp{
+					{Type: ports.OpPut, Key: currentKey, Value: value},
+					{Type: ports.OpDelete, Key: claimedKey},
+				}
+				_ = q.storage.BatchWrite(rollback)
+				currentKey, value, itemExists, err = q.storage.GetNextAfter(prefix, currentKey)
+				if err != nil {
+					return nil, "", false, err
+				}
+				continue
 			}
 
 			q.updateWorkflowIndex(queueItem.Data, queueItem.Sequence, false)
@@ -205,7 +277,10 @@ func (q *Queue) Complete(claimID string) error {
 
 	key := domain.QueueClaimedKey(q.name, claimID)
 	q.removeClaimedIndexByClaimID(claimID)
-	return q.storage.Delete(key)
+	if err := q.storage.Delete(key); err != nil {
+		return err
+	}
+	return q.releaseClaimLeaseLocked(claimID, false)
 }
 
 func (q *Queue) Release(claimID string) error {
@@ -260,7 +335,7 @@ func (q *Queue) Release(claimID string) error {
 				return err
 			}
 			q.updateWorkflowIndex(claimedItem.Data, claimedItem.Sequence, false)
-			return nil
+			return q.releaseClaimLeaseLocked(claimID, false)
 		}
 
 		delay := 50*time.Millisecond + time.Duration(rand.Intn(150))*time.Millisecond
@@ -287,7 +362,7 @@ func (q *Queue) Release(claimID string) error {
 
 	q.updateWorkflowIndex(updatedData, claimedItem.Sequence, true)
 	q.removeClaimedIndexByClaimID(claimID)
-	return nil
+	return q.releaseClaimLeaseLocked(claimID, false)
 }
 
 func (q *Queue) WaitForItem(ctx context.Context) <-chan struct{} {
@@ -297,6 +372,10 @@ func (q *Queue) WaitForItem(ctx context.Context) <-chan struct{} {
 		defer close(ch)
 
 		prefix := fmt.Sprintf("queue:%s:ready:", q.name)
+		var leasePrefix string
+		if q.leaseManager != nil && q.claimLeaseNS != "" {
+			leasePrefix = q.leaseManager.Key(q.claimLeaseNS, "")
+		}
 
 		type channelSubscriber interface {
 			SubscribeToChannel(prefix string) (<-chan domain.Event, func(), error)
@@ -304,19 +383,48 @@ func (q *Queue) WaitForItem(ctx context.Context) <-chan struct{} {
 
 		if sub, ok := q.eventManager.(channelSubscriber); ok {
 			eventsCh, unsubscribe, err := sub.SubscribeToChannel(prefix)
+			var leaseCh <-chan domain.Event
+			var leaseUnsub func()
+			if err == nil && leasePrefix != "" {
+				if chLease, unsubLease, leaseErr := sub.SubscribeToChannel(leasePrefix); leaseErr == nil && chLease != nil && unsubLease != nil {
+					leaseCh = chLease
+					leaseUnsub = unsubLease
+				}
+			}
 			if err == nil && eventsCh != nil && unsubscribe != nil {
 				defer unsubscribe()
+				if leaseUnsub != nil {
+					defer leaseUnsub()
+				}
 				for {
 					select {
 					case <-ctx.Done():
 						return
 					case _, ok := <-eventsCh:
 						if !ok {
-							return
+							eventsCh = nil
+							if eventsCh == nil && leaseCh == nil {
+								return
+							}
+							continue
 						}
 						select {
 						case ch <- struct{}{}:
 						default:
+						}
+					case leaseEvt, ok := <-leaseCh:
+						if !ok {
+							leaseCh = nil
+							if eventsCh == nil && leaseCh == nil {
+								return
+							}
+							continue
+						}
+						if leaseEvt.Type == domain.EventDelete || leaseEvt.Type == domain.EventExpire {
+							select {
+							case ch <- struct{}{}:
+							default:
+							}
 						}
 					}
 				}
@@ -895,6 +1003,129 @@ func (q *Queue) removeClaimedIndexByClaimID(claimID string) {
 		}
 		q.claimToWorkflow.Delete(claimID)
 	}
+}
+
+func (q *Queue) claimLeaseKey(claimID string) string {
+	if q.leaseManager == nil || q.claimLeaseNS == "" || claimID == "" {
+		return ""
+	}
+	return q.leaseManager.Key(q.claimLeaseNS, claimID)
+}
+
+func (q *Queue) acquireClaimLeaseLocked(claimID string) (bool, error) {
+	if q.leaseManager == nil || q.nodeID == "" {
+		return true, nil
+	}
+	key := q.claimLeaseKey(claimID)
+	if key == "" {
+		return true, nil
+	}
+
+	metadata := map[string]string{
+		"queue": q.name,
+	}
+
+	_, acquired, err := q.leaseManager.TryAcquire(key, q.nodeID, q.claimLeaseTTL, metadata)
+	if err != nil {
+		return false, err
+	}
+	return acquired, nil
+}
+
+func (q *Queue) releaseClaimLeaseLocked(claimID string, force bool) error {
+	if q.leaseManager == nil {
+		return nil
+	}
+	key := q.claimLeaseKey(claimID)
+	if key == "" {
+		return nil
+	}
+
+	var err error
+	if force {
+		err = q.leaseManager.ForceRelease(key)
+	} else {
+		err = q.leaseManager.Release(key, q.nodeID)
+		if domain.IsLeaseOwnedByOther(err) || domain.IsLeaseNotFound(err) {
+			err = nil
+		}
+	}
+	return err
+}
+
+func (q *Queue) cleanupExpiredClaimLeasesLocked() error {
+	if q.leaseManager == nil || q.claimLeaseNS == "" {
+		return nil
+	}
+
+	prefix := fmt.Sprintf("queue:%s:claimed:", q.name)
+	now := time.Now()
+	if !q.lastClaimLeaseCleanup.IsZero() && now.Sub(q.lastClaimLeaseCleanup) < claimLeaseCleanupInterval {
+		return nil
+	}
+	entries, err := q.storage.ListByPrefix(prefix)
+	if err != nil {
+		return err
+	}
+	q.lastClaimLeaseCleanup = now
+
+	for _, kv := range entries {
+		claimID := strings.TrimPrefix(kv.Key, prefix)
+		if claimID == "" {
+			continue
+		}
+
+		leaseKey := q.claimLeaseKey(claimID)
+		if leaseKey == "" {
+			continue
+		}
+
+		record, exists, err := q.leaseManager.Get(leaseKey)
+		if err != nil {
+			return err
+		}
+
+		expired := !exists
+		if exists {
+			if record.Owner == q.nodeID && record.ExpiresAt.After(now) {
+				continue
+			}
+			if record.ExpiresAt.After(now) {
+				continue
+			}
+			expired = true
+		}
+
+		if !expired {
+			continue
+		}
+
+		_ = q.leaseManager.ForceRelease(leaseKey)
+
+		claimedItem, err := domain.ClaimedItemFromBytes(kv.Value)
+		if err != nil {
+			continue
+		}
+		queueItem := domain.NewQueueItem(claimedItem.Data, claimedItem.Sequence)
+		itemBytes, err := queueItem.ToBytes()
+		if err != nil {
+			continue
+		}
+
+		readyKey := domain.QueueReadyKey(q.name, claimedItem.Sequence)
+		ops := []ports.WriteOp{
+			{Type: ports.OpPut, Key: readyKey, Value: itemBytes},
+			{Type: ports.OpDelete, Key: kv.Key},
+		}
+		if err := q.storage.BatchWrite(ops); err != nil {
+			return err
+		}
+
+		q.updateWorkflowIndex(claimedItem.Data, claimedItem.Sequence, true)
+		q.removeClaimedIndexByClaimID(claimID)
+	}
+
+	return nil
 }
 
 func (q *Queue) Start(ctx context.Context) error {

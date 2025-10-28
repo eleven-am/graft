@@ -1,32 +1,27 @@
 # Graft
 
-[![Go Version](https://img.shields.io/github/go-mod/go-version/eleven-am/graft)](https://golang.org/dl/)
-[![License](https://img.shields.io/github/license/eleven-am/graft)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/eleven-am/graft)](https://goreportcard.com/report/github.com/eleven-am/graft)
+Graft is a Go library that gives your service a built-in workflow engine and distributed job runner. Drop it into an existing binary, register the work you care about, and let Raft handle coordination and failover.
 
-Graft is an embeddable Go library for building distributed, fault-tolerant workflow orchestration into your applications. It provides the core components for durable, stateful execution of complex tasks, leveraging HashiCorp Raft for consensus and BadgerDB for persistent storage.
+![Go Version](https://img.shields.io/github/go-mod/go-version/eleven-am/graft) ![License](https://img.shields.io/github/license/eleven-am/graft) ![Go Report Card](https://goreportcard.com/badge/github.com/eleven-am/graft)
 
-By integrating Graft, you can add resilient, long-running process management directly within your existing Go services without needing to manage a separate orchestration system.
+## Why Graft?
 
-## Features
+- **Keep everything in your service** – no external orchestrator or queue to operate.
+- **Stay alive on failure** – Raft replicates queue state and lease ownership across the cluster.
+- **Typed workflows** – write normal Go structs and methods, get compile-time checks.
+- **Connectors and work items** – long running listeners and one-shot jobs run under the same manager.
 
-- **Fault-Tolerant & Consistent**: Built on HashiCorp Raft for strong consistency, automatic leader election, and state replication
-- **Embeddable & Lightweight**: Designed to be integrated as a library within your existing Go applications
-- **Dynamic Workflow Execution**: Define workflows as typed Go structs with automatic type discovery, chainable at runtime
-- **Pluggable Service Discovery**: Static peer lists, mDNS, and external providers
-- **Resource Management**: Control workflow concurrency with global and per-type execution limits
-- **Secure Transport**: gRPC communication with TLS support and health checking
-- **Persistent State**: BadgerDB for high-performance local storage with replication
+Use it when you need scheduled jobs, fan-out/fan-in flows, or long-running steps that must survive restarts.
 
-## Quick Start
-
-### Installation
+## Install
 
 ```bash
 go get github.com/eleven-am/graft
 ```
 
-### Basic Example
+## Basic Workflow
+
+The example below starts a single node, registers one workflow node, kicks off a run, and prints the result. Everything is in-process; no extra services are required.
 
 ```go
 package main
@@ -34,7 +29,6 @@ package main
 import (
     "context"
     "fmt"
-    "log"
     "log/slog"
     "os"
     "time"
@@ -42,233 +36,161 @@ import (
     "github.com/eleven-am/graft"
 )
 
-// Define typed structures for type-safe workflow execution
-type ProcessorConfig struct {
-    Format string `json:"format"`
+type GreeterConfig struct {
+    Message string `json:"message"`
 }
 
-type ProcessorState struct {
-    Input string `json:"input"`
+type GreeterState struct {
+    Name string `json:"name"`
 }
 
-type ProcessorResult struct {
-    Result    string    `json:"result"`
-    Timestamp time.Time `json:"timestamp"`
-}
+type GreeterNode struct{}
 
-// Type-safe processing node
-type ProcessorNode struct {}
+func (GreeterNode) GetName() string { return "greeter" }
 
-func (n *ProcessorNode) GetName() string {
-    return "processor"
-}
-
-func (n *ProcessorNode) Execute(ctx context.Context, state ProcessorState, config ProcessorConfig) (graft.NodeResult, error) {
-    format := config.Format
-    if format == "" {
-        format = "processed: %s"
+func (GreeterNode) Execute(ctx context.Context, state GreeterState, cfg GreeterConfig) (graft.NodeResult, error) {
+    out := map[string]any{
+        "greeting": fmt.Sprintf("%s, %s!", cfg.Message, state.Name),
+        "at":       time.Now().UTC(),
     }
-    
-    result := ProcessorResult{
-        Result:    fmt.Sprintf(format, state.Input),
-        Timestamp: time.Now(),
-    }
-    
-    if workflowCtx, ok := graft.GetWorkflowContext(ctx); ok {
-        fmt.Printf("Processing in workflow %s on node %s\n", workflowCtx.WorkflowID, workflowCtx.ClusterInfo.NodeID)
-    }
-    
-    return graft.NodeResult{
-        Data: result,
-    }, nil
+    return graft.NodeResult{Data: out}, nil
 }
 
 func main() {
-    // Create logger
-    logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-    
-    // Create and start manager
-    manager := graft.New("node-1", "localhost:7000", "./data", logger)
-    if manager == nil {
-        log.Fatal("failed to create manager")
+    logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+
+    mgr := graft.New("node-1", "127.0.0.1:7000", "./data", logger)
+    if mgr == nil {
+        panic("graft: manager not created")
     }
-    
-    // Configure discovery (optional)
-    manager.Discovery().MDNS("", "")  // or Static()
-    
-    ctx := context.Background()
-    if err := manager.Start(ctx, 8080); err != nil {  // gRPC port
-        log.Fatal(err)
+
+    if err := mgr.RegisterNode(&GreeterNode{}); err != nil {
+        panic(err)
     }
-    defer manager.Stop(ctx)
-    
-    // Register type-safe workflow node
-    if err := manager.RegisterNode(&ProcessorNode{}); err != nil {
-        log.Fatal(err)
+
+    if err := mgr.Start(context.Background(), 8080); err != nil {
+        panic(err)
     }
-    
-    // Start workflow with typed data
+    defer mgr.Stop(context.Background())
+
     trigger := graft.WorkflowTrigger{
-        WorkflowID: "my-workflow-001",
-        InitialState: ProcessorState{
-            Input: "Hello, World!",
+        WorkflowID: "wf-001",
+        InitialState: GreeterState{
+            Name: "Ada",
         },
-        InitialNodes: []graft.NodeConfig{
-            {Name: "processor", Config: ProcessorConfig{Format: "processed: %s"}},
-        },
+        InitialNodes: []graft.NodeConfig{{
+            Name:   "greeter",
+            Config: GreeterConfig{Message: "Hello"},
+        }},
     }
-    
-    if err := manager.StartWorkflow(trigger); err != nil {
-        log.Fatal(err)
+
+    if err := mgr.StartWorkflow(trigger); err != nil {
+        panic(err)
     }
-    
-    // Check workflow status
-    state, err := manager.GetWorkflowState("my-workflow-001")
+
+    state, err := mgr.GetWorkflowState("wf-001")
     if err != nil {
-        log.Fatal(err)
+        panic(err)
     }
-    
-    fmt.Printf("Workflow Status: %s\n", state.Status)
-    fmt.Printf("Result: %+v\n", state.CurrentState)
+
+    fmt.Printf("workflow status: %s\n", state.Status)
+    fmt.Printf("payload: %s\n", state.CurrentState)
 }
 ```
 
-## Documentation
+## Connectors at a Glance
 
-- **[Examples](./examples/document-pipeline/README.md)** - Working examples for common use cases
-- **[API Reference](./docs/API.md)** - Complete API documentation
-- **[Architecture](./docs/ARCHITECTURE.md)** - System design and components
-- **[Deployment Guide](./docs/DEPLOYMENT.md)** - Production deployment patterns
-
-## How It Works
-
-Graft provides a simple `Node` interface that you implement for your workflow steps. The library handles distribution, state management, and execution coordination across your cluster.
+Connectors are long-running routines (cron jobs, stream listeners, webhook receivers). Register the implementation once; start as many instances as you need by giving each config a unique `GetID()`.
 
 ```go
-// Your typed workflow logic
-type MyConfig struct {
-    BatchSize int `json:"batch_size"`
+type CronConfig struct {
+    ID       string        `json:"id"`
+    Interval time.Duration `json:"interval"`
 }
 
-type MyState struct {
-    Data string `json:"data"`
+func (c CronConfig) GetID() string { return c.ID }
+
+type CronConnector struct{}
+
+func (CronConnector) GetName() string { return "cron" }
+
+func (CronConnector) Start(ctx context.Context, cfg CronConfig) error {
+    ticker := time.NewTicker(cfg.Interval)
+    defer ticker.Stop()
+    for {
+        select {
+        case <-ctx.Done():
+            return ctx.Err()
+        case t := <-ticker.C:
+            fmt.Printf("[%s] cron tick %s\n", cfg.ID, t.Format(time.RFC3339))
+        }
+    }
 }
 
-type MyResult struct {
-    Processed string    `json:"processed"`
-    Timestamp time.Time `json:"timestamp"`
-}
+func (CronConnector) Stop(context.Context, CronConfig) error { return nil }
 
-type MyProcessor struct{}
-
-func (n *MyProcessor) GetName() string {
-    return "my-processor"
-}
-
-func (n *MyProcessor) Execute(ctx context.Context, state MyState, config MyConfig) (graft.NodeResult, error) {
-    // Your business logic with full type safety
-    result := processData(state.Data, config.BatchSize)
-
-    return graft.NodeResult{
-        Data: MyResult{
-            Processed: result,
-            Timestamp: time.Now(),
-        },
-    }, nil
+// ... after creating the manager
+mgr.RegisterConnector(&CronConnector{})
+cfg := CronConfig{ID: "emails", Interval: 12 * time.Hour}
+if err := mgr.StartConnector("cron", cfg); err != nil {
+    panic(err)
 }
 ```
 
-### Connector Usage
+Each node watches connector configs. Only one node holds the lease at a time; if it stops sending heartbeats the lease is removed and another node takes over.
 
-Connectors keep long-lived external listeners (queues, streams, webhooks) balanced across the cluster. Register the connector implementation once, then start it with configs that expose a stable ID so duplicate submissions coalesce.
+## Running More Than One Node
+
+Start the same binary in multiple terminals. Give each process a unique node ID, raft bind address, gRPC port, and data directory before calling `graft.New`. A minimal pattern looks like this:
 
 ```go
-type OrdersConfig struct {
-    QueueARN string `json:"queue_arn"`
-    Region   string `json:"region"`
-}
+nodeID := os.Getenv("GRAFT_NODE_ID")          // e.g. "node-1"
+raftAddr := os.Getenv("GRAFT_RAFT_ADDR")      // e.g. "127.0.0.1:7100"
+grpcPort, _ := strconv.Atoi(os.Getenv("GRAFT_GRPC_PORT"))
+dataDir := os.Getenv("GRAFT_DATA_DIR")
 
-func (c *OrdersConfig) GetID() string { return c.QueueARN }
-
-type SQSConnector struct{}
-
-func (c *SQSConnector) GetName() string { return "sqs" }
-func (c *SQSConnector) Start(ctx context.Context, cfg *OrdersConfig) error {
-    // create AWS client, stream messages into workflows
-    return nil
-}
-func (c *SQSConnector) Stop(ctx context.Context, cfg *OrdersConfig) error {
-    // close clients, flush offsets
-    return nil
-}
-
-manager.RegisterConnector(&SQSConnector{})
-
-orders := &OrdersConfig{QueueARN: "arn:aws:sqs:...:orders", Region: "us-east-1"}
-if err := manager.StartConnector("sqs", orders); err != nil {
-    log.Fatal(err)
-}
+manager := graft.New(nodeID, raftAddr, dataDir, logger)
 ```
 
-The manager persists the config, every node watches for it, and the load balancer picks the least-loaded owner for the lease. If a node stops or the cluster grows, another peer automatically reacquires the lease and restarts the connector with the same config.
+Run each instance with different values:
 
-For detailed architecture information, see [Architecture Documentation](./docs/ARCHITECTURE.md).
+```
+# Terminal 1
+GRAFT_NODE_ID=node-1 \
+GRAFT_RAFT_ADDR=127.0.0.1:7100 \
+GRAFT_GRPC_PORT=9001 \
+GRAFT_DATA_DIR=./tmp/node-1 \
+go run ./cmd/yourservice
 
-## Use Cases
-
-Graft is designed for scenarios requiring durable, distributed task execution: ETL pipelines, microservice orchestration, batch processing, and event-driven workflows. The embedded approach eliminates the operational overhead of managing separate orchestration infrastructure.
-
-## Architecture
-
-Graft is designed for performance and resilience through proven architectural patterns:
-
-- **Asynchronous Processing**: Workflow submission is decoupled from execution for high-throughput ingestion
-- **Efficient State Replication**: Raft consensus ensures only the leader processes workflows, with batch replication to followers  
-- **Persistent Queuing**: BadgerDB-backed queues ensure workflow durability across node restarts
-- **Controlled Concurrency**: Resource manager prevents overload with configurable execution limits
-- **Log-Structured Storage**: BadgerDB's LSM-tree design optimized for high write throughput
-
-*Formal performance benchmarks are planned for future releases.*
-
-## Configuration
-
-Basic configuration example:
-
-```go
-// Create with default settings
-logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
-manager := graft.New("node-1", "localhost:7000", "./data", logger)
-
-// Configure discovery before starting
-manager.Discovery().MDNS("", "")  // mDNS discovery (defaults: _graft._tcp, local.)
-// or manager.Discovery().Static([]graft.Peer{{ID: "peer1", Address: "host", Port: 7001}})  // Static peers
-
-// Start with gRPC port
-if err := manager.Start(context.Background(), 8080); err != nil {
-    log.Fatal(err)
-}
+# Terminal 2
+GRAFT_NODE_ID=node-2 \
+GRAFT_RAFT_ADDR=127.0.0.1:7101 \
+GRAFT_GRPC_PORT=9002 \
+GRAFT_DATA_DIR=./tmp/node-2 \
+go run ./cmd/yourservice
 ```
 
-For complete configuration options, see [Configuration Guide](./docs/API.md#configuration).
+Use the discovery helper that suits your environment (static lists, mDNS, or a custom provider). After Raft elects a leader the queue, lease store, and connectors replicate automatically.
+
+## Project Layout
+
+- `examples/` – runnable demos (document pipeline, cron, API integration)
+- `docs/` – architecture notes, API reference, deployment tips
+- `internal/core` – manager, workflows, connector runtime
+- `internal/adapters` – storage, queue, raft, engine implementations
+- `tools/` – utilities used by CI or development
+
+## Learn More
+
+- [Architecture](./docs/ARCHITECTURE.md)
+- [API reference](./docs/API.md)
+- [Deployment guide](./docs/DEPLOYMENT.md)
+- [Examples](./examples)
 
 ## Contributing
 
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+Contributions are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md), open an issue if you plan larger work, and run `go test ./...` before sending a PR.
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Acknowledgments
-
-- [HashiCorp Raft](https://github.com/hashicorp/raft) for consensus protocol
-- [BadgerDB](https://github.com/dgraph-io/badger) for high-performance storage
-- [gRPC](https://grpc.io/) for efficient network communication
-- [Prometheus](https://prometheus.io/) for monitoring and metrics
-- With love from [Roy Ossai](https://github.com/eleven-am)
+MIT License. See [LICENSE](LICENSE).

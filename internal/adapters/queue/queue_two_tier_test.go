@@ -13,7 +13,7 @@ import (
 
 func TestQueue_EnqueueBlocked(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
 	mockStorage.On("Put", "queue:test:blocked:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
@@ -26,7 +26,7 @@ func TestQueue_EnqueueBlocked(t *testing.T) {
 
 func TestQueue_EnqueueReady(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
 	mockStorage.On("Put", "queue:test:ready:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
@@ -39,7 +39,7 @@ func TestQueue_EnqueueReady(t *testing.T) {
 
 func TestQueue_GetBlockedForWorkflow(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	workflowData := []byte(`{"workflow_id":"wf-123","data":"test"}`)
 
@@ -66,7 +66,7 @@ func TestQueue_GetBlockedForWorkflow(t *testing.T) {
 
 func TestQueue_GetReadyForWorkflow(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	workflowData := []byte(`{"workflow_id":"wf-123","data":"test"}`)
 
@@ -87,7 +87,7 @@ func TestQueue_GetReadyForWorkflow(t *testing.T) {
 
 func TestQueue_PromoteBlockedToReady(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	blockedItem := &domain.BlockedItem{
 		Data:        []byte(`{"workflow_id":"wf-123","data":"test"}`),
@@ -113,7 +113,7 @@ func TestQueue_PromoteBlockedToReady(t *testing.T) {
 
 func TestQueue_GetItemsWithPrefix_ChecksBothQueues(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	workflowData1 := []byte(`{"workflow_id":"wf-123","data":"ready"}`)
 	workflowData2 := []byte(`{"workflow_id":"wf-123","data":"blocked"}`)
@@ -207,7 +207,7 @@ func TestQueue_HasItemsWithPrefix_ChecksBothQueues(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			mockStorage := mocks.NewMockStoragePort(t)
-			queue := NewQueue("test", mockStorage, nil, nil)
+			queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 			tt.setupWorkflow(queue)
 			tt.setupMocks(mockStorage)
@@ -223,7 +223,7 @@ func TestQueue_HasItemsWithPrefix_ChecksBothQueues(t *testing.T) {
 
 func TestQueue_Size_IncludesBothQueues(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	mockStorage.On("CountPrefix", "queue:test:ready:").Return(5, nil).Once()
 	mockStorage.On("CountPrefix", "queue:test:blocked:").Return(3, nil).Once()
@@ -236,7 +236,7 @@ func TestQueue_Size_IncludesBothQueues(t *testing.T) {
 }
 
 func TestQueue_WorkflowIndexWithBlockedItems(t *testing.T) {
-	queue := NewQueue("test", nil, nil, nil)
+	queue := NewQueue("test", nil, nil, nil, "", 0, nil)
 
 	workflowData1 := []byte(`{"workflow_id":"wf-123","data":"item1"}`)
 	workflowData2 := []byte(`{"workflow_id":"wf-123","data":"item2"}`)
@@ -267,7 +267,7 @@ func TestQueue_WorkflowIndexWithBlockedItems(t *testing.T) {
 
 func TestQueue_BlockedItemPromotion_Integration(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	workflowData := []byte(`{"workflow_id":"wf-promotion","data":"test"}`)
 
@@ -305,7 +305,7 @@ func TestQueue_BlockedItemPromotion_Integration(t *testing.T) {
 
 func TestQueue_EnqueueDefaultsToReady(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
 	mockStorage.On("Put", "queue:test:ready:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()
@@ -318,7 +318,7 @@ func TestQueue_EnqueueDefaultsToReady(t *testing.T) {
 
 func TestQueue_SequenceGenerationConsistency(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").Return(int64(1), nil).Once()
 	mockStorage.On("Put", "queue:test:ready:00000000000000000001", mock.AnythingOfType("[]uint8"), int64(0)).Return(nil).Once()

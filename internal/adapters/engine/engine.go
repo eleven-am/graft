@@ -4,11 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	json "github.com/eleven-am/graft/internal/xjson"
 	"log/slog"
 	"math/rand"
 	"sync"
 	"time"
+
+	json "github.com/eleven-am/graft/internal/xjson"
 
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/ports"
@@ -436,7 +437,51 @@ func (e *Engine) processNextItem() (bool, error) {
 
 	e.metrics.IncrementItemsProcessed()
 
-	execErr := e.executor.ExecuteNodeWithRetry(e.ctx, workItem.WorkflowID, workItem.NodeName, workItem.Config, workItem.RetryCount)
+	execCtx, cancelExec := context.WithCancel(e.ctx)
+	defer cancelExec()
+
+	leaseCancel, leaseErrCh := e.startClaimLeaseRenewal(execCtx, claimID)
+	defer leaseCancel()
+
+	executionDone := make(chan error, 1)
+	go func() {
+		executionDone <- e.executor.ExecuteNodeWithRetry(execCtx, workItem.WorkflowID, workItem.NodeName, workItem.Config, workItem.RetryCount)
+	}()
+
+	var execErr error
+	if leaseErrCh == nil {
+		execErr = <-executionDone
+	} else {
+		select {
+		case execErr = <-executionDone:
+		case leaseErr := <-leaseErrCh:
+			leaseCancel()
+			cancelExec()
+			<-executionDone
+			if domain.IsLeaseOwnedByOther(leaseErr) || domain.IsLeaseNotFound(leaseErr) {
+				e.logger.Warn("claim lease lost during execution",
+					"claim_id", claimID,
+					"workflow_id", workItem.WorkflowID,
+					"node_name", workItem.NodeName,
+					"error", leaseErr)
+			} else {
+				e.logger.Error("claim lease renewal failed during execution",
+					"claim_id", claimID,
+					"workflow_id", workItem.WorkflowID,
+					"node_name", workItem.NodeName,
+					"error", leaseErr)
+			}
+			if relErr := e.queue.Release(claimID); relErr != nil {
+				e.logger.Warn("failed to release claim after lease loss",
+					"claim_id", claimID,
+					"error", relErr)
+			}
+			return true, leaseErr
+		}
+	}
+
+	leaseCancel()
+	cancelExec()
 
 	if err := e.queue.Complete(claimID); err != nil {
 		e.logger.Error("failed to complete work item",
@@ -453,6 +498,48 @@ func (e *Engine) processNextItem() (bool, error) {
 	}
 
 	return true, execErr
+}
+
+func (e *Engine) startClaimLeaseRenewal(ctx context.Context, claimID string) (context.CancelFunc, <-chan error) {
+	if e.queue == nil {
+		return func() {}, nil
+	}
+
+	ttl := e.queue.ClaimLeaseTTL()
+	if ttl <= 0 {
+		return func() {}, nil
+	}
+
+	interval := ttl / 3
+	if interval < time.Second {
+		interval = time.Second
+	}
+
+	renewCtx, cancel := context.WithCancel(ctx)
+	errCh := make(chan error, 1)
+
+	go func() {
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-renewCtx.Done():
+				return
+			case <-ticker.C:
+				if err := e.queue.RenewClaimLease(claimID); err != nil {
+					select {
+					case errCh <- err:
+					default:
+					}
+					return
+				}
+			}
+		}
+	}()
+
+	return func() {
+		cancel()
+	}, errCh
 }
 
 func (e *Engine) enqueueInitialNode(workflowID string, nodeConfig domain.NodeConfig) error {

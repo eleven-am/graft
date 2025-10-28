@@ -13,6 +13,8 @@ type QueuePort interface {
 	Claim() (item []byte, claimID string, exists bool, err error)
 	Complete(claimID string) error
 	Release(claimID string) error
+	RenewClaimLease(claimID string) error
+	ClaimLeaseTTL() time.Duration
 	WaitForItem(ctx context.Context) <-chan struct{}
 	Size() (int, error)
 	HasItemsWithPrefix(dataPrefix string) (bool, error)

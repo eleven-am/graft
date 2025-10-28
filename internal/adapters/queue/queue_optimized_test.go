@@ -130,7 +130,7 @@ func TestQueue_OptimizedOperations(t *testing.T) {
 			mockStorage := mocks.NewMockStoragePort(t)
 			tt.setupMocks(mockStorage)
 
-			queue := NewQueue("test", mockStorage, nil, nil)
+			queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 			result, err := tt.operation(queue, mockStorage)
 
@@ -151,7 +151,7 @@ func TestQueue_OptimizedOperations(t *testing.T) {
 
 func TestQueue_SequenceGenerationOptimized(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	mockStorage.On("AtomicIncrement", "queue:test:sequence").
 		Return(int64(42), nil).
@@ -167,7 +167,7 @@ func TestQueue_SequenceGenerationOptimized(t *testing.T) {
 
 func TestQueue_DeadLetterSequenceOptimized(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	mockStorage.On("AtomicIncrement", "queue:test:deadletter:sequence").
 		Return(int64(123), nil).
@@ -184,7 +184,7 @@ func TestQueue_DeadLetterSequenceOptimized(t *testing.T) {
 // Benchmark tests to verify O(1) performance
 func BenchmarkQueue_OptimizedPeek(b *testing.B) {
 	mockStorage := mocks.NewMockStoragePort(b)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	queueItem := domain.NewQueueItem([]byte("test-data"), 1)
 	itemBytes, _ := queueItem.ToBytes()
@@ -205,7 +205,7 @@ func BenchmarkQueue_OptimizedPeek(b *testing.B) {
 
 func BenchmarkQueue_OptimizedSize(b *testing.B) {
 	mockStorage := mocks.NewMockStoragePort(b)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	mockStorage.On("CountPrefix", "queue:test:ready:").
 		Return(1000, nil).
@@ -224,7 +224,7 @@ func BenchmarkQueue_OptimizedSize(b *testing.B) {
 // Test to verify performance characteristics
 func TestQueue_PerformanceCharacteristics(t *testing.T) {
 	mockStorage := mocks.NewMockStoragePort(t)
-	queue := NewQueue("test", mockStorage, nil, nil)
+	queue := NewQueue("test", mockStorage, nil, nil, "", 0, nil)
 
 	sizes := []int{10, 100, 1000, 10000}
 

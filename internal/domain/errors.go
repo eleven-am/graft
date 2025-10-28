@@ -435,6 +435,18 @@ var (
 		nil,
 		WithCode("WORKFLOW_NODE_NOT_READY"),
 	)
+	ErrLeaseOwnedByOther = NewDomainErrorWithCategory(
+		CategoryResource,
+		"lease owned by another owner",
+		nil,
+		WithCode("LEASE_OWNED_BY_OTHER"),
+	)
+	ErrLeaseNotFound = NewDomainErrorWithCategory(
+		CategoryStorage,
+		"lease not found",
+		nil,
+		WithCode("LEASE_NOT_FOUND"),
+	)
 )
 
 type DiscoveryError struct {
@@ -474,6 +486,14 @@ func IsNotStarted(err error) bool {
 
 func IsNotFound(err error) bool {
 	return errors.Is(err, ErrNotFound)
+}
+
+func IsLeaseOwnedByOther(err error) bool {
+	return errors.Is(err, ErrLeaseOwnedByOther)
+}
+
+func IsLeaseNotFound(err error) bool {
+	return errors.Is(err, ErrLeaseNotFound) || errors.Is(err, ErrNotFound)
 }
 
 func IsTimeout(err error) bool {

@@ -15,7 +15,7 @@ import (
 
 func TestQueue_Release_AddsDeferralAndDelay(t *testing.T) {
 	storage := &mocks.MockStoragePort{}
-	q := NewQueue("test", storage, nil, nil)
+	q := NewQueue("test", storage, nil, nil, "", 0, nil)
 
 	work := map[string]interface{}{
 		"workflow_id": "wf-1",
@@ -67,7 +67,7 @@ func TestQueue_Release_AddsDeferralAndDelay(t *testing.T) {
 
 func TestQueue_Release_ToDLQAfterDeferrals(t *testing.T) {
 	storage := &mocks.MockStoragePort{}
-	q := NewQueue("test", storage, nil, nil)
+	q := NewQueue("test", storage, nil, nil, "", 0, nil)
 
 	work := map[string]interface{}{
 		"workflow_id": "wf-2",
@@ -113,7 +113,7 @@ func TestQueue_Release_ToDLQAfterDeferrals(t *testing.T) {
 
 func TestQueue_ClaimedIndex_AddAndRemove(t *testing.T) {
 	storage := &mocks.MockStoragePort{}
-	q := NewQueue("test", storage, nil, nil)
+	q := NewQueue("test", storage, nil, nil, "", 0, nil)
 
 	work := map[string]interface{}{
 		"workflow_id": "wf-idx",

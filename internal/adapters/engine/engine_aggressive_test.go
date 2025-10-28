@@ -208,7 +208,7 @@ func setupAggressiveEngine(t *testing.T) (*Engine, *TestNodeRegistry, func()) {
 
 	ch := make(chan domain.Event, 1)
 	mockEventManager.On("SubscribeToChannel", mock.AnythingOfType("string")).Return((<-chan domain.Event)(ch), func() {}, nil).Maybe()
-	testQueue := queue.NewQueue("aggressive-test-queue", appStorage, mockEventManager, logger)
+	testQueue := queue.NewQueue("aggressive-test-queue", appStorage, mockEventManager, nil, "", 0, logger)
 	nodeRegistry := NewTestNodeRegistry()
 
 	mockLoadBalancer := mocks.NewMockLoadBalancer(t)
@@ -521,7 +521,7 @@ func TestEngine_RapidStartStop(t *testing.T) {
 
 		ch := make(chan domain.Event, 1)
 		mockEventManager.On("SubscribeToChannel", mock.AnythingOfType("string")).Return((<-chan domain.Event)(ch), func() {}, nil).Maybe()
-		testQueue := queue.NewQueue(fmt.Sprintf("rapid-test-%d", i), appStorage, mockEventManager, logger)
+		testQueue := queue.NewQueue(fmt.Sprintf("rapid-test-%d", i), appStorage, mockEventManager, nil, "", 0, logger)
 		nodeRegistry := NewTestNodeRegistry()
 
 		mockLoadBalancer := mocks.NewMockLoadBalancer(t)

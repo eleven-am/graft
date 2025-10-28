@@ -17,7 +17,8 @@ import (
 )
 
 const (
-	connectorLeaseKeyPrefix    = "connectors:lease:"
+	connectorLeaseNamespace    = "connector"
+	connectorLeaseKeyPrefix    = "lease:connector:"
 	connectorConfigKeyPrefix   = "connectors:config:"
 	connectorLeaseDuration     = 30 * time.Second
 	connectorHeartbeatInterval = 10 * time.Second
@@ -28,13 +29,6 @@ const (
 	connectorRebalanceMinDelay    = 500 * time.Millisecond
 	connectorRebalanceMaxDelay    = 2 * time.Second
 )
-
-type connectorLeaseRecord struct {
-	ID        string    `json:"id"`
-	Name      string    `json:"name"`
-	Owner     string    `json:"owner"`
-	ExpiresAt time.Time `json:"expires_at"`
-}
 
 type connectorConfigRecord struct {
 	ID     string          `json:"id"`
@@ -64,14 +58,16 @@ type connectorHandle struct {
 	configRaw []byte
 	connector ports.ConnectorPort
 	logger    *slog.Logger
+	leaseKey  string
 
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	releaseCh chan connectorReleaseRequest
-	done      chan struct{}
-
-	leaseVersion int64
+	releaseCh  chan connectorReleaseRequest
+	leaseWake  chan struct{}
+	leaseUnsub func()
+	leaseCh    <-chan domain.Event
+	done       chan struct{}
 
 	mu            sync.Mutex
 	rebalanceNext bool
@@ -245,6 +241,8 @@ func newConnectorHandle(m *Manager, name, id string, connector ports.ConnectorPo
 		logger = logger.With("connector", name, "connector_id", id)
 	}
 
+	leaseKey := m.connectorLeaseKey(id)
+
 	handle := &connectorHandle{
 		manager:   m,
 		id:        id,
@@ -253,9 +251,11 @@ func newConnectorHandle(m *Manager, name, id string, connector ports.ConnectorPo
 		configRaw: configRaw,
 		connector: connector,
 		logger:    logger,
+		leaseKey:  leaseKey,
 		ctx:       ctx,
 		cancel:    cancel,
 		releaseCh: make(chan connectorReleaseRequest, 1),
+		leaseWake: make(chan struct{}, 1),
 		done:      make(chan struct{}),
 	}
 
@@ -266,39 +266,39 @@ func newConnectorHandle(m *Manager, name, id string, connector ports.ConnectorPo
 func (h *connectorHandle) run() {
 	defer close(h.done)
 
-	backoff := connectorAcquireBaseBackoff
-
+	leaseBackoff := connectorAcquireRetryInterval
 	for {
 		if err := h.ctx.Err(); err != nil {
 			return
 		}
 
-		acquired, version, err := h.manager.acquireConnectorLease(h)
+		h.ensureLeaseSubscription()
+
+		acquired, err := h.manager.acquireConnectorLease(h)
 		if err != nil {
 			if h.logger != nil {
 				h.logger.Error("failed to acquire connector lease", "error", err)
 			}
-			if !h.waitForNextAttempt(backoff) {
+			if !h.waitForNextAttempt(leaseBackoff) {
 				return
 			}
-			if backoff < connectorAcquireMaxBackoff {
-				backoff *= 2
-				if backoff > connectorAcquireMaxBackoff {
-					backoff = connectorAcquireMaxBackoff
+			if leaseBackoff < connectorAcquireMaxBackoff {
+				leaseBackoff *= 2
+				if leaseBackoff > connectorAcquireMaxBackoff {
+					leaseBackoff = connectorAcquireMaxBackoff
 				}
 			}
 			continue
 		}
 
 		if !acquired {
-			if !h.waitForNextAttempt(connectorAcquireRetryInterval) {
+			if !h.waitForLeaseSignal(leaseBackoff) {
 				return
 			}
 			continue
 		}
 
-		backoff = connectorAcquireBaseBackoff
-		h.leaseVersion = version
+		leaseBackoff = connectorAcquireBaseBackoff
 
 		if h.logger != nil {
 			h.logger.Info("acquired connector lease")
@@ -386,6 +386,7 @@ func (h *connectorHandle) runWithLease() error {
 				close(req.ack)
 			default:
 			}
+			h.unsubscribeLeaseEvents()
 			return context.Canceled
 		case req := <-h.releaseCh:
 			if req.reason == releaseReasonRebalance {
@@ -398,6 +399,7 @@ func (h *connectorHandle) runWithLease() error {
 				h.logger.Info("connector released", "reason", string(req.reason), "error", err)
 			}
 			close(req.ack)
+			h.unsubscribeLeaseEvents()
 			if err == nil {
 				return fmt.Errorf("connector stopped without error")
 			}
@@ -410,12 +412,13 @@ func (h *connectorHandle) runWithLease() error {
 				close(req.ack)
 			default:
 			}
+			h.unsubscribeLeaseEvents()
 			if err == nil {
 				return fmt.Errorf("connector stopped without error")
 			}
 			return err
 		case <-ticker.C:
-			newVersion, err := h.manager.renewConnectorLease(h)
+			err := h.manager.renewConnectorLease(h)
 			if err != nil {
 				runCancel()
 				runErr := <-errCh
@@ -432,7 +435,6 @@ func (h *connectorHandle) runWithLease() error {
 				}
 				return fmt.Errorf("lease renewal failed: %w", err)
 			}
-			h.leaseVersion = newVersion
 		}
 	}
 }
@@ -453,9 +455,124 @@ func (h *connectorHandle) waitForNextAttempt(delay time.Duration) bool {
 		}
 		close(req.ack)
 		return true
+	case <-h.leaseWake:
+		return true
 	case <-timer.C:
 		return true
 	}
+}
+
+func (h *connectorHandle) waitForLeaseSignal(backoff time.Duration) bool {
+	if backoff <= 0 {
+		backoff = connectorAcquireRetryInterval
+	}
+
+	timer := time.NewTimer(backoff)
+	defer timer.Stop()
+
+	select {
+	case <-h.ctx.Done():
+		return false
+	case req := <-h.releaseCh:
+		if req.reason == releaseReasonRebalance {
+			h.markRebalance()
+		}
+		close(req.ack)
+		return true
+	case <-h.leaseWake:
+		return true
+	case <-timer.C:
+		return true
+	}
+}
+
+func (h *connectorHandle) signalLeaseWake() {
+	select {
+	case h.leaseWake <- struct{}{}:
+	default:
+	}
+}
+
+func (h *connectorHandle) ensureLeaseSubscription() {
+	if h.manager == nil || h.manager.eventManager == nil {
+		return
+	}
+
+	h.mu.Lock()
+	needsSubscribe := h.leaseUnsub == nil
+	h.mu.Unlock()
+
+	if !needsSubscribe {
+		return
+	}
+
+	h.subscribeToLeaseEvents()
+}
+
+func (h *connectorHandle) subscribeToLeaseEvents() {
+	if h.manager == nil || h.manager.eventManager == nil {
+		return
+	}
+
+	ch, unsub, err := h.manager.eventManager.SubscribeToChannel(h.leaseKey)
+	if err != nil {
+		if h.logger != nil {
+			h.logger.Warn("failed to subscribe to connector lease events", "error", err)
+		}
+		return
+	}
+
+	h.mu.Lock()
+	if h.leaseUnsub != nil {
+		h.mu.Unlock()
+		unsub()
+		return
+	}
+	h.leaseUnsub = unsub
+	h.leaseCh = ch
+	h.mu.Unlock()
+
+	go h.consumeLeaseEvents(ch, unsub)
+}
+
+func (h *connectorHandle) consumeLeaseEvents(ch <-chan domain.Event, unsub func()) {
+	defer func() {
+		h.mu.Lock()
+		if h.leaseCh == ch {
+			h.leaseUnsub = nil
+			h.leaseCh = nil
+		}
+		h.mu.Unlock()
+		unsub()
+	}()
+
+	for {
+		select {
+		case <-h.ctx.Done():
+			return
+		case evt, ok := <-ch:
+			if !ok {
+				return
+			}
+			switch evt.Type {
+			case domain.EventDelete, domain.EventExpire:
+				h.signalLeaseWake()
+			}
+		}
+	}
+}
+
+func (h *connectorHandle) unsubscribeLeaseEvents() {
+	h.mu.Lock()
+	unsub := h.leaseUnsub
+	h.leaseUnsub = nil
+	h.leaseCh = nil
+	h.mu.Unlock()
+
+	if unsub != nil {
+		unsub()
+	}
+	h.signalLeaseWake()
 }
 
 func (h *connectorHandle) markRebalance() {
@@ -784,128 +901,117 @@ func (m *Manager) setConnectorWatcherUnsub(unsub func()) {
 	m.connectorWatcherMu.Unlock()
 }
 
-func (m *Manager) acquireConnectorLease(handle *connectorHandle) (bool, int64, error) {
-	if m.storage == nil {
-		return false, 0, fmt.Errorf("storage not initialized")
+func (m *Manager) acquireConnectorLease(handle *connectorHandle) (bool, error) {
+	if m.leaseManager == nil {
+		return false, fmt.Errorf("lease manager not initialized")
 	}
 
-	record, version, exists, err := m.getConnectorLease(handle.id)
+	metadata := map[string]string{"name": handle.name}
+	_, acquired, err := m.leaseManager.TryAcquire(handle.leaseKey, m.nodeID, connectorLeaseDuration, metadata)
 	if err != nil {
-		return false, 0, err
+		return false, err
 	}
 
-	now := time.Now()
-	if exists && record.Owner != "" && record.Owner != m.nodeID && record.ExpiresAt.After(now) {
-		return false, 0, nil
-	}
-
-	record.ID = handle.id
-	record.Name = handle.name
-	record.Owner = m.nodeID
-	record.ExpiresAt = now.Add(connectorLeaseDuration)
-
-	newVersion := int64(1)
-	if exists {
-		newVersion = version + 1
-	}
-
-	data, err := json.Marshal(record)
-	if err != nil {
-		return false, 0, err
-	}
-
-	if err := m.storage.Put(m.connectorLeaseKey(handle.id), data, newVersion); err != nil {
-		if isVersionMismatch(err) {
-			return false, 0, nil
-		}
-		return false, 0, err
-	}
-
-	return true, newVersion, nil
+	return acquired, nil
 }
 
-func (m *Manager) renewConnectorLease(handle *connectorHandle) (int64, error) {
-	record, version, exists, err := m.getConnectorLease(handle.id)
-	if err != nil {
-		return 0, err
-	}
-	if !exists || record.Owner != m.nodeID {
-		return 0, errConnectorLeaseLost
+func (m *Manager) renewConnectorLease(handle *connectorHandle) error {
+	if m.leaseManager == nil {
+		return fmt.Errorf("lease manager not initialized")
 	}
 
-	record.ExpiresAt = time.Now().Add(connectorLeaseDuration)
-	newVersion := version + 1
-
-	data, err := json.Marshal(record)
-	if err != nil {
-		return 0, err
+	_, err := m.leaseManager.Renew(handle.leaseKey, m.nodeID, connectorLeaseDuration)
+	if err == nil {
+		return nil
 	}
 
-	if err := m.storage.Put(m.connectorLeaseKey(handle.id), data, newVersion); err != nil {
-		if isVersionMismatch(err) {
-			return 0, errConnectorLeaseLost
-		}
-		return 0, err
+	if domain.IsLeaseOwnedByOther(err) || domain.IsLeaseNotFound(err) {
+		return errConnectorLeaseLost
 	}
 
-	return newVersion, nil
+	return err
 }
 
 func (m *Manager) releaseConnectorLease(handle *connectorHandle, force bool) {
-	record, version, exists, err := m.getConnectorLease(handle.id)
-	if err != nil || !exists {
+	if m.leaseManager == nil {
 		return
 	}
 
-	if !force && record.Owner != m.nodeID {
-		if m.logger != nil {
-			m.logger.Debug("skipping connector lease release; ownership moved", "connector", handle.name, "connector_id", handle.id, "current_owner", record.Owner)
+	var err error
+	if force {
+		err = m.leaseManager.ForceRelease(handle.leaseKey)
+	} else {
+		err = m.leaseManager.Release(handle.leaseKey, m.nodeID)
+		if domain.IsLeaseOwnedByOther(err) || domain.IsLeaseNotFound(err) {
+			err = nil
 		}
-		return
 	}
 
-	record.Owner = ""
-	record.ExpiresAt = time.Time{}
-
-	newVersion := version + 1
-	data, err := json.Marshal(record)
-	if err != nil {
-		return
+	if err != nil && m.logger != nil {
+		m.logger.Warn("failed to release connector lease", "connector", handle.name, "connector_id", handle.id, "error", err, "force", force)
 	}
-
-	if err := m.storage.Put(m.connectorLeaseKey(handle.id), data, newVersion); err != nil {
-		if m.logger != nil && !isVersionMismatch(err) {
-			m.logger.Warn("failed to release connector lease", "connector", handle.name, "connector_id", handle.id, "error", err)
-		}
-		return
-	}
-
-	handle.leaseVersion = 0
 }
 
-func (m *Manager) getConnectorLease(id string) (*connectorLeaseRecord, int64, bool, error) {
-	if m.storage == nil {
-		return nil, 0, false, fmt.Errorf("storage not initialized")
+// CleanupNodeLeases force releases connector leases owned by the specified node. Only
+// the raft leader should invoke this to avoid conflicting deletes.
+func (m *Manager) CleanupNodeLeases(nodeID string) {
+	if nodeID == "" || m == nil {
+		return
+	}
+	if m.raftAdapter == nil || !m.raftAdapter.IsLeader() {
+		return
+	}
+	if m.leaseManager == nil || m.storage == nil {
+		return
+	}
+	if nodeID == m.nodeID {
+		return
 	}
 
-	value, version, exists, err := m.storage.Get(m.connectorLeaseKey(id))
+	entries, err := m.storage.ListByPrefix(connectorLeaseKeyPrefix)
 	if err != nil {
-		return nil, 0, false, err
+		if m.logger != nil {
+			m.logger.Error("failed to list connector leases for cleanup", "node_id", nodeID, "error", err)
+		}
+		return
 	}
 
-	if !exists {
-		return &connectorLeaseRecord{ID: id}, 0, false, nil
-	}
+	for _, kv := range entries {
+		if len(kv.Value) == 0 {
+			continue
+		}
 
-	var record connectorLeaseRecord
-	if err := json.Unmarshal(value, &record); err != nil {
-		return nil, version, true, err
-	}
+		var record ports.LeaseRecord
+		if err := json.Unmarshal(kv.Value, &record); err != nil {
+			if m.logger != nil {
+				m.logger.Warn("failed to decode connector lease during cleanup", "node_id", nodeID, "error", err)
+			}
+			continue
+		}
 
-	return &record, version, true, nil
+		if record.Owner != nodeID {
+			continue
+		}
+
+		connectorID := strings.TrimPrefix(record.Key, connectorLeaseKeyPrefix)
+
+		if err := m.leaseManager.ForceRelease(record.Key); err != nil {
+			if m.logger != nil {
+				m.logger.Error("failed to cleanup connector lease", "connector", connectorID, "owner", nodeID, "error", err)
+			}
+			continue
+		}
+
+		if m.logger != nil {
+			m.logger.Info("cleaned up connector lease after node failure", "connector", connectorID, "owner", nodeID)
+		}
+	}
 }
 
 func (m *Manager) connectorLeaseKey(id string) string {
+	if m.leaseManager != nil {
+		return m.leaseManager.Key(connectorLeaseNamespace, id)
+	}
 	return connectorLeaseKeyPrefix + id
 }
 

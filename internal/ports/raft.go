@@ -76,6 +76,7 @@ type RaftNode interface {
 	IsProvisional() bool
 	GetBootMetadata() (bootID string, launchTimestamp int64)
 	SetReadinessCallback(callback func(bool))
+	SetConnectorLeaseCleaner(cleaner ConnectorLeaseCleaner)
 	DemoteAndJoin(ctx context.Context, peer Peer) error
 	LeaderAddr() string
 	AddVoter(nodeID string, address string) error

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/eleven-am/graft/internal/ports"
-	json "github.com/goccy/go-json"
+	"github.com/goccy/go-json"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )

@@ -736,6 +736,39 @@ func (_c *MockRaftNode_SetReadinessCallback_Call) RunAndReturn(run func(func(boo
 	return _c
 }
 
+// SetConnectorLeaseCleaner provides a mock function with given fields: cleaner
+func (_m *MockRaftNode) SetConnectorLeaseCleaner(cleaner ports.ConnectorLeaseCleaner) {
+	_m.Called(cleaner)
+}
+
+// MockRaftNode_SetConnectorLeaseCleaner_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetConnectorLeaseCleaner'
+type MockRaftNode_SetConnectorLeaseCleaner_Call struct {
+	*mock.Call
+}
+
+// SetConnectorLeaseCleaner is a helper method to define mock.On call
+//   - cleaner ports.ConnectorLeaseCleaner
+func (_e *MockRaftNode_Expecter) SetConnectorLeaseCleaner(cleaner interface{}) *MockRaftNode_SetConnectorLeaseCleaner_Call {
+	return &MockRaftNode_SetConnectorLeaseCleaner_Call{Call: _e.mock.On("SetConnectorLeaseCleaner", cleaner)}
+}
+
+func (_c *MockRaftNode_SetConnectorLeaseCleaner_Call) Run(run func(cleaner ports.ConnectorLeaseCleaner)) *MockRaftNode_SetConnectorLeaseCleaner_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(ports.ConnectorLeaseCleaner))
+	})
+	return _c
+}
+
+func (_c *MockRaftNode_SetConnectorLeaseCleaner_Call) Return() *MockRaftNode_SetConnectorLeaseCleaner_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockRaftNode_SetConnectorLeaseCleaner_Call) RunAndReturn(run func(ports.ConnectorLeaseCleaner)) *MockRaftNode_SetConnectorLeaseCleaner_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Shutdown provides a mock function with no fields
 func (_m *MockRaftNode) Shutdown() error {
 	ret := _m.Called()
