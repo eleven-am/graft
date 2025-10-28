@@ -21,15 +21,21 @@ type Manager struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	events    chan ports.Event
+	wg        sync.WaitGroup
+
+	subscribers    map[int]chan ports.Event
+	subscribersMu  sync.RWMutex
+	nextSubscriber int
 }
 
 func NewManager(nodeID string, logger *slog.Logger) *Manager {
 	return &Manager{
-		NodeID:    nodeID,
-		logger:    logger.With("component", "discovery", "subcomponent", "manager"),
-		providers: make([]ports.Provider, 0),
-		peers:     make(map[string]ports.Peer),
-		events:    make(chan ports.Event, 100),
+		NodeID:      nodeID,
+		logger:      logger.With("component", "discovery", "subcomponent", "manager"),
+		providers:   make([]ports.Provider, 0),
+		peers:       make(map[string]ports.Peer),
+		events:      make(chan ports.Event, 100),
+		subscribers: make(map[int]chan ports.Event),
 	}
 }
 
@@ -71,6 +77,8 @@ func (m *Manager) GetPeers() []ports.Peer {
 func (m *Manager) Start(ctx context.Context, address string, port int, grpcPort int) error {
 	m.mu.Lock()
 	m.ctx, m.cancel = context.WithCancel(ctx)
+	m.events = make(chan ports.Event, 100)
+	managerCtx := m.ctx
 	m.mu.Unlock()
 
 	bootMetadata := metadata.GetGlobalBootstrapMetadata()
@@ -87,16 +95,28 @@ func (m *Manager) Start(ctx context.Context, address string, port int, grpcPort 
 	}
 
 	for _, provider := range m.providers {
-		if err := provider.Start(ctx, node); err != nil {
+		if err := provider.Start(managerCtx, node); err != nil {
 			return err
 		}
 
-		go m.watchProvider(provider)
+		m.wg.Add(1)
+		go func(p ports.Provider) {
+			defer m.wg.Done()
+			m.watchProvider(p)
+		}(provider)
 	}
 
-	go m.aggregateEvents()
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		m.aggregateEvents()
+	}()
 
-	go m.snapshotLoop()
+	m.wg.Add(1)
+	go func() {
+		defer m.wg.Done()
+		m.snapshotLoop()
+	}()
 
 	m.updateSnapshots()
 
@@ -105,21 +125,33 @@ func (m *Manager) Start(ctx context.Context, address string, port int, grpcPort 
 
 func (m *Manager) Stop() error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
+	cancel := m.cancel
+	providers := append([]ports.Provider(nil), m.providers...)
+	m.mu.Unlock()
 
-	if m.cancel != nil {
-		m.cancel()
+	if cancel != nil {
+		cancel()
 	}
 
-	for _, provider := range m.providers {
+	for _, provider := range providers {
 		if err := provider.Stop(); err != nil {
 			m.logger.Error("failed to stop provider", "name", provider.Name(), "error", err)
 		}
 	}
 
-	close(m.events)
+	m.wg.Wait()
+
+	m.mu.Lock()
 	m.providers = nil
 	m.peers = make(map[string]ports.Peer)
+	m.ctx = nil
+	m.cancel = nil
+	m.mu.Unlock()
+
+	m.subscribersMu.Lock()
+	m.subscribers = make(map[int]chan ports.Event)
+	m.nextSubscriber = 0
+	m.subscribersMu.Unlock()
 
 	return nil
 }
@@ -138,12 +170,18 @@ func (m *Manager) watchProvider(provider ports.Provider) {
 			if !ok {
 				return
 			}
-			m.events <- event
+			select {
+			case <-m.ctx.Done():
+				return
+			case m.events <- event:
+			}
 		}
 	}
 }
 
 func (m *Manager) aggregateEvents() {
+	defer m.closeSubscribers()
+
 	for {
 		select {
 		case <-m.ctx.Done():
@@ -153,6 +191,7 @@ func (m *Manager) aggregateEvents() {
 				return
 			}
 			m.handleEvent(event)
+			m.broadcastEvent(event)
 		}
 	}
 }
@@ -204,6 +243,116 @@ func (m *Manager) updateSnapshots() {
 	m.peers = allPeers
 }
 
-func (m *Manager) Events() <-chan ports.Event {
-	return m.events
+func (m *Manager) Subscribe() (<-chan ports.Event, func()) {
+	m.subscribersMu.Lock()
+	defer m.subscribersMu.Unlock()
+
+	id := m.nextSubscriber
+	m.nextSubscriber++
+
+	ch := make(chan ports.Event, 10)
+	m.subscribers[id] = ch
+
+	unsubscribe := func() {
+		m.removeSubscriber(id, true)
+	}
+
+	return ch, unsubscribe
+}
+
+func (m *Manager) broadcastEvent(event ports.Event) {
+	type subscriber struct {
+		id int
+		ch chan ports.Event
+	}
+
+	m.subscribersMu.RLock()
+	subscribers := make([]subscriber, 0, len(m.subscribers))
+	for id, ch := range m.subscribers {
+		subscribers = append(subscribers, subscriber{id: id, ch: ch})
+	}
+	m.subscribersMu.RUnlock()
+
+	var prune []int
+	for _, sub := range subscribers {
+		cont, remove := m.sendToSubscriber(sub.id, sub.ch, event)
+		if remove {
+			prune = append(prune, sub.id)
+		}
+		if !cont {
+			break
+		}
+	}
+
+	if len(prune) > 0 {
+		m.pruneSubscribers(prune)
+	}
+}
+
+func (m *Manager) sendToSubscriber(id int, ch chan ports.Event, event ports.Event) (continueSending bool, shouldPrune bool) {
+	continueSending = true
+	shouldPrune = false
+	defer func() {
+		if r := recover(); r != nil {
+			shouldPrune = true
+			continueSending = true
+			m.logger.Debug("recovered from subscriber send", "subscriber_id", id, "error", r)
+		}
+	}()
+
+	select {
+	case ch <- event:
+	case <-m.ctx.Done():
+		continueSending = false
+	default:
+		shouldPrune = true
+		m.logger.Warn("dropping discovery event for slow subscriber", "subscriber_id", id)
+	}
+
+	return continueSending, shouldPrune
+}
+
+func (m *Manager) removeSubscriber(id int, closeChan bool) {
+	m.subscribersMu.Lock()
+	ch, ok := m.subscribers[id]
+	if ok {
+		delete(m.subscribers, id)
+	}
+	m.subscribersMu.Unlock()
+
+	if ok && closeChan {
+		closeSubscriberChannel(ch)
+	}
+}
+
+func (m *Manager) closeSubscribers() {
+	m.subscribersMu.Lock()
+	defer m.subscribersMu.Unlock()
+
+	for id, ch := range m.subscribers {
+		closeSubscriberChannel(ch)
+		delete(m.subscribers, id)
+	}
+}
+
+func (m *Manager) pruneSubscribers(ids []int) {
+	m.subscribersMu.Lock()
+	defer m.subscribersMu.Unlock()
+
+	for _, id := range ids {
+		if ch, ok := m.subscribers[id]; ok {
+			closeSubscriberChannel(ch)
+			delete(m.subscribers, id)
+		}
+	}
+}
+
+func closeSubscriberChannel(ch chan ports.Event) {
+	defer func() {
+		if r := recover(); r != nil {
+			// channel was already closed by another goroutine
+		}
+	}()
+
+	close(ch)
 }
