@@ -1,6 +1,9 @@
 package ports
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 type ConnectorConfig interface {
 	GetID() string
@@ -36,5 +39,5 @@ type ConnectorRegistrationError struct {
 }
 
 func (e ConnectorRegistrationError) Error() string {
-	return "connector registration failed for '" + e.ConnectorName + "': " + e.Reason
+	return fmt.Sprintf("connector registration failed for '%s': %s", e.ConnectorName, e.Reason)
 }
