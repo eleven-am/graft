@@ -133,6 +133,9 @@ type WorkflowInstance = domain.WorkflowInstance
 // NodeExecutionStatus indicates the current execution status of a node.
 type NodeExecutionStatus = domain.NodeExecutionStatus
 
+// ConnectorConfig defines the configuration interface for connectors.
+type ConnectorConfig = ports.ConnectorConfig
+
 // Workflow state constants
 const (
 	// WorkflowStateRunning indicates the workflow is currently executing.
