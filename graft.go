@@ -145,6 +145,27 @@ type ConnectorPort = ports.ConnectorPort
 // ConnectorRegistrationError describes failures when registering connector factories.
 type ConnectorRegistrationError = ports.ConnectorRegistrationError
 
+// ConnectorState represents the runtime state of a connector handle.
+type ConnectorState = ports.ConnectorState
+
+const (
+	// ConnectorStatePending indicates the connector is waiting to acquire a lease.
+	ConnectorStatePending = ports.ConnectorStatePending
+	// ConnectorStateRunning indicates the connector is currently executing.
+	ConnectorStateRunning = ports.ConnectorStateRunning
+	// ConnectorStateError indicates the connector terminated due to an error.
+	ConnectorStateError = ports.ConnectorStateError
+)
+
+// ConnectorStatus describes the runtime details for a connector handle managed by Graft.
+type ConnectorStatus = ports.ConnectorStatus
+
+// ConnectorLeaseStatus provides additional information about the distributed lease managing a connector handle.
+type ConnectorLeaseStatus = ports.ConnectorLeaseStatus
+
+// ConnectorStatusReporter can be implemented by connectors that wish to expose custom metadata.
+type ConnectorStatusReporter = ports.ConnectorStatusReporter
+
 // Workflow state constants
 const (
 	// WorkflowStateRunning indicates the workflow is currently executing.

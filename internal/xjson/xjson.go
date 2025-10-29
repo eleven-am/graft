@@ -2,6 +2,7 @@ package xjson
 
 import (
 	stdjson "encoding/json"
+
 	gjson "github.com/goccy/go-json"
 )
 
