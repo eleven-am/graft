@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -71,6 +72,11 @@ type connectorHandle struct {
 
 	mu            sync.Mutex
 	rebalanceNext bool
+	state         ports.ConnectorState
+	startedAt     time.Time
+	stoppedAt     time.Time
+	lastHeartbeat time.Time
+	lastError     string
 }
 
 var (
@@ -184,6 +190,98 @@ func (m *Manager) StopConnector(id string) error {
 	return nil
 }
 
+func (m *Manager) ListConnectorStatuses() ([]ports.ConnectorStatus, error) {
+	handles := m.connectorHandlesSnapshot()
+	statuses := make([]ports.ConnectorStatus, 0, len(handles))
+
+	for _, handle := range handles {
+		status := handle.snapshotStatus(m.nodeID)
+		if m.leaseManager != nil {
+			record, exists, err := m.leaseManager.Get(handle.leaseKey)
+			if err != nil {
+				if m.logger != nil {
+					m.logger.Warn("failed to fetch connector lease status", "connector", handle.name, "connector_id", handle.id, "error", err)
+				}
+			} else if exists && record != nil {
+				status.Lease = &ports.ConnectorLeaseStatus{
+					Owner:      record.Owner,
+					Generation: record.Generation,
+					ExpiresAt:  record.ExpiresAt,
+					RenewedAt:  record.RenewedAt,
+					Metadata:   record.Metadata,
+				}
+			}
+		}
+		statuses = append(statuses, status)
+	}
+
+	sort.Slice(statuses, func(i, j int) bool {
+		if statuses[i].Name == statuses[j].Name {
+			return statuses[i].ID < statuses[j].ID
+		}
+		return statuses[i].Name < statuses[j].Name
+	})
+
+	return statuses, nil
+}
+
+func (m *Manager) ListConnectorHandles() ([]ports.ConnectorStatus, error) {
+	return m.ListConnectorStatuses()
+}
+
+func (m *Manager) GetConnectorStatus(id string) (*ports.ConnectorStatus, error) {
+	connectorID := strings.TrimSpace(id)
+	if connectorID == "" {
+		return nil, domain.NewValidationError(
+			"connector id cannot be empty",
+			nil,
+			domain.WithComponent("core.Manager.GetConnectorStatus"),
+		)
+	}
+
+	handle, exists := m.getConnectorHandle(connectorID)
+	if !exists {
+		return nil, domain.NewNotFoundError("connector", connectorID)
+	}
+
+	status := handle.snapshotStatus(m.nodeID)
+	if m.leaseManager != nil {
+		record, exists, err := m.leaseManager.Get(handle.leaseKey)
+		if err != nil {
+			return nil, err
+		}
+		if exists && record != nil {
+			status.Lease = &ports.ConnectorLeaseStatus{
+				Owner:      record.Owner,
+				Generation: record.Generation,
+				ExpiresAt:  record.ExpiresAt,
+				RenewedAt:  record.RenewedAt,
+				Metadata:   record.Metadata,
+			}
+		}
+	}
+
+	return &status, nil
+}
+
+func (m *Manager) connectorHandlesSnapshot() []*connectorHandle {
+	m.connectorMu.RLock()
+	defer m.connectorMu.RUnlock()
+
+	handles := make([]*connectorHandle, 0, len(m.connectors))
+	for _, handle := range m.connectors {
+		handles = append(handles, handle)
+	}
+	return handles
+}
+
+func (m *Manager) getConnectorHandle(id string) (*connectorHandle, bool) {
+	m.connectorMu.RLock()
+	defer m.connectorMu.RUnlock()
+	handle, exists := m.connectors[id]
+	return handle, exists
+}
+
 func (m *Manager) stopConnectorHandle(id string, reason connectorReleaseReason) {
 	m.connectorMu.Lock()
 	handle, exists := m.connectors[id]
@@ -256,6 +354,7 @@ func newConnectorHandle(m *Manager, name, id string, connector ports.ConnectorPo
 		releaseCh: make(chan connectorReleaseRequest, 1),
 		leaseWake: make(chan struct{}, 1),
 		done:      make(chan struct{}),
+		state:     ports.ConnectorStatePending,
 	}
 
 	go handle.run()
@@ -360,6 +459,9 @@ func (h *connectorHandle) runWithLease() error {
 	runCtx, runCancel := context.WithCancel(h.ctx)
 	errCh := make(chan error, 1)
 
+	startedAt := time.Now()
+	h.markRunning(startedAt)
+
 	go func() {
 		if h.logger != nil {
 			h.logger.Info("starting connector")
@@ -394,6 +496,7 @@ func (h *connectorHandle) runWithLease() error {
 			default:
 			}
 			h.unsubscribeLeaseEvents()
+			h.markStopped(err)
 			return context.Canceled
 		case req := <-h.releaseCh:
 			if req.reason == releaseReasonRebalance {
@@ -414,10 +517,12 @@ func (h *connectorHandle) runWithLease() error {
 			}
 			close(req.ack)
 			h.unsubscribeLeaseEvents()
-			if err == nil {
-				return fmt.Errorf("connector stopped without error")
+			resultErr := err
+			if resultErr == nil {
+				resultErr = fmt.Errorf("connector stopped without error")
 			}
-			return err
+			h.markStopped(resultErr)
+			return resultErr
 		case err := <-errCh:
 			runCancel()
 
@@ -434,10 +539,12 @@ func (h *connectorHandle) runWithLease() error {
 			default:
 			}
 			h.unsubscribeLeaseEvents()
-			if err == nil {
-				return fmt.Errorf("connector stopped without error")
+			resultErr := err
+			if resultErr == nil {
+				resultErr = fmt.Errorf("connector stopped without error")
 			}
-			return err
+			h.markStopped(resultErr)
+			return resultErr
 		case <-ticker.C:
 			err := h.manager.renewConnectorLease(h)
 			if err != nil {
@@ -447,14 +554,27 @@ func (h *connectorHandle) runWithLease() error {
 				if h.logger != nil {
 					h.logger.Warn("failed to renew connector lease", "error", err)
 				}
+				select {
+				case req := <-h.releaseCh:
+					close(req.ack)
+				default:
+				}
 				if errors.Is(err, errConnectorLeaseLost) {
 					h.markRebalance()
-					return err
 				}
-				if runErr != nil {
-					return fmt.Errorf("lease renewal failed: %w (connector error: %v)", err, runErr)
+				h.unsubscribeLeaseEvents()
+
+				var resultErr error
+				switch {
+				case errors.Is(err, errConnectorLeaseLost):
+					resultErr = err
+				case runErr != nil:
+					resultErr = fmt.Errorf("lease renewal failed: %w (connector error: %v)", err, runErr)
+				default:
+					resultErr = fmt.Errorf("lease renewal failed: %w", err)
 				}
-				return fmt.Errorf("lease renewal failed: %w", err)
+				h.markStopped(resultErr)
+				return resultErr
 			}
 		}
 	}
@@ -608,6 +728,69 @@ func (h *connectorHandle) takeRebalanceFlag() bool {
 	flagged := h.rebalanceNext
 	h.rebalanceNext = false
 	return flagged
+}
+
+func (h *connectorHandle) markRunning(startedAt time.Time) {
+	h.mu.Lock()
+	h.state = ports.ConnectorStateRunning
+	h.startedAt = startedAt
+	h.stoppedAt = time.Time{}
+	h.lastHeartbeat = startedAt
+	h.lastError = ""
+	h.mu.Unlock()
+}
+
+func (h *connectorHandle) markHeartbeat(at time.Time) {
+	h.mu.Lock()
+	if h.state == ports.ConnectorStateRunning && (h.lastHeartbeat.IsZero() || at.After(h.lastHeartbeat)) {
+		h.lastHeartbeat = at
+	}
+	h.mu.Unlock()
+}
+
+func (h *connectorHandle) markStopped(err error) {
+	h.mu.Lock()
+	if err != nil {
+		h.state = ports.ConnectorStateError
+		h.lastError = err.Error()
+	} else {
+		h.state = ports.ConnectorStatePending
+		h.lastError = ""
+	}
+	h.stoppedAt = time.Now()
+	h.mu.Unlock()
+}
+
+func (h *connectorHandle) snapshotStatus(nodeID string) ports.ConnectorStatus {
+	h.mu.Lock()
+	state := h.state
+	startedAt := h.startedAt
+	lastHeartbeat := h.lastHeartbeat
+	stoppedAt := h.stoppedAt
+	lastError := h.lastError
+	configCopy := append([]byte(nil), h.configRaw...)
+	connector := h.connector
+	h.mu.Unlock()
+
+	var metadata map[string]any
+	if reporter, ok := connector.(ports.ConnectorStatusReporter); ok {
+		if status := reporter.Status(); status != nil {
+			metadata = status
+		}
+	}
+
+	return ports.ConnectorStatus{
+		ID:            h.id,
+		Name:          h.name,
+		NodeID:        nodeID,
+		State:         state,
+		StartedAt:     startedAt,
+		LastHeartbeat: lastHeartbeat,
+		StoppedAt:     stoppedAt,
+		LastError:     lastError,
+		Config:        json.RawMessage(configCopy),
+		Metadata:      metadata,
+	}
 }
 
 func (h *connectorHandle) requestRelease(reason connectorReleaseReason) {
@@ -943,8 +1126,13 @@ func (m *Manager) renewConnectorLease(handle *connectorHandle) error {
 		return fmt.Errorf("lease manager not initialized")
 	}
 
-	_, err := m.leaseManager.Renew(handle.leaseKey, m.nodeID, connectorLeaseDuration)
+	record, err := m.leaseManager.Renew(handle.leaseKey, m.nodeID, connectorLeaseDuration)
 	if err == nil {
+		if record != nil {
+			handle.markHeartbeat(record.RenewedAt)
+		} else {
+			handle.markHeartbeat(time.Now())
+		}
 		return nil
 	}
 
