@@ -129,8 +129,8 @@ type Manager interface {
     Stop(ctx context.Context) error
     RegisterNode(node interface{}) error
     UnregisterNode(nodeName string) error
-    RegisterConnector(connector interface{}) error
-    StartConnector(connectorName string, config interface{ GetID() string }) error
+    RegisterConnector(name string, factory ConnectorFactory) error
+    StartConnector(connectorName string, config ConnectorConfig) error
     StartWorkflow(trigger WorkflowTrigger) error
     GetWorkflowState(workflowID string) (*WorkflowStatus, error)
     GetClusterInfo() ClusterInfo
@@ -171,12 +171,12 @@ type Manager interface {
 - Returns error if node doesn't exist
 - Active workflows using the node will continue
 
-**RegisterConnector(connector interface{}) error**
-- Registers a long-lived connector implementation (listeners, stream consumers)
-- Connector must provide `GetName()`, `Start(ctx, *Config) error`, and `Stop(ctx, *Config) error`
+**RegisterConnector(name string, factory ConnectorFactory) error**
+- Registers a long-lived connector factory (listeners, stream consumers)
+- Factory receives the stored config payload and must return a fresh `ConnectorPort` per config ID
 - Registration is idempotent across the cluster; duplicates are rejected by name
 
-**StartConnector(connectorName string, config interface{ GetID() string }) error**
+**StartConnector(connectorName string, config ConnectorConfig) error**
 - Persists the provided config (must return a stable ID) and requests the connector to start
 - All nodes watch for configs; the load balancer selects an owner and restarts it on failure or rebalance
 - Subsequent calls with the same config ID are ignored unless the payload changes
@@ -304,8 +304,8 @@ This eliminates the need for schema methods while maintaining type safety.
 Connectors are long-lived listeners managed separately from workflow nodes. They are registered like nodes but are scheduled via leases and the load balancer so only one node owns a given config ID at a time.
 
 1. Define a config struct with `GetID() string` returning a stable identifier (for example a queue ARN or topic name).
-2. Implement `GetName() string`, `Start(ctx, *Config) error`, and `Stop(ctx, *Config) error` on your connector.
-3. Call `manager.RegisterConnector(&Connector{})` once at startup, then `manager.StartConnector("name", cfg)` for each config you need.
+2. Implement a factory `func([]byte) (ConnectorPort, error)` that unmarshals the config, stores it on a connector instance, and returns the instance.
+3. Register the factory with `manager.RegisterConnector("name", factory)` once at startup, then call `manager.StartConnector("name", cfg)` for each config you need.
 
 ```go
 type BillingConfig struct {
@@ -314,13 +314,24 @@ type BillingConfig struct {
 
 func (c *BillingConfig) GetID() string { return c.Topic }
 
-type KafkaConnector struct{}
+type KafkaConnector struct {
+    cfg *BillingConfig
+}
 
 func (c *KafkaConnector) GetName() string { return "kafka" }
-func (c *KafkaConnector) Start(ctx context.Context, cfg *BillingConfig) error { /* subscribe & emit workflows */ return nil }
-func (c *KafkaConnector) Stop(ctx context.Context, cfg *BillingConfig) error  { /* close consumers */ return nil }
+func (c *KafkaConnector) GetConfig() ConnectorConfig { return c.cfg }
+func (c *KafkaConnector) Start(ctx context.Context) error { /* subscribe & emit workflows */ return nil }
+func (c *KafkaConnector) Stop(ctx context.Context) error  { /* close consumers */ return nil }
 
-manager.RegisterConnector(&KafkaConnector{})
+func NewKafkaConnector(configJSON []byte) (ConnectorPort, error) {
+    var cfg BillingConfig
+    if err := json.Unmarshal(configJSON, &cfg); err != nil {
+        return nil, err
+    }
+    return &KafkaConnector{cfg: &cfg}, nil
+}
+
+manager.RegisterConnector("kafka", NewKafkaConnector)
 manager.StartConnector("kafka", &BillingConfig{Topic: "billing"})
 ```
 

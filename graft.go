@@ -136,6 +136,15 @@ type NodeExecutionStatus = domain.NodeExecutionStatus
 // ConnectorConfig defines the configuration interface for connectors.
 type ConnectorConfig = ports.ConnectorConfig
 
+// ConnectorFactory builds a connector instance from a serialized configuration payload.
+type ConnectorFactory = ports.ConnectorFactory
+
+// ConnectorPort represents a long-lived connector instance managed by Graft.
+type ConnectorPort = ports.ConnectorPort
+
+// ConnectorRegistrationError describes failures when registering connector factories.
+type ConnectorRegistrationError = ports.ConnectorRegistrationError
+
 // Workflow state constants
 const (
 	// WorkflowStateRunning indicates the workflow is currently executing.

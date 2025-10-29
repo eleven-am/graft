@@ -77,11 +77,11 @@ var (
 	errConnectorLeaseLost = errors.New("connector lease lost")
 )
 
-func (m *Manager) RegisterConnector(connector interface{}) error {
+func (m *Manager) RegisterConnector(name string, factory ports.ConnectorFactory) error {
 	if m.connectorRegistry == nil {
 		return fmt.Errorf("connector registry not initialized")
 	}
-	if err := m.connectorRegistry.RegisterConnector(connector); err != nil {
+	if err := m.connectorRegistry.RegisterConnectorFactory(name, factory); err != nil {
 		return err
 	}
 
@@ -126,9 +126,8 @@ func (m *Manager) StartConnector(connectorName string, config ports.ConnectorCon
 			domain.WithContextDetail("connector_name", connectorName))
 	}
 
-	connector, err := m.connectorRegistry.GetConnector(connectorName)
-	if err != nil {
-		return err
+	if !m.connectorRegistry.HasConnector(connectorName) {
+		return domain.NewNotFoundError("connector factory", connectorName)
 	}
 
 	m.startConnectorWatchers()
@@ -148,7 +147,7 @@ func (m *Manager) StartConnector(connectorName string, config ports.ConnectorCon
 		return err
 	}
 
-	if err := m.ensureConnectorHandleFromRecord(connector, record); err != nil {
+	if err := m.ensureConnectorHandleFromRecord(record); err != nil {
 		return err
 	}
 
@@ -365,7 +364,8 @@ func (h *connectorHandle) runWithLease() error {
 		if h.logger != nil {
 			h.logger.Info("starting connector")
 		}
-		err := h.connector.Start(runCtx, h.config)
+
+		err := h.connector.Start(runCtx)
 		errCh <- err
 	}()
 
@@ -376,6 +376,13 @@ func (h *connectorHandle) runWithLease() error {
 		select {
 		case <-h.ctx.Done():
 			runCancel()
+
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if stopErr := h.connector.Stop(stopCtx); stopErr != nil && h.logger != nil {
+				h.logger.Warn("connector stop failed", "error", stopErr)
+			}
+			stopCancel()
+
 			err := <-errCh
 			h.manager.releaseConnectorLease(h, true)
 			if h.logger != nil {
@@ -393,6 +400,13 @@ func (h *connectorHandle) runWithLease() error {
 				h.markRebalance()
 			}
 			runCancel()
+
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if stopErr := h.connector.Stop(stopCtx); stopErr != nil && h.logger != nil {
+				h.logger.Warn("connector stop failed", "error", stopErr)
+			}
+			stopCancel()
+
 			err := <-errCh
 			h.manager.releaseConnectorLease(h, false)
 			if h.logger != nil {
@@ -406,6 +420,13 @@ func (h *connectorHandle) runWithLease() error {
 			return err
 		case err := <-errCh:
 			runCancel()
+
+			stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+			if stopErr := h.connector.Stop(stopCtx); stopErr != nil && h.logger != nil {
+				h.logger.Warn("connector stop failed", "error", stopErr)
+			}
+			stopCancel()
+
 			h.manager.releaseConnectorLease(h, false)
 			select {
 			case req := <-h.releaseCh:
@@ -613,7 +634,7 @@ func (h *connectorHandle) stop() {
 	<-h.done
 }
 
-func (m *Manager) ensureConnectorHandleFromRecord(connector ports.ConnectorPort, record *connectorConfigRecord) error {
+func (m *Manager) ensureConnectorHandleFromRecord(record *connectorConfigRecord) error {
 	if record == nil {
 		return nil
 	}
@@ -637,7 +658,7 @@ func (m *Manager) ensureConnectorHandleFromRecord(connector ports.ConnectorPort,
 		toStop.stop()
 	}
 
-	config, err := m.instantiateConnectorConfig(connector, record)
+	connector, config, err := m.instantiateConnectorFromRecord(record)
 	if err != nil {
 		return err
 	}
@@ -661,49 +682,64 @@ func (m *Manager) ensureConnectorHandleFromRecord(connector ports.ConnectorPort,
 	return nil
 }
 
-func (m *Manager) instantiateConnectorConfig(connector ports.ConnectorPort, record *connectorConfigRecord) (ports.ConnectorConfig, error) {
-	cfg := connector.NewConfig()
-	if cfg == nil {
-		return nil, domain.NewValidationError(
-			"connector returned nil config",
-			nil,
+func (m *Manager) instantiateConnectorFromRecord(record *connectorConfigRecord) (ports.ConnectorPort, ports.ConnectorConfig, error) {
+	factory, err := m.connectorRegistry.GetConnectorFactory(record.Name)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	connector, err := factory(record.Config)
+	if err != nil {
+		return nil, nil, domain.NewValidationError(
+			"failed to create connector from factory",
+			err,
 			domain.WithComponent("core.Manager"),
-			domain.WithContextDetail("connector", connector.GetName()),
+			domain.WithContextDetail("connector", record.Name),
+			domain.WithContextDetail("connector_id", record.ID),
 		)
 	}
 
-	if err := json.Unmarshal(record.Config, cfg); err != nil {
-		return nil, domain.NewValidationError(
-			"failed to unmarshal connector config",
-			err,
+	if connector == nil {
+		return nil, nil, domain.NewValidationError(
+			"connector factory returned nil connector",
+			nil,
 			domain.WithComponent("core.Manager"),
-			domain.WithContextDetail("connector", connector.GetName()),
-			domain.WithContextDetail("connector_id", record.ID),
+			domain.WithContextDetail("connector", record.Name),
+		)
+	}
+
+	cfg := connector.GetConfig()
+	if cfg == nil {
+		return nil, nil, domain.NewValidationError(
+			"connector GetConfig() returned nil",
+			nil,
+			domain.WithComponent("core.Manager"),
+			domain.WithContextDetail("connector", record.Name),
 		)
 	}
 
 	configID := strings.TrimSpace(cfg.GetID())
 	if configID == "" {
-		return nil, domain.NewValidationError(
+		return nil, nil, domain.NewValidationError(
 			"connector config must provide a non-empty ID",
 			nil,
 			domain.WithComponent("core.Manager"),
-			domain.WithContextDetail("connector", connector.GetName()),
+			domain.WithContextDetail("connector", record.Name),
 		)
 	}
 
 	if record.ID != "" && record.ID != configID {
-		return nil, domain.NewValidationError(
+		return nil, nil, domain.NewValidationError(
 			"connector config ID mismatch",
 			nil,
 			domain.WithComponent("core.Manager"),
-			domain.WithContextDetail("connector", connector.GetName()),
+			domain.WithContextDetail("connector", record.Name),
 			domain.WithContextDetail("expected_id", record.ID),
 			domain.WithContextDetail("actual_id", configID),
 		)
 	}
 
-	return cfg, nil
+	return connector, cfg, nil
 }
 
 func (m *Manager) persistConnectorConfig(name, id string, payload []byte) (*connectorConfigRecord, error) {
@@ -768,12 +804,7 @@ func (m *Manager) syncConnectorConfig(id string) error {
 		return nil
 	}
 
-	connector, err := m.connectorRegistry.GetConnector(record.Name)
-	if err != nil {
-		return err
-	}
-
-	return m.ensureConnectorHandleFromRecord(connector, record)
+	return m.ensureConnectorHandleFromRecord(record)
 }
 
 func (m *Manager) syncConnectorConfigs() error {
@@ -801,15 +832,7 @@ func (m *Manager) syncConnectorConfigs() error {
 			continue
 		}
 
-		connector, err := m.connectorRegistry.GetConnector(record.Name)
-		if err != nil {
-			if m.logger != nil {
-				m.logger.Warn("connector not registered for stored config", "connector", record.Name, "connector_id", record.ID)
-			}
-			continue
-		}
-
-		if err := m.ensureConnectorHandleFromRecord(connector, &record); err != nil {
+		if err := m.ensureConnectorHandleFromRecord(&record); err != nil {
 			if m.logger != nil {
 				m.logger.Warn("failed to ensure connector handle", "connector", record.Name, "connector_id", record.ID, "error", err)
 			}

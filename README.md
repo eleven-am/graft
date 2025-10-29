@@ -110,27 +110,45 @@ type CronConfig struct {
 
 func (c CronConfig) GetID() string { return c.ID }
 
-type CronConnector struct{}
-
-func (CronConnector) GetName() string { return "cron" }
-
-func (CronConnector) Start(ctx context.Context, cfg CronConfig) error {
-    ticker := time.NewTicker(cfg.Interval)
-    defer ticker.Stop()
-    for {
-        select {
-        case <-ctx.Done():
-            return ctx.Err()
-        case t := <-ticker.C:
-            fmt.Printf("[%s] cron tick %s\n", cfg.ID, t.Format(time.RFC3339))
-        }
-    }
+type CronConnector struct {
+    cfg *CronConfig
 }
 
-func (CronConnector) Stop(context.Context, CronConfig) error { return nil }
+func (c *CronConnector) GetName() string { return "cron" }
+
+func (c *CronConnector) GetConfig() ports.ConnectorConfig { return c.cfg }
+
+func NewCronConnector(configJSON []byte) (ports.ConnectorPort, error) {
+    var cfg CronConfig
+    if err := json.Unmarshal(configJSON, &cfg); err != nil {
+        return nil, err
+    }
+    if strings.TrimSpace(cfg.ID) == "" {
+        return nil, fmt.Errorf("cron config must include an id")
+    }
+    return &CronConnector{cfg: &cfg}, nil
+}
+
+func (c *CronConnector) Start(ctx context.Context) error {
+    ticker := time.NewTicker(c.cfg.Interval)
+    go func(cfg *CronConfig) {
+        defer ticker.Stop()
+        for {
+            select {
+            case <-ctx.Done():
+                return
+            case t := <-ticker.C:
+                fmt.Printf("[%s] cron tick %s\n", cfg.ID, t.Format(time.RFC3339))
+            }
+        }
+    }(c.cfg)
+    return nil
+}
+
+func (c *CronConnector) Stop(context.Context) error { return nil }
 
 // ... after creating the manager
-mgr.RegisterConnector(&CronConnector{})
+mgr.RegisterConnector("cron", NewCronConnector)
 cfg := CronConfig{ID: "emails", Interval: 12 * time.Hour}
 if err := mgr.StartConnector("cron", cfg); err != nil {
     panic(err)

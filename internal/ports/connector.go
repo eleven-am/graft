@@ -8,14 +8,16 @@ type ConnectorConfig interface {
 
 type ConnectorPort interface {
 	GetName() string
-	NewConfig() ConnectorConfig
-	Start(ctx context.Context, config ConnectorConfig) error
-	Stop(ctx context.Context, config ConnectorConfig) error
+	GetConfig() ConnectorConfig
+	Start(ctx context.Context) error
+	Stop(ctx context.Context) error
 }
 
+type ConnectorFactory func(configJSON []byte) (ConnectorPort, error)
+
 type ConnectorRegistryPort interface {
-	RegisterConnector(connector interface{}) error
-	GetConnector(name string) (ConnectorPort, error)
+	RegisterConnectorFactory(name string, factory ConnectorFactory) error
+	GetConnectorFactory(name string) (ConnectorFactory, error)
 	ListConnectors() []string
 	UnregisterConnector(name string) error
 	HasConnector(name string) bool

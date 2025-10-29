@@ -1,7 +1,6 @@
 package connector_registry
 
 import (
-	"fmt"
 	"log/slog"
 	"sync"
 
@@ -10,9 +9,9 @@ import (
 )
 
 type Manager struct {
-	connectors map[string]ports.ConnectorPort
-	mu         sync.RWMutex
-	logger     *slog.Logger
+	factories map[string]ports.ConnectorFactory
+	mu        sync.RWMutex
+	logger    *slog.Logger
 }
 
 func NewManager(logger *slog.Logger) *Manager {
@@ -21,73 +20,60 @@ func NewManager(logger *slog.Logger) *Manager {
 	}
 
 	return &Manager{
-		connectors: make(map[string]ports.ConnectorPort),
-		logger:     logger.With("component", "connector-registry"),
+		factories: make(map[string]ports.ConnectorFactory),
+		logger:    logger.With("component", "connector-registry"),
 	}
 }
 
-func (m *Manager) RegisterConnector(connector interface{}) error {
-	if connector == nil {
-		m.logger.Error("attempted to register nil connector")
-		return &ports.ConnectorRegistrationError{
-			ConnectorName: "<nil>",
-			Reason:        "connector cannot be nil",
-		}
-	}
-
-	portConnector, ok := connector.(ports.ConnectorPort)
-	if !ok {
-		adapter, err := NewConnectorAdapter(connector)
-		if err != nil {
-			return &ports.ConnectorRegistrationError{
-				ConnectorName: "<unknown>",
-				Reason:        fmt.Sprintf("failed to adapt connector: %v", err),
-			}
-		}
-		portConnector = adapter
-	}
-
-	name := portConnector.GetName()
+func (m *Manager) RegisterConnectorFactory(name string, factory ports.ConnectorFactory) error {
 	if name == "" {
-		m.logger.Error("attempted to register connector with empty name")
+		m.logger.Error("attempted to register connector factory with empty name")
 		return &ports.ConnectorRegistrationError{
 			ConnectorName: name,
 			Reason:        "connector name cannot be empty",
 		}
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, exists := m.connectors[name]; exists {
+	if factory == nil {
+		m.logger.Error("attempted to register nil connector factory", "name", name)
 		return &ports.ConnectorRegistrationError{
 			ConnectorName: name,
-			Reason:        "connector already registered",
+			Reason:        "connector factory cannot be nil",
 		}
 	}
 
-	m.connectors[name] = portConnector
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if _, exists := m.factories[name]; exists {
+		return &ports.ConnectorRegistrationError{
+			ConnectorName: name,
+			Reason:        "connector factory already registered",
+		}
+	}
+
+	m.factories[name] = factory
 	return nil
 }
 
-func (m *Manager) GetConnector(name string) (ports.ConnectorPort, error) {
+func (m *Manager) GetConnectorFactory(name string) (ports.ConnectorFactory, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	connector, exists := m.connectors[name]
+	factory, exists := m.factories[name]
 	if !exists {
-		return nil, domain.NewNotFoundError("connector", name)
+		return nil, domain.NewNotFoundError("connector factory", name)
 	}
 
-	return connector, nil
+	return factory, nil
 }
 
 func (m *Manager) ListConnectors() []string {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	names := make([]string, 0, len(m.connectors))
-	for name := range m.connectors {
+	names := make([]string, 0, len(m.factories))
+	for name := range m.factories {
 		names = append(names, name)
 	}
 
@@ -98,11 +84,11 @@ func (m *Manager) UnregisterConnector(name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, exists := m.connectors[name]; !exists {
-		return domain.NewNotFoundError("connector", name)
+	if _, exists := m.factories[name]; !exists {
+		return domain.NewNotFoundError("connector factory", name)
 	}
 
-	delete(m.connectors, name)
+	delete(m.factories, name)
 	return nil
 }
 
@@ -110,7 +96,7 @@ func (m *Manager) HasConnector(name string) bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	_, exists := m.connectors[name]
+	_, exists := m.factories[name]
 	return exists
 }
 
@@ -118,5 +104,5 @@ func (m *Manager) GetConnectorCount() int {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	return len(m.connectors)
+	return len(m.factories)
 }
