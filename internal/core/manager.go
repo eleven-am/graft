@@ -241,7 +241,11 @@ func NewWithConfig(config *domain.Config) *Manager {
 			peers := discoveryManager.GetPeers()
 			addrs := make([]string, 0, len(peers))
 			for _, p := range peers {
-				addrs = append(addrs, net.JoinHostPort(p.Address, strconv.Itoa(p.Port)))
+				grpcPortStr := p.Metadata["grpc_port"]
+				if grpcPortStr == "" {
+					continue
+				}
+				addrs = append(addrs, net.JoinHostPort(p.Address, grpcPortStr))
 			}
 			return addrs
 		})
