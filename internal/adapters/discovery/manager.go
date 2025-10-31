@@ -48,12 +48,12 @@ func (m *Manager) Add(provider ports.Provider) error {
 	return nil
 }
 
-func (m *Manager) MDNS(service, domain string) error {
+func (m *Manager) MDNS(service, domain string, disableIPv6 bool) error {
 	hostname := m.NodeID
 	if hostname != "" && !strings.HasSuffix(hostname, ".") {
 		hostname += "."
 	}
-	provider := NewMDNSProvider(service, domain, hostname, m.logger)
+	provider := NewMDNSProvider(service, domain, hostname, disableIPv6, m.logger)
 	return m.Add(provider)
 }
 

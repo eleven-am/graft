@@ -703,6 +703,39 @@ func (_c *MockRaftNode_RemoveServer_Call) RunAndReturn(run func(string) error) *
 	return _c
 }
 
+// SetConnectorLeaseCleaner provides a mock function with given fields: cleaner
+func (_m *MockRaftNode) SetConnectorLeaseCleaner(cleaner ports.ConnectorLeaseCleaner) {
+	_m.Called(cleaner)
+}
+
+// MockRaftNode_SetConnectorLeaseCleaner_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetConnectorLeaseCleaner'
+type MockRaftNode_SetConnectorLeaseCleaner_Call struct {
+	*mock.Call
+}
+
+// SetConnectorLeaseCleaner is a helper method to define mock.On call
+//   - cleaner ports.ConnectorLeaseCleaner
+func (_e *MockRaftNode_Expecter) SetConnectorLeaseCleaner(cleaner interface{}) *MockRaftNode_SetConnectorLeaseCleaner_Call {
+	return &MockRaftNode_SetConnectorLeaseCleaner_Call{Call: _e.mock.On("SetConnectorLeaseCleaner", cleaner)}
+}
+
+func (_c *MockRaftNode_SetConnectorLeaseCleaner_Call) Run(run func(cleaner ports.ConnectorLeaseCleaner)) *MockRaftNode_SetConnectorLeaseCleaner_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(ports.ConnectorLeaseCleaner))
+	})
+	return _c
+}
+
+func (_c *MockRaftNode_SetConnectorLeaseCleaner_Call) Return() *MockRaftNode_SetConnectorLeaseCleaner_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockRaftNode_SetConnectorLeaseCleaner_Call) RunAndReturn(run func(ports.ConnectorLeaseCleaner)) *MockRaftNode_SetConnectorLeaseCleaner_Call {
+	_c.Run(run)
+	return _c
+}
+
 // SetReadinessCallback provides a mock function with given fields: callback
 func (_m *MockRaftNode) SetReadinessCallback(callback func(bool)) {
 	_m.Called(callback)
@@ -733,39 +766,6 @@ func (_c *MockRaftNode_SetReadinessCallback_Call) Return() *MockRaftNode_SetRead
 
 func (_c *MockRaftNode_SetReadinessCallback_Call) RunAndReturn(run func(func(bool))) *MockRaftNode_SetReadinessCallback_Call {
 	_c.Run(run)
-	return _c
-}
-
-// SetConnectorLeaseCleaner provides a mock function with given fields: cleaner
-func (_m *MockRaftNode) SetConnectorLeaseCleaner(cleaner ports.ConnectorLeaseCleaner) {
-	_m.Called(cleaner)
-}
-
-// MockRaftNode_SetConnectorLeaseCleaner_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetConnectorLeaseCleaner'
-type MockRaftNode_SetConnectorLeaseCleaner_Call struct {
-	*mock.Call
-}
-
-// SetConnectorLeaseCleaner is a helper method to define mock.On call
-//   - cleaner ports.ConnectorLeaseCleaner
-func (_e *MockRaftNode_Expecter) SetConnectorLeaseCleaner(cleaner interface{}) *MockRaftNode_SetConnectorLeaseCleaner_Call {
-	return &MockRaftNode_SetConnectorLeaseCleaner_Call{Call: _e.mock.On("SetConnectorLeaseCleaner", cleaner)}
-}
-
-func (_c *MockRaftNode_SetConnectorLeaseCleaner_Call) Run(run func(cleaner ports.ConnectorLeaseCleaner)) *MockRaftNode_SetConnectorLeaseCleaner_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(ports.ConnectorLeaseCleaner))
-	})
-	return _c
-}
-
-func (_c *MockRaftNode_SetConnectorLeaseCleaner_Call) Return() *MockRaftNode_SetConnectorLeaseCleaner_Call {
-	_c.Call.Return()
-	return _c
-}
-
-func (_c *MockRaftNode_SetConnectorLeaseCleaner_Call) RunAndReturn(run func(ports.ConnectorLeaseCleaner)) *MockRaftNode_SetConnectorLeaseCleaner_Call {
-	_c.Call.Return(run)
 	return _c
 }
 
@@ -814,17 +814,17 @@ func (_c *MockRaftNode_Shutdown_Call) RunAndReturn(run func() error) *MockRaftNo
 	return _c
 }
 
-// Start provides a mock function with given fields: ctx, existingPeers
-func (_m *MockRaftNode) Start(ctx context.Context, existingPeers []ports.Peer) error {
-	ret := _m.Called(ctx, existingPeers)
+// Start provides a mock function with given fields: ctx, existingPeers, bootstrapMultiNode
+func (_m *MockRaftNode) Start(ctx context.Context, existingPeers []ports.Peer, bootstrapMultiNode bool) error {
+	ret := _m.Called(ctx, existingPeers, bootstrapMultiNode)
 
 	if len(ret) == 0 {
 		panic("no return value specified for Start")
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, []ports.Peer) error); ok {
-		r0 = rf(ctx, existingPeers)
+	if rf, ok := ret.Get(0).(func(context.Context, []ports.Peer, bool) error); ok {
+		r0 = rf(ctx, existingPeers, bootstrapMultiNode)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -840,13 +840,14 @@ type MockRaftNode_Start_Call struct {
 // Start is a helper method to define mock.On call
 //   - ctx context.Context
 //   - existingPeers []ports.Peer
-func (_e *MockRaftNode_Expecter) Start(ctx interface{}, existingPeers interface{}) *MockRaftNode_Start_Call {
-	return &MockRaftNode_Start_Call{Call: _e.mock.On("Start", ctx, existingPeers)}
+//   - bootstrapMultiNode bool
+func (_e *MockRaftNode_Expecter) Start(ctx interface{}, existingPeers interface{}, bootstrapMultiNode interface{}) *MockRaftNode_Start_Call {
+	return &MockRaftNode_Start_Call{Call: _e.mock.On("Start", ctx, existingPeers, bootstrapMultiNode)}
 }
 
-func (_c *MockRaftNode_Start_Call) Run(run func(ctx context.Context, existingPeers []ports.Peer)) *MockRaftNode_Start_Call {
+func (_c *MockRaftNode_Start_Call) Run(run func(ctx context.Context, existingPeers []ports.Peer, bootstrapMultiNode bool)) *MockRaftNode_Start_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].([]ports.Peer))
+		run(args[0].(context.Context), args[1].([]ports.Peer), args[2].(bool))
 	})
 	return _c
 }
@@ -856,7 +857,7 @@ func (_c *MockRaftNode_Start_Call) Return(_a0 error) *MockRaftNode_Start_Call {
 	return _c
 }
 
-func (_c *MockRaftNode_Start_Call) RunAndReturn(run func(context.Context, []ports.Peer) error) *MockRaftNode_Start_Call {
+func (_c *MockRaftNode_Start_Call) RunAndReturn(run func(context.Context, []ports.Peer, bool) error) *MockRaftNode_Start_Call {
 	_c.Call.Return(run)
 	return _c
 }

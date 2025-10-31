@@ -32,10 +32,11 @@ type RaftRuntimeConfig struct {
 // RaftControllerOptions captures the configuration required to start a raft
 // controller instance within the new raft subsystem.
 type RaftControllerOptions struct {
-	NodeID            string
-	BindAddress       string
-	DataDir           string
-	BootstrapMetadata map[string]string
-	Peers             []RaftPeerSpec
-	RuntimeConfig     RaftRuntimeConfig
+	NodeID             string
+	BindAddress        string
+	DataDir            string
+	BootstrapMetadata  map[string]string
+	BootstrapMultiNode bool
+	Peers              []RaftPeerSpec
+	RuntimeConfig      RaftRuntimeConfig
 }

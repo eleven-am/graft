@@ -97,6 +97,51 @@ func (_c *MockQueuePort_Claim_Call) RunAndReturn(run func() ([]byte, string, boo
 	return _c
 }
 
+// ClaimLeaseTTL provides a mock function with no fields
+func (_m *MockQueuePort) ClaimLeaseTTL() time.Duration {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for ClaimLeaseTTL")
+	}
+
+	var r0 time.Duration
+	if rf, ok := ret.Get(0).(func() time.Duration); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(time.Duration)
+	}
+
+	return r0
+}
+
+// MockQueuePort_ClaimLeaseTTL_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ClaimLeaseTTL'
+type MockQueuePort_ClaimLeaseTTL_Call struct {
+	*mock.Call
+}
+
+// ClaimLeaseTTL is a helper method to define mock.On call
+func (_e *MockQueuePort_Expecter) ClaimLeaseTTL() *MockQueuePort_ClaimLeaseTTL_Call {
+	return &MockQueuePort_ClaimLeaseTTL_Call{Call: _e.mock.On("ClaimLeaseTTL")}
+}
+
+func (_c *MockQueuePort_ClaimLeaseTTL_Call) Run(run func()) *MockQueuePort_ClaimLeaseTTL_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockQueuePort_ClaimLeaseTTL_Call) Return(_a0 time.Duration) *MockQueuePort_ClaimLeaseTTL_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockQueuePort_ClaimLeaseTTL_Call) RunAndReturn(run func() time.Duration) *MockQueuePort_ClaimLeaseTTL_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Close provides a mock function with no fields
 func (_m *MockQueuePort) Close() error {
 	ret := _m.Called()
@@ -1140,51 +1185,6 @@ func (_c *MockQueuePort_RenewClaimLease_Call) Return(_a0 error) *MockQueuePort_R
 }
 
 func (_c *MockQueuePort_RenewClaimLease_Call) RunAndReturn(run func(string) error) *MockQueuePort_RenewClaimLease_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// ClaimLeaseTTL provides a mock function with no fields
-func (_m *MockQueuePort) ClaimLeaseTTL() time.Duration {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for ClaimLeaseTTL")
-	}
-
-	var r0 time.Duration
-	if rf, ok := ret.Get(0).(func() time.Duration); ok {
-		r0 = rf()
-	} else {
-		r0 = ret.Get(0).(time.Duration)
-	}
-
-	return r0
-}
-
-// MockQueuePort_ClaimLeaseTTL_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ClaimLeaseTTL'
-type MockQueuePort_ClaimLeaseTTL_Call struct {
-	*mock.Call
-}
-
-// ClaimLeaseTTL is a helper method to define mock.On call
-func (_e *MockQueuePort_Expecter) ClaimLeaseTTL() *MockQueuePort_ClaimLeaseTTL_Call {
-	return &MockQueuePort_ClaimLeaseTTL_Call{Call: _e.mock.On("ClaimLeaseTTL")}
-}
-
-func (_c *MockQueuePort_ClaimLeaseTTL_Call) Run(run func()) *MockQueuePort_ClaimLeaseTTL_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockQueuePort_ClaimLeaseTTL_Call) Return(_a0 time.Duration) *MockQueuePort_ClaimLeaseTTL_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockQueuePort_ClaimLeaseTTL_Call) RunAndReturn(run func() time.Duration) *MockQueuePort_ClaimLeaseTTL_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -21,6 +21,52 @@ func (_m *MockLoadBalancer) EXPECT() *MockLoadBalancer_Expecter {
 	return &MockLoadBalancer_Expecter{mock: &_m.Mock}
 }
 
+// DeregisterConnectorLoad provides a mock function with given fields: connectorID
+func (_m *MockLoadBalancer) DeregisterConnectorLoad(connectorID string) error {
+	ret := _m.Called(connectorID)
+
+	if len(ret) == 0 {
+		panic("no return value specified for DeregisterConnectorLoad")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(string) error); ok {
+		r0 = rf(connectorID)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockLoadBalancer_DeregisterConnectorLoad_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeregisterConnectorLoad'
+type MockLoadBalancer_DeregisterConnectorLoad_Call struct {
+	*mock.Call
+}
+
+// DeregisterConnectorLoad is a helper method to define mock.On call
+//   - connectorID string
+func (_e *MockLoadBalancer_Expecter) DeregisterConnectorLoad(connectorID interface{}) *MockLoadBalancer_DeregisterConnectorLoad_Call {
+	return &MockLoadBalancer_DeregisterConnectorLoad_Call{Call: _e.mock.On("DeregisterConnectorLoad", connectorID)}
+}
+
+func (_c *MockLoadBalancer_DeregisterConnectorLoad_Call) Run(run func(connectorID string)) *MockLoadBalancer_DeregisterConnectorLoad_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string))
+	})
+	return _c
+}
+
+func (_c *MockLoadBalancer_DeregisterConnectorLoad_Call) Return(_a0 error) *MockLoadBalancer_DeregisterConnectorLoad_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockLoadBalancer_DeregisterConnectorLoad_Call) RunAndReturn(run func(string) error) *MockLoadBalancer_DeregisterConnectorLoad_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // IsDraining provides a mock function with no fields
 func (_m *MockLoadBalancer) IsDraining() bool {
 	ret := _m.Called()
@@ -62,6 +108,53 @@ func (_c *MockLoadBalancer_IsDraining_Call) Return(_a0 bool) *MockLoadBalancer_I
 }
 
 func (_c *MockLoadBalancer_IsDraining_Call) RunAndReturn(run func() bool) *MockLoadBalancer_IsDraining_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// RegisterConnectorLoad provides a mock function with given fields: connectorID, weight
+func (_m *MockLoadBalancer) RegisterConnectorLoad(connectorID string, weight float64) error {
+	ret := _m.Called(connectorID, weight)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RegisterConnectorLoad")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(string, float64) error); ok {
+		r0 = rf(connectorID, weight)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockLoadBalancer_RegisterConnectorLoad_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RegisterConnectorLoad'
+type MockLoadBalancer_RegisterConnectorLoad_Call struct {
+	*mock.Call
+}
+
+// RegisterConnectorLoad is a helper method to define mock.On call
+//   - connectorID string
+//   - weight float64
+func (_e *MockLoadBalancer_Expecter) RegisterConnectorLoad(connectorID interface{}, weight interface{}) *MockLoadBalancer_RegisterConnectorLoad_Call {
+	return &MockLoadBalancer_RegisterConnectorLoad_Call{Call: _e.mock.On("RegisterConnectorLoad", connectorID, weight)}
+}
+
+func (_c *MockLoadBalancer_RegisterConnectorLoad_Call) Run(run func(connectorID string, weight float64)) *MockLoadBalancer_RegisterConnectorLoad_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].(float64))
+	})
+	return _c
+}
+
+func (_c *MockLoadBalancer_RegisterConnectorLoad_Call) Return(_a0 error) *MockLoadBalancer_RegisterConnectorLoad_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockLoadBalancer_RegisterConnectorLoad_Call) RunAndReturn(run func(string, float64) error) *MockLoadBalancer_RegisterConnectorLoad_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -120,99 +213,6 @@ func (_c *MockLoadBalancer_ShouldExecuteNode_Call) Return(_a0 bool, _a1 error) *
 }
 
 func (_c *MockLoadBalancer_ShouldExecuteNode_Call) RunAndReturn(run func(string, string, string) (bool, error)) *MockLoadBalancer_ShouldExecuteNode_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// RegisterConnectorLoad provides a mock function with given fields: connectorID, weight
-func (_m *MockLoadBalancer) RegisterConnectorLoad(connectorID string, weight float64) error {
-	ret := _m.Called(connectorID, weight)
-
-	if len(ret) == 0 {
-		panic("no return value specified for RegisterConnectorLoad")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(string, float64) error); ok {
-		r0 = rf(connectorID, weight)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// MockLoadBalancer_RegisterConnectorLoad_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RegisterConnectorLoad'
-type MockLoadBalancer_RegisterConnectorLoad_Call struct {
-	*mock.Call
-}
-
-// RegisterConnectorLoad is a helper method to define mock.On call
-//   - connectorID string
-//   - weight float64
-func (_e *MockLoadBalancer_Expecter) RegisterConnectorLoad(connectorID interface{}, weight interface{}) *MockLoadBalancer_RegisterConnectorLoad_Call {
-	return &MockLoadBalancer_RegisterConnectorLoad_Call{Call: _e.mock.On("RegisterConnectorLoad", connectorID, weight)}
-}
-
-func (_c *MockLoadBalancer_RegisterConnectorLoad_Call) Run(run func(connectorID string, weight float64)) *MockLoadBalancer_RegisterConnectorLoad_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string), args[1].(float64))
-	})
-	return _c
-}
-
-func (_c *MockLoadBalancer_RegisterConnectorLoad_Call) Return(_a0 error) *MockLoadBalancer_RegisterConnectorLoad_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockLoadBalancer_RegisterConnectorLoad_Call) RunAndReturn(run func(string, float64) error) *MockLoadBalancer_RegisterConnectorLoad_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// DeregisterConnectorLoad provides a mock function with given fields: connectorID
-func (_m *MockLoadBalancer) DeregisterConnectorLoad(connectorID string) error {
-	ret := _m.Called(connectorID)
-
-	if len(ret) == 0 {
-		panic("no return value specified for DeregisterConnectorLoad")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(string) error); ok {
-		r0 = rf(connectorID)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// MockLoadBalancer_DeregisterConnectorLoad_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'DeregisterConnectorLoad'
-type MockLoadBalancer_DeregisterConnectorLoad_Call struct {
-	*mock.Call
-}
-
-// DeregisterConnectorLoad is a helper method to define mock.On call
-//   - connectorID string
-func (_e *MockLoadBalancer_Expecter) DeregisterConnectorLoad(connectorID interface{}) *MockLoadBalancer_DeregisterConnectorLoad_Call {
-	return &MockLoadBalancer_DeregisterConnectorLoad_Call{Call: _e.mock.On("DeregisterConnectorLoad", connectorID)}
-}
-
-func (_c *MockLoadBalancer_DeregisterConnectorLoad_Call) Run(run func(connectorID string)) *MockLoadBalancer_DeregisterConnectorLoad_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(string))
-	})
-	return _c
-}
-
-func (_c *MockLoadBalancer_DeregisterConnectorLoad_Call) Return(_a0 error) *MockLoadBalancer_DeregisterConnectorLoad_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockLoadBalancer_DeregisterConnectorLoad_Call) RunAndReturn(run func(string) error) *MockLoadBalancer_DeregisterConnectorLoad_Call {
 	_c.Call.Return(run)
 	return _c
 }

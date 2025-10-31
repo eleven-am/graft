@@ -18,21 +18,22 @@ import (
 var mdnsQueryContext = mdns.QueryContext
 
 type MDNSProvider struct {
-	mu       sync.RWMutex
-	logger   *slog.Logger
-	server   *mdns.Server
-	peers    map[string]ports.Peer
-	ctx      context.Context
-	cancel   context.CancelFunc
-	nodeInfo ports.NodeInfo
-	service  string
-	domain   string
-	host     string
-	events   chan ports.Event
-	wg       sync.WaitGroup
+	mu          sync.RWMutex
+	logger      *slog.Logger
+	server      *mdns.Server
+	peers       map[string]ports.Peer
+	ctx         context.Context
+	cancel      context.CancelFunc
+	nodeInfo    ports.NodeInfo
+	service     string
+	domain      string
+	host        string
+	disableIPv6 bool
+	events      chan ports.Event
+	wg          sync.WaitGroup
 }
 
-func NewMDNSProvider(service, domain, host string, logger *slog.Logger) *MDNSProvider {
+func NewMDNSProvider(service, domain, host string, disableIPv6 bool, logger *slog.Logger) *MDNSProvider {
 	if logger == nil {
 		logger = slog.Default()
 	}
@@ -45,12 +46,13 @@ func NewMDNSProvider(service, domain, host string, logger *slog.Logger) *MDNSPro
 	}
 
 	return &MDNSProvider{
-		logger:  logger.With("component", "discovery", "provider", "mdns"),
-		peers:   make(map[string]ports.Peer),
-		service: service,
-		domain:  domain,
-		host:    host,
-		events:  make(chan ports.Event, 100),
+		logger:      logger.With("component", "discovery", "provider", "mdns"),
+		peers:       make(map[string]ports.Peer),
+		service:     service,
+		domain:      domain,
+		host:        host,
+		disableIPv6: disableIPv6,
+		events:      make(chan ports.Event, 100),
 	}
 }
 
@@ -164,11 +166,20 @@ func (m *MDNSProvider) announce() error {
 		txtRecords,
 	)
 	if err != nil {
+		m.logger.Error("failed to create mDNS service",
+			"id", m.nodeInfo.ID,
+			"service", m.service,
+			"domain", m.domain,
+			"host", m.host,
+			"port", m.nodeInfo.Port,
+			"address", m.nodeInfo.Address,
+			"error", err)
 		return domain.NewDiscoveryError("mdns", "service_create", err)
 	}
 
 	server, err := mdns.NewServer(&mdns.Config{Zone: service})
 	if err != nil {
+		m.logger.Error("failed to create mDNS server", "error", err)
 		return domain.NewDiscoveryError("mdns", "server_create", err)
 	}
 
@@ -234,10 +245,11 @@ func (m *MDNSProvider) performDiscovery(ctx context.Context) {
 	}()
 
 	params := &mdns.QueryParam{
-		Service: m.service,
-		Domain:  m.domain,
-		Timeout: 5 * time.Second,
-		Entries: entries,
+		Service:     m.service,
+		Domain:      m.domain,
+		Timeout:     5 * time.Second,
+		Entries:     entries,
+		DisableIPv6: m.disableIPv6,
 	}
 
 	if err := mdnsQueryContext(ctx, params); err != nil && !errors.Is(err, context.Canceled) {

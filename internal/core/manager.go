@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -334,19 +335,25 @@ func createDiscoveryManager(config *domain.Config, logger *slog.Logger) *discove
 		switch discoveryConfig.Type {
 		case domain.DiscoveryMDNS:
 			if discoveryConfig.MDNS != nil {
-				manager.MDNS(discoveryConfig.MDNS.Service, discoveryConfig.MDNS.Domain)
+				manager.MDNS(discoveryConfig.MDNS.Service, discoveryConfig.MDNS.Domain, discoveryConfig.MDNS.DisableIPv6)
 			} else {
-				manager.MDNS("", "")
+				manager.MDNS("", "", true)
 			}
 		case domain.DiscoveryStatic:
 			if len(discoveryConfig.Static) > 0 {
 				peers := make([]ports.Peer, len(discoveryConfig.Static))
 				for i, staticPeer := range discoveryConfig.Static {
+					metadata := staticPeer.Metadata
+					if metadata == nil {
+						metadata = make(map[string]string)
+					}
+					metadata["grpc_port"] = strconv.Itoa(staticPeer.Port)
+
 					peers[i] = ports.Peer{
 						ID:       staticPeer.ID,
 						Address:  staticPeer.Address,
 						Port:     staticPeer.Port,
-						Metadata: staticPeer.Metadata,
+						Metadata: metadata,
 					}
 				}
 				manager.Static(peers)
@@ -361,8 +368,8 @@ func (m *Manager) Discovery() *discovery.Manager {
 	return m.discovery
 }
 
-func (m *Manager) MDNS(service, domain string) *Manager {
-	m.discovery.MDNS(service, domain)
+func (m *Manager) MDNS(service, domain string, disableIPv6 bool) *Manager {
+	m.discovery.MDNS(service, domain, disableIPv6)
 	return m
 }
 
@@ -423,7 +430,9 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 
 	readiness.LogPeerMetadata(existingPeers, m.logger)
 
-	if err := m.raftAdapter.Start(ctx, existingPeers); err != nil {
+	bootstrapMultiNode := m.shouldBootstrapMultiNode(existingPeers)
+
+	if err := m.raftAdapter.Start(ctx, existingPeers, bootstrapMultiNode); err != nil {
 		return domain.NewRaftError(
 			"failed to start raft node",
 			err,
@@ -445,7 +454,23 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 
 	m.pauseWorkflowIntake()
 
-	if len(existingPeers) == 0 {
+	joinRequired := len(existingPeers) > 0 && !bootstrapMultiNode
+
+	if bootstrapMultiNode {
+		m.logger.Info("designated as bootstrap leader", "peer_count", len(existingPeers))
+		m.readinessManager.SetState(readiness.StateProvisional)
+
+		leaderCtx, leaderCancel := context.WithTimeout(m.ctx, m.config.Raft.DiscoveryTimeout)
+		defer leaderCancel()
+
+		if err := m.waitForSelfLeadership(leaderCtx); err != nil {
+			m.logger.Warn("timed out waiting for raft leadership", "error", err)
+		} else {
+			m.logger.Info("raft leadership established for bootstrap leader")
+			m.readinessManager.SetState(readiness.StateReady)
+			m.resumeWorkflowIntake()
+		}
+	} else if len(existingPeers) == 0 {
 		m.logger.Info("starting as provisional leader - no existing peers found")
 		m.readinessManager.SetState(readiness.StateProvisional)
 
@@ -459,7 +484,7 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 			m.readinessManager.SetState(readiness.StateReady)
 			m.resumeWorkflowIntake()
 		}
-	} else {
+	} else if len(existingPeers) > 0 {
 		m.logger.Info("starting with existing peers", "peer_count", len(existingPeers))
 		m.readinessManager.SetState(readiness.StateDetecting)
 	}
@@ -512,10 +537,8 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 
 	go m.watchForSeniorPeers()
 
-	if len(existingPeers) > 0 {
-		joinCtx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
-		defer cancel()
-		if !m.joinPeers(joinCtx, existingPeers) {
+	if joinRequired {
+		if !m.joinWithRetry(existingPeers) {
 			return fmt.Errorf("failed to join existing peers")
 		}
 	}
@@ -1407,6 +1430,79 @@ func (m *Manager) joinPeers(ctx context.Context, peers []ports.Peer) bool {
 	}
 
 	return succeeded
+}
+
+func (m *Manager) joinWithRetry(peers []ports.Peer) bool {
+	attempts := m.config.Raft.MaxJoinAttempts
+	if attempts <= 0 {
+		attempts = 1
+	}
+
+	backoff := 500 * time.Millisecond
+	if backoff <= 0 {
+		backoff = 500 * time.Millisecond
+	}
+
+	for attempt := 1; attempt <= attempts; attempt++ {
+		if m.ctx.Err() != nil {
+			return false
+		}
+
+		joinCtx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
+		success := m.joinPeers(joinCtx, peers)
+		cancel()
+
+		if success {
+			return true
+		}
+
+		if attempt < attempts {
+			m.logger.Warn("join attempt failed", "attempt", attempt, "max_attempts", attempts)
+			select {
+			case <-time.After(backoff):
+			case <-m.ctx.Done():
+				return false
+			}
+
+			if backoff < 2*time.Second {
+				backoff *= 2
+				if backoff > 2*time.Second {
+					backoff = 2 * time.Second
+				}
+			}
+		}
+	}
+
+	return false
+}
+
+func (m *Manager) shouldBootstrapMultiNode(peers []ports.Peer) bool {
+	if len(peers) == 0 {
+		return false
+	}
+
+	ids := make([]string, 0, len(peers)+1)
+	seen := make(map[string]struct{}, len(peers)+1)
+	ids = append(ids, m.nodeID)
+	seen[m.nodeID] = struct{}{}
+
+	for _, peer := range peers {
+		if peer.ID == "" {
+			continue
+		}
+		if _, exists := seen[peer.ID]; exists {
+			continue
+		}
+		ids = append(ids, peer.ID)
+		seen[peer.ID] = struct{}{}
+	}
+
+	if len(ids) == 0 {
+		return false
+	}
+
+	sort.Strings(ids)
+	return ids[0] == m.nodeID
 }
 
 func (m *Manager) waitForSelfLeadership(ctx context.Context) error {

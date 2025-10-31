@@ -336,7 +336,7 @@ func TestQueue_WaitForItemLeaseEvent(t *testing.T) {
 
 	select {
 	case <-waitCh:
-		// expected
+
 	case <-time.After(150 * time.Millisecond):
 		t.Fatal("expected lease delete event to signal wait channel")
 	}

@@ -39,9 +39,10 @@ type DiscoveryConfig struct {
 }
 
 type MDNSConfig struct {
-	Service string `json:"service" yaml:"service"`
-	Domain  string `json:"domain" yaml:"domain"`
-	Host    string `json:"host" yaml:"host"`
+	Service     string `json:"service" yaml:"service"`
+	Domain      string `json:"domain" yaml:"domain"`
+	Host        string `json:"host" yaml:"host"`
+	DisableIPv6 bool   `json:"disable_ipv6" yaml:"disable_ipv6"`
 }
 
 type StaticPeer struct {

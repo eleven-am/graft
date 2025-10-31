@@ -94,14 +94,15 @@ func NewNode(cfg *Config, storage *Storage, eventManager ports.EventManager, app
 	return n, nil
 }
 
-func (n *Node) Start(ctx context.Context, existingPeers []ports.Peer) error {
-	n.setProvisional(len(existingPeers) == 0)
+func (n *Node) Start(ctx context.Context, existingPeers []ports.Peer, bootstrapMultiNode bool) error {
+	n.setProvisional(len(existingPeers) == 0 || bootstrapMultiNode)
 	options := domain.RaftControllerOptions{
-		NodeID:            n.config.NodeID,
-		BindAddress:       n.config.BindAddr,
-		DataDir:           n.config.DataDir,
-		BootstrapMetadata: metadata.ExtendMetadata(nil, n.metadata),
-		Peers:             convertPeers(existingPeers),
+		NodeID:             n.config.NodeID,
+		BindAddress:        n.config.BindAddr,
+		DataDir:            n.config.DataDir,
+		BootstrapMetadata:  metadata.ExtendMetadata(nil, n.metadata),
+		BootstrapMultiNode: bootstrapMultiNode,
+		Peers:              convertPeers(existingPeers),
 		RuntimeConfig: domain.RaftRuntimeConfig{
 			ClusterID:          n.config.ClusterID,
 			ClusterPolicy:      n.config.ClusterPolicy,

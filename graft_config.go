@@ -153,8 +153,8 @@ func NewConfigBuilder(nodeID, bindAddr, dataDir string) *ConfigBuilder {
 //   - host: Specific host to advertise (empty string uses default)
 //
 // This is ideal for development environments and local clusters.
-func (cb *ConfigBuilder) WithMDNS(service, domain, host string) *ConfigBuilder {
-	cb.config.WithMDNS(service, domain, host)
+func (cb *ConfigBuilder) WithMDNS(service, domain, host string, disableIPv6 bool) *ConfigBuilder {
+	cb.config.WithMDNS(service, domain, host, disableIPv6)
 	return cb
 }
 

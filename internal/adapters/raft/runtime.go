@@ -179,7 +179,32 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 
 	config := r.buildRaftConfig(opts)
 
-	if len(opts.Peers) == 0 {
+	if opts.BootstrapMultiNode {
+		servers := make([]raft.Server, 0, len(opts.Peers)+1)
+		servers = append(servers, raft.Server{
+			ID:      raft.ServerID(opts.NodeID),
+			Address: advertise,
+		})
+		for _, peer := range opts.Peers {
+			if peer.ID == opts.NodeID {
+				continue
+			}
+			servers = append(servers, raft.Server{
+				ID:      raft.ServerID(peer.ID),
+				Address: raft.ServerAddress(peer.Address),
+			})
+		}
+		if err := raft.BootstrapCluster(config, storage.LogStore, storage.StableStore, storage.SnapshotStore, transport, raft.Configuration{Servers: servers}); err != nil && !errors.Is(err, raft.ErrCantBootstrap) {
+			cancel()
+			r.closeTransport(transport)
+			r.closeStores()
+			return r.raftError(
+				"multi-node bootstrap failed",
+				err,
+				domain.WithContextDetail("peer_count", strconv.Itoa(len(opts.Peers))),
+			)
+		}
+	} else if len(opts.Peers) == 0 {
 		bootstrapConfig := raft.Configuration{
 			Servers: []raft.Server{{
 				ID:      raft.ServerID(opts.NodeID),

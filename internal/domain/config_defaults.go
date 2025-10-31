@@ -32,9 +32,10 @@ func DefaultConfig() *Config {
 
 func DefaultMDNSConfig() *MDNSConfig {
 	return &MDNSConfig{
-		Service: "_graft._tcp",
-		Domain:  "local.",
-		Host:    "",
+		Service:     "_graft._tcp",
+		Domain:      "local.",
+		Host:        "",
+		DisableIPv6: true,
 	}
 }
 
@@ -186,7 +187,7 @@ func NewConfigFromSimple(nodeID, bindAddr, dataDir string, logger *slog.Logger) 
 	return config
 }
 
-func (c *Config) WithMDNS(service, domain, host string) *Config {
+func (c *Config) WithMDNS(service, domain, host string, disableIPv6 bool) *Config {
 	mdnsConfig := DefaultMDNSConfig()
 	if service != "" {
 		mdnsConfig.Service = service
@@ -197,6 +198,7 @@ func (c *Config) WithMDNS(service, domain, host string) *Config {
 	if host != "" {
 		mdnsConfig.Host = host
 	}
+	mdnsConfig.DisableIPv6 = disableIPv6
 
 	c.Discovery = append(c.Discovery, DiscoveryConfig{
 		Type: DiscoveryMDNS,

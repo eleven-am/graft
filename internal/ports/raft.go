@@ -70,7 +70,7 @@ type RaftMetrics struct {
 }
 
 type RaftNode interface {
-	Start(ctx context.Context, existingPeers []Peer) error
+	Start(ctx context.Context, existingPeers []Peer, bootstrapMultiNode bool) error
 	Apply(cmd domain.Command, timeout time.Duration) (*domain.CommandResult, error)
 	IsLeader() bool
 	IsProvisional() bool
