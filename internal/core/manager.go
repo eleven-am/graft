@@ -1435,47 +1435,86 @@ func (m *Manager) joinPeers(ctx context.Context, peers []ports.Peer) bool {
 }
 
 func (m *Manager) joinWithRetry(peers []ports.Peer) bool {
-	attempts := m.config.Raft.MaxJoinAttempts
-	if attempts <= 0 {
-		attempts = 1
-	}
+	deadline := time.Now().Add(m.config.Raft.DiscoveryTimeout)
 
 	backoff := 500 * time.Millisecond
 	if backoff <= 0 {
 		backoff = 500 * time.Millisecond
 	}
 
-	for attempt := 1; attempt <= attempts; attempt++ {
+	maxAttempts := m.config.Raft.MaxJoinAttempts
+	if maxAttempts <= 0 {
+		maxAttempts = 100
+	}
+
+	attempt := 0
+
+	for {
+		attempt++
+
+		if time.Now().After(deadline) {
+			m.logger.Warn("join retry deadline exceeded",
+				"attempts", attempt,
+				"timeout", m.config.Raft.DiscoveryTimeout)
+			return false
+		}
+
+		if attempt > maxAttempts {
+			m.logger.Warn("join retry max attempts exceeded",
+				"attempts", attempt,
+				"max_attempts", maxAttempts)
+			return false
+		}
+
 		if m.ctx.Err() != nil {
 			return false
 		}
 
-		joinCtx, cancel := context.WithTimeout(m.ctx, 10*time.Second)
+		remainingTime := time.Until(deadline)
+		joinTimeout := 10 * time.Second
+		if remainingTime < joinTimeout {
+			joinTimeout = remainingTime
+		}
+
+		joinCtx, cancel := context.WithTimeout(m.ctx, joinTimeout)
 		success := m.joinPeers(joinCtx, peers)
 		cancel()
 
 		if success {
+			m.logger.Info("successfully joined cluster", "attempt", attempt)
 			return true
 		}
 
-		if attempt < attempts {
-			m.logger.Warn("join attempt failed", "attempt", attempt, "max_attempts", attempts)
-			select {
-			case <-time.After(backoff):
-			case <-m.ctx.Done():
-				return false
-			}
+		remainingTime = time.Until(deadline)
+		if remainingTime <= 0 {
+			m.logger.Warn("join retry deadline reached after failed attempt",
+				"attempts", attempt)
+			return false
+		}
 
-			if backoff < 2*time.Second {
-				backoff *= 2
-				if backoff > 2*time.Second {
-					backoff = 2 * time.Second
-				}
+		actualBackoff := backoff
+		if actualBackoff > remainingTime {
+			actualBackoff = remainingTime
+		}
+
+		m.logger.Warn("join attempt failed, retrying",
+			"attempt", attempt,
+			"backoff", actualBackoff,
+			"remaining_time", remainingTime)
+
+		select {
+		case <-time.After(actualBackoff):
+		case <-m.ctx.Done():
+			return false
+		}
+
+		if backoff < 2*time.Second {
+			backoff *= 2
+			if backoff > 2*time.Second {
+				backoff = 2 * time.Second
 			}
 		}
 	}
-
-	return false
 }
 
 func (m *Manager) shouldBootstrapMultiNode(peers []ports.Peer) bool {
