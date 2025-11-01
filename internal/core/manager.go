@@ -61,6 +61,8 @@ type Manager struct {
 	grpcPort               int
 	expectedStaticPeers    int
 	hasDynamicDiscovery    bool
+	bootEpoch              string
+	bootstrapCandidateID   string
 	readinessManager       *readiness.Manager
 	workflowIntakeMu       sync.RWMutex
 	workflowIntakeOk       bool
@@ -139,6 +141,17 @@ type ClusterMetrics struct {
 }
 
 var ErrDiscoveryStopped = errors.New("discovery stopped before finding any peers")
+
+const (
+	bootstrapStateKey     = "bootstrap_state"
+	bootstrapCandidateKey = "bootstrap_candidate"
+	bootstrapEpochKey     = "bootstrap_epoch"
+	bootstrapReadyKey     = "bootstrap_ready"
+
+	bootstrapStateCandidate = "candidate"
+	bootstrapStateAwaiting  = "awaiting"
+	bootstrapStateReady     = "ready"
+)
 
 type ClusterInfo struct {
 	NodeID   string         `json:"node_id"`
@@ -318,6 +331,8 @@ func NewWithConfig(config *domain.Config) *Manager {
 		leaseManager:      leaseManager,
 	}
 
+	manager.bootEpoch = metadata.GetBootID(metadata.GetGlobalBootstrapMetadata())
+
 	expectedStaticPeers := 0
 	hasDynamicDiscovery := false
 	for _, discoveryConfig := range config.Discovery {
@@ -453,7 +468,27 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 
 	readiness.LogPeerMetadata(existingPeers, m.logger)
 
-	bootstrapMultiNode := m.shouldBootstrapMultiNode(existingPeers)
+	candidateID := m.selectBootstrapCandidate(existingPeers)
+	m.bootstrapCandidateID = candidateID
+
+	if candidateID == m.nodeID {
+		m.updateBootstrapMetadata(bootstrapStateCandidate, candidateID, false)
+	} else {
+		m.updateBootstrapMetadata(bootstrapStateAwaiting, candidateID, false)
+		if err := m.waitForBootstrapReady(ctx, candidateID, discoveryTimeout); err != nil {
+			return domain.NewDomainErrorWithCategory(
+				domain.CategoryDiscovery,
+				"bootstrap leader wait failed",
+				err,
+				domain.WithComponent("core.Manager.Start"),
+				domain.WithContextDetail("candidate", candidateID),
+			)
+		}
+		existingPeers = filterPeers(m.discovery.GetPeers(), m.nodeID)
+		readiness.LogPeerMetadata(existingPeers, m.logger)
+	}
+
+	bootstrapMultiNode := candidateID == m.nodeID
 
 	if err := m.raftAdapter.Start(ctx, existingPeers, bootstrapMultiNode); err != nil {
 		return domain.NewRaftError(
@@ -477,7 +512,12 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 
 	m.pauseWorkflowIntake()
 
-	joinRequired := len(existingPeers) > 0 && !bootstrapMultiNode
+	joinTargets := existingPeers
+	if !bootstrapMultiNode {
+		joinTargets = m.joinTargets(existingPeers, candidateID)
+	}
+
+	joinRequired := len(joinTargets) > 0 && !bootstrapMultiNode
 
 	if bootstrapMultiNode {
 		m.logger.Info("designated as bootstrap leader", "peer_count", len(existingPeers))
@@ -541,7 +581,7 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	go m.watchForSeniorPeers()
 
 	if joinRequired {
-		if !m.joinWithRetry(existingPeers) {
+		if !m.joinWithRetry(joinTargets) {
 			return fmt.Errorf("failed to join existing peers")
 		}
 	}
@@ -1656,6 +1696,7 @@ func (m *Manager) awaitLeadership(timeout time.Duration, role string) {
 		"role", role,
 		"node_id", m.nodeID,
 		"leader_addr", m.raftAdapter.LeaderAddr())
+	m.updateBootstrapMetadata(bootstrapStateReady, m.nodeID, true)
 	m.readinessManager.SetState(readiness.StateReady)
 	m.resumeWorkflowIntake()
 }
@@ -1682,4 +1723,115 @@ func (m *Manager) hasSmallerPeer(peers []ports.Peer) bool {
 		}
 	}
 	return false
+}
+
+func (m *Manager) selectBootstrapCandidate(peers []ports.Peer) string {
+	candidate := m.nodeID
+	for _, peer := range peers {
+		if peer.ID == "" {
+			continue
+		}
+		if peer.ID < candidate {
+			candidate = peer.ID
+		}
+	}
+	return candidate
+}
+
+func (m *Manager) updateBootstrapMetadata(state, candidate string, ready bool) {
+	if m == nil || m.discovery == nil {
+		return
+	}
+	readyValue := "false"
+	if ready {
+		readyValue = "true"
+	}
+	epoch := m.bootEpoch
+	if epoch == "" {
+		epoch = m.nodeID
+	}
+	if err := m.discovery.UpdateMetadata(func(md map[string]string) map[string]string {
+		if md == nil {
+			md = make(map[string]string)
+		}
+		md[bootstrapEpochKey] = epoch
+		if candidate != "" {
+			md[bootstrapCandidateKey] = candidate
+		}
+		if state != "" {
+			md[bootstrapStateKey] = state
+		}
+		md[bootstrapReadyKey] = readyValue
+		return md
+	}); err != nil {
+		m.logger.Warn("failed to update bootstrap metadata", "error", err)
+	}
+}
+
+func (m *Manager) waitForBootstrapReady(parent context.Context, candidate string, timeout time.Duration) error {
+	if candidate == "" || candidate == m.nodeID || m.discovery == nil {
+		return nil
+	}
+
+	checkReady := func() bool {
+		peers := m.discovery.GetPeers()
+		for _, peer := range peers {
+			if peer.ID != candidate {
+				continue
+			}
+			if peer.Metadata != nil && peer.Metadata[bootstrapReadyKey] == "true" {
+				return true
+			}
+		}
+		return false
+	}
+
+	if checkReady() {
+		return nil
+	}
+
+	events, unsubscribe := m.discovery.Subscribe()
+	defer unsubscribe()
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	waitCtx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			if checkReady() {
+				return nil
+			}
+			return waitCtx.Err()
+		case _, ok := <-events:
+			if !ok {
+				if checkReady() {
+					return nil
+				}
+				return ErrDiscoveryStopped
+			}
+			if checkReady() {
+				return nil
+			}
+		case <-ticker.C:
+			if checkReady() {
+				return nil
+			}
+		}
+	}
+}
+
+func (m *Manager) joinTargets(peers []ports.Peer, candidate string) []ports.Peer {
+	if candidate == "" {
+		return peers
+	}
+	for _, peer := range peers {
+		if peer.ID == candidate {
+			return []ports.Peer{peer}
+		}
+	}
+	return peers
 }
