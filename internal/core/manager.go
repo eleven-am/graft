@@ -889,12 +889,11 @@ func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) (
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
+	startTime := time.Now()
 	peers := filterPeers(m.discovery.GetPeers(), m.nodeID)
 	hasSmallerPeer := m.hasSmallerPeer(peers)
-	firstPeerTime := time.Time{}
-	if len(peers) > 0 {
-		firstPeerTime = time.Now()
-	}
+	firstPeerTime := startTime
+	firstPeerObserved := len(peers) > 0
 
 	settleWindow := 2 * time.Second
 	candidateMinWait := 12 * time.Second
@@ -904,14 +903,18 @@ func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) (
 
 	for {
 		if len(peers) == 0 {
-			// nothing yet; just wait for events or timeout
+			if time.Since(firstPeerTime) >= candidateMinWait {
+				m.logger.Info("discovery phase complete", "peers_found", 0, "reason", "candidate_window_elapsed_no_peers")
+				return peers, nil
+			}
 		} else {
 			if m.expectedStaticPeers > 0 && len(peers) >= m.expectedStaticPeers {
 				m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "expected_peers")
 				return peers, nil
 			}
 
-			if firstPeerTime.IsZero() {
+			if !firstPeerObserved {
+				firstPeerObserved = true
 				firstPeerTime = time.Now()
 			}
 
@@ -952,13 +955,15 @@ func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) (
 			}
 			_ = evt
 			peers = filterPeers(m.discovery.GetPeers(), m.nodeID)
-			if len(peers) > 0 && firstPeerTime.IsZero() {
+			if len(peers) > 0 && !firstPeerObserved {
+				firstPeerObserved = true
 				firstPeerTime = time.Now()
 			}
 			hasSmallerPeer = m.hasSmallerPeer(peers)
 		case <-ticker.C:
 			peers = filterPeers(m.discovery.GetPeers(), m.nodeID)
-			if len(peers) > 0 && firstPeerTime.IsZero() {
+			if len(peers) > 0 && !firstPeerObserved {
+				firstPeerObserved = true
 				firstPeerTime = time.Now()
 			}
 			hasSmallerPeer = m.hasSmallerPeer(peers)
