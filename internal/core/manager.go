@@ -558,7 +558,17 @@ bootstrapLoop:
 
 	bootstrapMultiNode := candidateID == m.nodeID && len(existingPeers) > 0
 
+	m.logger.Info("starting raft adapter",
+		"node_id", m.nodeID,
+		"bootstrap_multi_node", bootstrapMultiNode,
+		"peer_count", len(existingPeers))
+
 	if err := m.raftAdapter.Start(ctx, existingPeers, bootstrapMultiNode); err != nil {
+		m.logger.Error("raft adapter start failed",
+			"node_id", m.nodeID,
+			"bootstrap_multi_node", bootstrapMultiNode,
+			"peer_count", len(existingPeers),
+			"error", err)
 		return domain.NewRaftError(
 			"failed to start raft node",
 			err,
@@ -566,6 +576,11 @@ bootstrapLoop:
 			domain.WithContextDetail("existing_peer_count", strconv.Itoa(len(existingPeers))),
 		)
 	}
+
+	m.logger.Info("raft adapter started",
+		"node_id", m.nodeID,
+		"bootstrap_multi_node", bootstrapMultiNode,
+		"peer_count", len(existingPeers))
 
 	m.raftAdapter.SetReadinessCallback(func(ready bool) {
 		if ready {

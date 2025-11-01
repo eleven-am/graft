@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -30,6 +32,18 @@ func main() {
 		"data_dir", dataDir,
 		"mdns_service", mdnsService,
 		"mdns_domain", mdnsDomain)
+
+	normalizedRaftAddr, err := resolveAdvertiseAddress(raftAddr)
+	if err != nil {
+		logger.Error("failed to resolve raft address", "raft_addr", raftAddr, "error", err)
+		os.Exit(1)
+	}
+	if normalizedRaftAddr != raftAddr {
+		logger.Info("resolved raft advertise address",
+			"original", raftAddr,
+			"resolved", normalizedRaftAddr)
+		raftAddr = normalizedRaftAddr
+	}
 
 	clusterID := getEnv("GRAFT_CLUSTER_ID", "mdns-cluster-example")
 
@@ -121,4 +135,36 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func resolveAdvertiseAddress(addr string) (string, error) {
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return addr, nil
+	}
+
+	if ip := net.ParseIP(host); ip != nil && !ip.IsUnspecified() {
+		return addr, nil
+	}
+
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return addr, err
+	}
+	if len(ips) == 0 {
+		return addr, errors.New("no IP addresses returned for host")
+	}
+
+	var chosen net.IP
+	for _, ip := range ips {
+		if v4 := ip.To4(); v4 != nil {
+			chosen = v4
+			break
+		}
+	}
+	if chosen == nil {
+		chosen = ips[0]
+	}
+
+	return net.JoinHostPort(chosen.String(), port), nil
 }

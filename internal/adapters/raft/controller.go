@@ -90,6 +90,14 @@ func (c *Controller) Start(ctx context.Context, opts domain.RaftControllerOption
 	runCtx, cancel := context.WithCancel(ctx)
 
 	if err := c.deps.Runtime.Start(runCtx, opts); err != nil {
+		if c.deps.Logger != nil {
+			c.deps.Logger.Error("runtime start failed",
+				"node_id", opts.NodeID,
+				"bind_address", opts.BindAddress,
+				"peer_count", len(opts.Peers),
+				"bootstrap_multi_node", opts.BootstrapMultiNode,
+				"error", err)
+		}
 		cancel()
 		return err
 	}
