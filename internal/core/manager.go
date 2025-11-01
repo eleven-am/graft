@@ -141,6 +141,7 @@ type ClusterMetrics struct {
 }
 
 var ErrDiscoveryStopped = errors.New("discovery stopped before finding any peers")
+var errBootstrapCandidateChanged = errors.New("bootstrap candidate changed")
 
 const (
 	bootstrapStateKey     = "bootstrap_state"
@@ -468,14 +469,76 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 
 	readiness.LogPeerMetadata(existingPeers, m.logger)
 
-	candidateID := m.selectBootstrapCandidate(existingPeers)
-	m.bootstrapCandidateID = candidateID
+	var candidateID string
+bootstrapLoop:
+	for {
+		peersView := filterPeers(m.discovery.GetPeers(), m.nodeID)
+		if len(peersView) == 0 && len(existingPeers) > 0 {
+			peersView = existingPeers
+		}
 
-	if candidateID == m.nodeID {
-		m.updateBootstrapMetadata(bootstrapStateCandidate, candidateID, false)
-	} else {
+		candidateID = m.selectBootstrapCandidate(peersView, nil)
+		m.bootstrapCandidateID = candidateID
+
+		if candidateID == "" {
+			candidateID = m.nodeID
+			m.bootstrapCandidateID = candidateID
+		}
+
+		if candidateID == m.nodeID {
+			m.updateBootstrapMetadata(bootstrapStateCandidate, candidateID, false)
+			if len(peersView) > 0 {
+				existingPeers = peersView
+			}
+			break bootstrapLoop
+		}
+
 		m.updateBootstrapMetadata(bootstrapStateAwaiting, candidateID, false)
-		if err := m.waitForBootstrapReady(ctx, candidateID, discoveryTimeout); err != nil {
+
+		currentCandidate, err := m.waitForBootstrapReady(ctx, candidateID, discoveryTimeout)
+		if err == nil {
+			if currentCandidate != "" && currentCandidate != candidateID {
+				candidateID = currentCandidate
+				m.bootstrapCandidateID = currentCandidate
+			}
+			refreshedPeers := filterPeers(m.discovery.GetPeers(), m.nodeID)
+			if len(refreshedPeers) > 0 {
+				existingPeers = refreshedPeers
+			} else if len(peersView) > 0 {
+				existingPeers = peersView
+			}
+			readiness.LogPeerMetadata(existingPeers, m.logger)
+			break bootstrapLoop
+		}
+
+		switch {
+		case errors.Is(err, errBootstrapCandidateChanged):
+			m.logger.Warn("bootstrap candidate changed while waiting",
+				"previous_candidate", candidateID,
+				"new_candidate", currentCandidate)
+			if currentCandidate != "" && currentCandidate != candidateID {
+				candidateID = currentCandidate
+				m.bootstrapCandidateID = currentCandidate
+			}
+			continue bootstrapLoop
+		case errors.Is(err, context.DeadlineExceeded):
+			m.logger.Debug("bootstrap candidate timed out waiting for readiness",
+				"candidate", candidateID,
+				"timeout", discoveryTimeout)
+			if len(peersView) > 0 {
+				existingPeers = peersView
+			}
+			readiness.LogPeerMetadata(existingPeers, m.logger)
+			break bootstrapLoop
+		case errors.Is(err, ErrDiscoveryStopped):
+			m.logger.Warn("discovery stopped before bootstrap candidate became ready",
+				"candidate", candidateID)
+			if len(peersView) > 0 {
+				existingPeers = peersView
+			}
+			readiness.LogPeerMetadata(existingPeers, m.logger)
+			break bootstrapLoop
+		default:
 			return domain.NewDomainErrorWithCategory(
 				domain.CategoryDiscovery,
 				"bootstrap leader wait failed",
@@ -484,11 +547,16 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 				domain.WithContextDetail("candidate", candidateID),
 			)
 		}
-		existingPeers = filterPeers(m.discovery.GetPeers(), m.nodeID)
-		readiness.LogPeerMetadata(existingPeers, m.logger)
+
+		refreshedPeers := filterPeers(m.discovery.GetPeers(), m.nodeID)
+		if len(refreshedPeers) > 0 {
+			existingPeers = refreshedPeers
+		}
 	}
 
-	bootstrapMultiNode := candidateID == m.nodeID
+	readiness.LogPeerMetadata(existingPeers, m.logger)
+
+	bootstrapMultiNode := candidateID == m.nodeID && len(existingPeers) > 0
 
 	if err := m.raftAdapter.Start(ctx, existingPeers, bootstrapMultiNode); err != nil {
 		return domain.NewRaftError(
@@ -1725,23 +1793,141 @@ func (m *Manager) hasSmallerPeer(peers []ports.Peer) bool {
 	return false
 }
 
-func (m *Manager) selectBootstrapCandidate(peers []ports.Peer) string {
-	candidate := m.nodeID
+func (m *Manager) selectBootstrapCandidate(peers []ports.Peer, exclude map[string]struct{}) string {
+	ids := make(map[string]struct{})
+	ids[m.nodeID] = struct{}{}
+
 	for _, peer := range peers {
-		if peer.ID == "" {
-			continue
+		if peer.ID != "" {
+			ids[peer.ID] = struct{}{}
 		}
-		if peer.ID < candidate {
-			candidate = peer.ID
+		if peer.Metadata != nil {
+			if cand := peer.Metadata[bootstrapCandidateKey]; cand != "" {
+				ids[cand] = struct{}{}
+			}
 		}
 	}
-	return candidate
+
+	ordered := make([]string, 0, len(ids))
+	for id := range ids {
+		if exclude != nil {
+			if _, skip := exclude[id]; skip {
+				continue
+			}
+		}
+		ordered = append(ordered, id)
+	}
+	if len(ordered) == 0 {
+		return m.nodeID
+	}
+	sort.Strings(ordered)
+	return ordered[0]
+}
+
+func (m *Manager) extractBootstrapStatus(peers []ports.Peer) (string, bool) {
+	candidate := m.bootstrapCandidateID
+	ready := false
+
+	for _, peer := range peers {
+		md := peer.Metadata
+		if md == nil {
+			continue
+		}
+
+		state := md[bootstrapStateKey]
+		cand := md[bootstrapCandidateKey]
+		if cand == "" {
+			cand = peer.ID
+		}
+
+		switch state {
+		case bootstrapStateCandidate, bootstrapStateReady:
+			candidate = cand
+			if md[bootstrapReadyKey] == "true" || state == bootstrapStateReady {
+				ready = true
+			}
+		case bootstrapStateAwaiting:
+			if candidate == "" {
+				candidate = cand
+			}
+		}
+	}
+
+	if candidate == "" {
+		candidate = m.bootstrapCandidateID
+	}
+
+	return candidate, ready
+}
+
+func (m *Manager) waitForBootstrapReady(parent context.Context, candidate string, timeout time.Duration) (string, error) {
+	check := func() (string, bool) {
+		peers := m.discovery.GetPeers()
+		return m.extractBootstrapStatus(peers)
+	}
+
+	current, ready := check()
+	if ready {
+		return current, nil
+	}
+	if current != "" && current != candidate {
+		return current, errBootstrapCandidateChanged
+	}
+
+	events, unsubscribe := m.discovery.Subscribe()
+	defer unsubscribe()
+
+	waitCtx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-waitCtx.Done():
+			current, ready := check()
+			if ready {
+				return current, nil
+			}
+			return current, waitCtx.Err()
+		case _, ok := <-events:
+			if !ok {
+				current, ready := check()
+				if ready {
+					return current, nil
+				}
+				return current, ErrDiscoveryStopped
+			}
+			current, ready := check()
+			if ready {
+				return current, nil
+			}
+			if current != "" && current != candidate {
+				return current, errBootstrapCandidateChanged
+			}
+		case <-ticker.C:
+			current, ready := check()
+			if ready {
+				return current, nil
+			}
+			if current != "" && current != candidate {
+				return current, errBootstrapCandidateChanged
+			}
+		case <-parent.Done():
+			return candidate, parent.Err()
+		}
+	}
 }
 
 func (m *Manager) updateBootstrapMetadata(state, candidate string, ready bool) {
 	if m == nil || m.discovery == nil {
 		return
 	}
+	if candidate == "" {
+		candidate = m.nodeID
+	}
+	m.bootstrapCandidateID = candidate
 	readyValue := "false"
 	if ready {
 		readyValue = "true"
@@ -1755,9 +1941,7 @@ func (m *Manager) updateBootstrapMetadata(state, candidate string, ready bool) {
 			md = make(map[string]string)
 		}
 		md[bootstrapEpochKey] = epoch
-		if candidate != "" {
-			md[bootstrapCandidateKey] = candidate
-		}
+		md[bootstrapCandidateKey] = candidate
 		if state != "" {
 			md[bootstrapStateKey] = state
 		}
@@ -1765,62 +1949,6 @@ func (m *Manager) updateBootstrapMetadata(state, candidate string, ready bool) {
 		return md
 	}); err != nil {
 		m.logger.Warn("failed to update bootstrap metadata", "error", err)
-	}
-}
-
-func (m *Manager) waitForBootstrapReady(parent context.Context, candidate string, timeout time.Duration) error {
-	if candidate == "" || candidate == m.nodeID || m.discovery == nil {
-		return nil
-	}
-
-	checkReady := func() bool {
-		peers := m.discovery.GetPeers()
-		for _, peer := range peers {
-			if peer.ID != candidate {
-				continue
-			}
-			if peer.Metadata != nil && peer.Metadata[bootstrapReadyKey] == "true" {
-				return true
-			}
-		}
-		return false
-	}
-
-	if checkReady() {
-		return nil
-	}
-
-	events, unsubscribe := m.discovery.Subscribe()
-	defer unsubscribe()
-
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
-	waitCtx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
-
-	for {
-		select {
-		case <-waitCtx.Done():
-			if checkReady() {
-				return nil
-			}
-			return waitCtx.Err()
-		case _, ok := <-events:
-			if !ok {
-				if checkReady() {
-					return nil
-				}
-				return ErrDiscoveryStopped
-			}
-			if checkReady() {
-				return nil
-			}
-		case <-ticker.C:
-			if checkReady() {
-				return nil
-			}
-		}
 	}
 }
 
