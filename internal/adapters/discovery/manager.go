@@ -74,7 +74,7 @@ func (m *Manager) GetPeers() []ports.Peer {
 	return result
 }
 
-func (m *Manager) Start(ctx context.Context, address string, port int, grpcPort int) error {
+func (m *Manager) Start(ctx context.Context, address string, port int, grpcPort int, clusterID string) error {
 	m.mu.Lock()
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	m.events = make(chan ports.Event, 100)
@@ -83,8 +83,9 @@ func (m *Manager) Start(ctx context.Context, address string, port int, grpcPort 
 
 	bootMetadata := metadata.GetGlobalBootstrapMetadata()
 	nodeMetadata := metadata.ExtendMetadata(map[string]string{
-		"version":   "1.0.0",
-		"grpc_port": strconv.Itoa(grpcPort),
+		"version":    "1.0.0",
+		"grpc_port":  strconv.Itoa(grpcPort),
+		"cluster_id": clusterID,
 	}, bootMetadata)
 
 	node := ports.NodeInfo{

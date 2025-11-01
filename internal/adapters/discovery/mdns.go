@@ -300,6 +300,23 @@ func (m *MDNSProvider) processMDNSEntry(entry *mdns.ServiceEntry) (string, *port
 	peerMetadata["host"] = entry.Host
 	peerMetadata["name"] = entry.Name
 
+	nodeClusterID, nodeHasClusterID := m.nodeInfo.Metadata["cluster_id"]
+	peerClusterID, peerHasClusterID := peerMetadata["cluster_id"]
+
+	if nodeHasClusterID {
+		if !peerHasClusterID {
+			m.logger.Debug("rejecting peer without cluster_id", "peer_id", peerID)
+			return "", nil, false
+		}
+		if peerClusterID != nodeClusterID {
+			m.logger.Debug("rejecting peer with mismatched cluster_id",
+				"peer_id", peerID,
+				"peer_cluster_id", peerClusterID,
+				"node_cluster_id", nodeClusterID)
+			return "", nil, false
+		}
+	}
+
 	peer := ports.Peer{
 		ID:       peerID,
 		Address:  entry.AddrV4.String(),

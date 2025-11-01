@@ -19,7 +19,7 @@ func TestManagerBootstrapMetadataPropagation(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := manager.Start(ctx, "127.0.0.1", 8080, 9080)
+	err := manager.Start(ctx, "127.0.0.1", 8080, 9080, "test-cluster")
 	if err != nil {
 		t.Fatalf("Failed to start discovery manager: %v", err)
 	}
@@ -169,7 +169,7 @@ func TestStaticProviderMetadataPreservation(t *testing.T) {
 
 func TestMDNSMetadataExtraction(t *testing.T) {
 	logger := slog.Default()
-	provider := NewMDNSProvider("_test._tcp", "local.", "test-host", logger)
+	provider := NewMDNSProvider("_test._tcp", "local.", "test-host", true, logger)
 
 	tests := []struct {
 		name      string

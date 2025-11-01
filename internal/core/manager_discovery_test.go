@@ -71,7 +71,7 @@ func TestManagerWaitForDiscovery(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		require.NoError(t, manager.Start(ctx, "127.0.0.1", 8080, 9080))
+		require.NoError(t, manager.Start(ctx, "127.0.0.1", 8080, 9080, "test-cluster"))
 
 		coreManager := &Manager{logger: logger, discovery: manager}
 		peers, err := coreManager.waitForDiscovery(ctx, time.Second)
@@ -91,7 +91,7 @@ func TestManagerWaitForDiscovery(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		require.NoError(t, manager.Start(ctx, "127.0.0.1", 8080, 9080))
+		require.NoError(t, manager.Start(ctx, "127.0.0.1", 8080, 9080, "test-cluster"))
 
 		coreManager := &Manager{logger: logger, discovery: manager}
 
@@ -119,7 +119,7 @@ func TestManagerWaitForDiscovery(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		require.NoError(t, manager.Start(ctx, "127.0.0.1", 8080, 9080))
+		require.NoError(t, manager.Start(ctx, "127.0.0.1", 8080, 9080, "test-cluster"))
 
 		coreManager := &Manager{logger: logger, discovery: manager}
 
@@ -142,7 +142,7 @@ func TestManagerWaitForDiscovery(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		require.NoError(t, manager.Start(ctx, "127.0.0.1", 8080, 9080))
+		require.NoError(t, manager.Start(ctx, "127.0.0.1", 8080, 9080, "test-cluster"))
 
 		coreManager := &Manager{logger: logger, discovery: manager}
 
@@ -162,7 +162,7 @@ func TestManagerWaitForDiscovery(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		require.NoError(t, manager.Start(ctx, "127.0.0.1", 8080, 9080))
+		require.NoError(t, manager.Start(ctx, "127.0.0.1", 8080, 9080, "test-cluster"))
 
 		coreManager := &Manager{logger: logger, discovery: manager}
 

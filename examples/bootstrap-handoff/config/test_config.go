@@ -94,12 +94,12 @@ func (nc NodeConfig) CreateManager(logger *slog.Logger) *graft.Manager {
 
 	switch nc.Discovery.Type {
 	case "mdns":
-		manager.MDNS(nc.Discovery.Service, nc.Discovery.Domain)
+		manager.MDNS(nc.Discovery.Service, nc.Discovery.Domain, true)
 	case "inmemory":
 
 	default:
 		logger.Warn("unknown discovery type, defaulting to mdns", "type", nc.Discovery.Type)
-		manager.MDNS(nc.Discovery.Service, nc.Discovery.Domain)
+		manager.MDNS(nc.Discovery.Service, nc.Discovery.Domain, true)
 	}
 
 	if err := manager.RegisterNode(&TestWorkflowNode{}); err != nil {

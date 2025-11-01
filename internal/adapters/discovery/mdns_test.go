@@ -22,7 +22,7 @@ func stubMDNSQuery(t *testing.T, fn func(context.Context, *mdns.QueryParam) erro
 }
 
 func TestMDNSProvider_BasicLifecycle(t *testing.T) {
-	provider := NewMDNSProvider("_graft._tcp", "local.", "test-host.", nil)
+	provider := NewMDNSProvider("_graft._tcp", "local.", "test-host.", true, nil)
 
 	stubMDNSQuery(t, func(ctx context.Context, params *mdns.QueryParam) error {
 		return nil
@@ -62,7 +62,7 @@ func TestMDNSProvider_BasicLifecycle(t *testing.T) {
 }
 
 func TestMDNSProvider_CannotStartTwice(t *testing.T) {
-	provider := NewMDNSProvider("_graft._tcp", "local.", "test-host.", nil)
+	provider := NewMDNSProvider("_graft._tcp", "local.", "test-host.", true, nil)
 	ctx := context.Background()
 
 	stubMDNSQuery(t, func(ctx context.Context, params *mdns.QueryParam) error {
@@ -95,7 +95,7 @@ func TestMDNSProvider_CannotStartTwice(t *testing.T) {
 }
 
 func TestMDNSProvider_CannotStopWhenNotStarted(t *testing.T) {
-	provider := NewMDNSProvider("_graft._tcp", "local.", "test-host.", nil)
+	provider := NewMDNSProvider("_graft._tcp", "local.", "test-host.", true, nil)
 
 	err := provider.Stop()
 	if err == nil {
@@ -111,7 +111,7 @@ func TestMDNSProvider_CannotStopWhenNotStarted(t *testing.T) {
 }
 
 func TestMDNSProvider_DefaultService(t *testing.T) {
-	provider := NewMDNSProvider("", "", "test-host.", nil)
+	provider := NewMDNSProvider("", "", "test-host.", true, nil)
 
 	stubMDNSQuery(t, func(ctx context.Context, params *mdns.QueryParam) error {
 		return nil
@@ -142,7 +142,7 @@ func TestMDNSProvider_DefaultService(t *testing.T) {
 }
 
 func TestMDNSProvider_StopWaitsForSenders(t *testing.T) {
-	provider := NewMDNSProvider("_graft._tcp", "local.", "test-host.", nil)
+	provider := NewMDNSProvider("_graft._tcp", "local.", "test-host.", true, nil)
 
 	provider.mu.Lock()
 	provider.ctx, provider.cancel = context.WithCancel(context.Background())
@@ -173,7 +173,7 @@ func TestMDNSProvider_StopWaitsForSenders(t *testing.T) {
 }
 
 func TestMDNSProvider_StopCancelsInFlightDiscovery(t *testing.T) {
-	provider := NewMDNSProvider("_graft._tcp", "local.", "test-host.", nil)
+	provider := NewMDNSProvider("_graft._tcp", "local.", "test-host.", true, nil)
 
 	queryStarted := make(chan struct{})
 	var once sync.Once

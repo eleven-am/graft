@@ -43,7 +43,7 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 		defer cancel()
 
-		err = manager.Start(ctx, "127.0.0.1", 8080, 9080)
+		err = manager.Start(ctx, "127.0.0.1", 8080, 9080, "test-cluster")
 		assert.NoError(t, err)
 
 		assert.Equal(t, "test-node-123", capturedNodeInfo.ID)
@@ -90,7 +90,7 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
 
-		err = manager.Start(ctx, "127.0.0.1", 8081, 9081)
+		err = manager.Start(ctx, "127.0.0.1", 8081, 9081, "test-cluster")
 		assert.NoError(t, err)
 
 		peerWithMetadata := ports.Peer{
@@ -168,7 +168,7 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
 
-		err = manager.Start(ctx, "127.0.0.1", 8080, 9080)
+		err = manager.Start(ctx, "127.0.0.1", 8080, 9080, "test-cluster")
 		assert.NoError(t, err)
 
 		time.Sleep(100 * time.Millisecond)
@@ -210,7 +210,7 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Second)
 		defer cancel()
 
-		err = manager.Start(ctx, "127.0.0.1", 8081, 9081)
+		err = manager.Start(ctx, "127.0.0.1", 8081, 9081, "test-cluster")
 		assert.NoError(t, err)
 
 		legacyPeer := ports.Peer{
@@ -264,7 +264,7 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 
-		err = manager.Start(ctx, "127.0.0.1", 8080, 9080)
+		err = manager.Start(ctx, "127.0.0.1", 8080, 9080, "test-cluster")
 		require.NoError(t, err)
 
 		sub1, unsub1 := manager.Subscribe()
@@ -328,7 +328,7 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 		defer cancel()
 
-		err = manager.Start(ctx, "127.0.0.1", 8080, 9080)
+		err = manager.Start(ctx, "127.0.0.1", 8080, 9080, "test-cluster")
 		require.NoError(t, err)
 
 		_, unsubStalled := manager.Subscribe()
@@ -464,7 +464,7 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		err = manager.Start(ctx, "127.0.0.1", 8080, 9080)
+		err = manager.Start(ctx, "127.0.0.1", 8080, 9080, "test-cluster")
 		require.NoError(t, err)
 		require.NotNil(t, startCtx)
 
@@ -499,7 +499,7 @@ func TestDiscoveryManagerWithMockedProviders(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 
-		err = manager.Start(ctx, "127.0.0.1", 8080, 9080)
+		err = manager.Start(ctx, "127.0.0.1", 8080, 9080, "test-cluster")
 		require.NoError(t, err)
 
 		eventChan <- ports.Event{Type: ports.PeerRemoved, Peer: ports.Peer{ID: "peer-stop"}}

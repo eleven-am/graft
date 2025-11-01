@@ -347,7 +347,9 @@ func createDiscoveryManager(config *domain.Config, logger *slog.Logger) *discove
 					if metadata == nil {
 						metadata = make(map[string]string)
 					}
-					metadata["grpc_port"] = strconv.Itoa(staticPeer.Port)
+					if _, exists := metadata["grpc_port"]; !exists {
+						metadata["grpc_port"] = strconv.Itoa(staticPeer.Port)
+					}
 
 					peers[i] = ports.Peer{
 						ID:       staticPeer.ID,
@@ -405,7 +407,7 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 		)
 	}
 
-	if err := m.discovery.Start(m.ctx, host, p, grpcPort); err != nil {
+	if err := m.discovery.Start(m.ctx, host, p, grpcPort, m.config.Cluster.ID); err != nil {
 		return domain.NewDomainErrorWithCategory(
 			domain.CategoryDiscovery,
 			"failed to start discovery",

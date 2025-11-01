@@ -20,13 +20,15 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 		{
 			name: "nil_logger_should_be_handled",
 			setupConfig: func() *Config {
-				return &Config{
-					NodeID:    "test-node",
-					ClusterID: "test-cluster",
-					BindAddr:  "127.0.0.1:7000",
-					DataDir:   "/tmp/test",
-					Logger:    nil,
+				config := &Config{
+					NodeID:   "test-node",
+					BindAddr: "127.0.0.1:7000",
+					DataDir:  "/tmp/test",
+					Logger:   nil,
+					Cluster:  DefaultClusterConfig(),
 				}
+				config.Cluster.ID = "test-cluster"
+				return config
 			},
 			expectedError: "logger",
 		},
@@ -34,11 +36,11 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 			name: "empty_strings_all_required_fields",
 			setupConfig: func() *Config {
 				return &Config{
-					NodeID:    "",
-					ClusterID: "",
-					BindAddr:  "",
-					DataDir:   "",
-					Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+					NodeID:   "",
+					Cluster:  ClusterConfig{ID: ""},
+					BindAddr: "",
+					DataDir:  "",
+					Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 				}
 			},
 			expectedError: "node_id",
@@ -46,19 +48,21 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 		{
 			name: "cluster_id_only_whitespace",
 			setupConfig: func() *Config {
-				return &Config{
-					NodeID:    "test-node",
-					ClusterID: "   ",
-					BindAddr:  "127.0.0.1:7000",
-					DataDir:   "/tmp/test",
-					Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+				config := &Config{
+					NodeID:   "test-node",
+					BindAddr: "127.0.0.1:7000",
+					DataDir:  "/tmp/test",
+					Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 					Resources: ResourceConfig{
 						MaxConcurrentTotal: 10,
 					},
 					Engine: EngineConfig{
 						MaxConcurrentWorkflows: 5,
 					},
+					Cluster: DefaultClusterConfig(),
 				}
+				config.Cluster.ID = "   "
+				return config
 			},
 
 			expectedError: "",
@@ -71,11 +75,11 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 					longID[i] = 'a'
 				}
 				return &Config{
-					NodeID:    "test-node",
-					ClusterID: string(longID),
-					BindAddr:  "127.0.0.1:7000",
-					DataDir:   "/tmp/test",
-					Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+					NodeID:   "test-node",
+					Cluster:  ClusterConfig{ID: string(longID)},
+					BindAddr: "127.0.0.1:7000",
+					DataDir:  "/tmp/test",
+					Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 					Resources: ResourceConfig{
 						MaxConcurrentTotal: 10,
 					},
@@ -91,11 +95,11 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 			name: "special_characters_in_ids",
 			setupConfig: func() *Config {
 				return &Config{
-					NodeID:    "node-with-特殊字符-and-émojis",
-					ClusterID: "cluster-with-newlines\n\rand-tabs\t",
-					BindAddr:  "127.0.0.1:7000",
-					DataDir:   "/tmp/test",
-					Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+					NodeID:   "node-with-特殊字符-and-émojis",
+					Cluster:  ClusterConfig{ID: "cluster-with-newlines\n\rand-tabs\t"},
+					BindAddr: "127.0.0.1:7000",
+					DataDir:  "/tmp/test",
+					Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 					Resources: ResourceConfig{
 						MaxConcurrentTotal: 10,
 					},
@@ -111,11 +115,11 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 			name: "invalid_bind_address_format",
 			setupConfig: func() *Config {
 				return &Config{
-					NodeID:    "test-node",
-					ClusterID: "test-cluster",
-					BindAddr:  "not-a-valid-address:port:extra",
-					DataDir:   "/tmp/test",
-					Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+					NodeID:   "test-node",
+					Cluster:  ClusterConfig{ID: "test-cluster"},
+					BindAddr: "not-a-valid-address:port:extra",
+					DataDir:  "/tmp/test",
+					Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
 					Resources: ResourceConfig{
 						MaxConcurrentTotal: 10,
 					},
@@ -131,7 +135,7 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 			setupConfig: func() *Config {
 				config := DefaultConfig()
 				config.NodeID = "test-node"
-				config.ClusterID = "test-cluster"
+				config.Cluster.ID = "test-cluster"
 				config.BindAddr = "127.0.0.1:7000"
 				config.DataDir = "/tmp/test"
 				config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -147,7 +151,7 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 			setupConfig: func() *Config {
 				config := DefaultConfig()
 				config.NodeID = "test-node"
-				config.ClusterID = "test-cluster"
+				config.Cluster.ID = "test-cluster"
 				config.BindAddr = "127.0.0.1:7000"
 				config.DataDir = "/tmp/test"
 				config.Logger = slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -194,7 +198,7 @@ func TestConfig_BuilderMethods_EdgeCases(t *testing.T) {
 			name: "with_mdns_empty_values",
 			buildConfig: func() *Config {
 				return NewConfigFromSimple("node", "addr", "dir", slog.Default()).
-					WithMDNS("", "", "")
+					WithMDNS("", "", "", false)
 			},
 			expectPanic: false,
 		},
@@ -299,7 +303,7 @@ func TestNewConfigFromSimple_EdgeCases(t *testing.T) {
 			config := NewConfigFromSimple(tt.nodeID, tt.bindAddr, tt.dataDir, tt.logger)
 			assert.NotNil(t, config, "Config should not be nil")
 			assert.NotNil(t, config.Logger, "Logger should never be nil")
-			assert.NotEmpty(t, config.ClusterID, "ClusterID should be generated")
+			assert.NotEmpty(t, config.Cluster.ID, "ClusterID should be generated")
 		})
 	}
 }
@@ -310,7 +314,7 @@ func TestDefaultConfig_SanityChecks(t *testing.T) {
 
 	assert.NotNil(t, config, "Default config should not be nil")
 	assert.Empty(t, config.NodeID, "Default NodeID should be empty")
-	assert.Empty(t, config.ClusterID, "Default ClusterID should be empty")
+	assert.Empty(t, config.Cluster.ID, "Default ClusterID should be empty")
 	assert.Empty(t, config.BindAddr, "Default BindAddr should be empty")
 	assert.Empty(t, config.DataDir, "Default DataDir should be empty")
 	assert.Nil(t, config.Logger, "Default Logger should be nil")
@@ -340,11 +344,11 @@ func TestConfig_MaliciousInputs(t *testing.T) {
 					longID[i] = 'x'
 				}
 				return &Config{
-					NodeID:    string(longID),
-					ClusterID: "cluster",
-					BindAddr:  "addr",
-					DataDir:   "dir",
-					Logger:    slog.Default(),
+					NodeID:   string(longID),
+					Cluster:  ClusterConfig{ID: "cluster"},
+					BindAddr: "addr",
+					DataDir:  "dir",
+					Logger:   slog.Default(),
 				}
 			},
 			description: "Should handle extremely long node IDs without crashing",
@@ -353,11 +357,11 @@ func TestConfig_MaliciousInputs(t *testing.T) {
 			name: "control_characters_in_ids",
 			setupConfig: func() *Config {
 				return &Config{
-					NodeID:    "node\x00\x01\x02\x03",
-					ClusterID: "cluster\x7f\x80\x81",
-					BindAddr:  "addr\r\n",
-					DataDir:   "dir\t\v",
-					Logger:    slog.Default(),
+					NodeID:   "node\x00\x01\x02\x03",
+					Cluster:  ClusterConfig{ID: "cluster\x7f\x80\x81"},
+					BindAddr: "addr\r\n",
+					DataDir:  "dir\t\v",
+					Logger:   slog.Default(),
 				}
 			},
 			description: "Should handle control characters safely",
@@ -366,11 +370,11 @@ func TestConfig_MaliciousInputs(t *testing.T) {
 			name: "sql_injection_like_strings",
 			setupConfig: func() *Config {
 				return &Config{
-					NodeID:    "'; DROP TABLE nodes; --",
-					ClusterID: "' OR '1'='1",
-					BindAddr:  "127.0.0.1:7000",
-					DataDir:   "/tmp/test",
-					Logger:    slog.Default(),
+					NodeID:   "'; DROP TABLE nodes; --",
+					Cluster:  ClusterConfig{ID: "' OR '1'='1"},
+					BindAddr: "127.0.0.1:7000",
+					DataDir:  "/tmp/test",
+					Logger:   slog.Default(),
 				}
 			},
 			description: "Should handle SQL-injection-like strings safely",
@@ -379,11 +383,11 @@ func TestConfig_MaliciousInputs(t *testing.T) {
 			name: "path_traversal_in_data_dir",
 			setupConfig: func() *Config {
 				return &Config{
-					NodeID:    "node",
-					ClusterID: "cluster",
-					BindAddr:  "127.0.0.1:7000",
-					DataDir:   "../../../../../../etc/passwd",
-					Logger:    slog.Default(),
+					NodeID:   "node",
+					Cluster:  ClusterConfig{ID: "cluster"},
+					BindAddr: "127.0.0.1:7000",
+					DataDir:  "../../../../../../etc/passwd",
+					Logger:   slog.Default(),
 				}
 			},
 			description: "Should not prevent path traversal in validation (but runtime should)",
@@ -418,10 +422,10 @@ func TestConfig_ConcurrentAccess(t *testing.T) {
 			defer func() { done <- true }()
 
 			_ = config.NodeID
-			_ = config.ClusterID
+			_ = config.Cluster.ID
 			config.Validate()
 
-			config.WithMDNS("service", "domain", "host")
+			config.WithMDNS("service", "domain", "host", false)
 		}()
 	}
 
