@@ -181,7 +181,7 @@ func NewConfigFromSimple(nodeID, bindAddr, dataDir string, logger *slog.Logger) 
 	if err := initializeClusterID(config); err != nil {
 		config.Logger.Warn("failed to initialize cluster ID", "error", err)
 
-		config.ClusterID = uuid.New().String()
+		config.Cluster.ID = uuid.New().String()
 	}
 
 	return config
@@ -244,7 +244,6 @@ func (c *Config) WithEngineSettings(maxWorkflows int, nodeTimeout time.Duration,
 
 func (c *Config) WithClusterID(clusterID string) *Config {
 	c.Cluster.ID = clusterID
-	c.ClusterID = clusterID
 	return c
 }
 
@@ -267,7 +266,7 @@ func (c *Config) Validate() error {
 	if c.NodeID == "" {
 		return NewConfigError("node_id", ErrInvalidInput)
 	}
-	if c.ClusterID == "" {
+	if c.Cluster.ID == "" {
 		return NewConfigError("cluster_id", ErrInvalidInput)
 	}
 	if c.BindAddr == "" {
@@ -360,7 +359,6 @@ type ClusterPersistence struct {
 
 func initializeClusterID(config *Config) error {
 	if config.Cluster.ID != "" {
-		config.ClusterID = config.Cluster.ID
 		return nil
 	}
 
@@ -373,7 +371,7 @@ func initializeClusterID(config *Config) error {
 	}
 
 	if clusterID, err := loadClusterID(persistenceFile, config.Logger); err == nil && clusterID != "" {
-		config.ClusterID = clusterID
+		config.Cluster.ID = clusterID
 		config.Logger.Info("loaded existing cluster ID", "cluster_id", clusterID, "file", persistenceFile)
 		return nil
 	}
@@ -389,7 +387,7 @@ func initializeClusterID(config *Config) error {
 		)
 	}
 
-	config.ClusterID = newClusterID
+	config.Cluster.ID = newClusterID
 	config.Logger.Info("generated new cluster ID", "cluster_id", newClusterID, "file", persistenceFile)
 	return nil
 }

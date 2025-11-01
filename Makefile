@@ -54,10 +54,10 @@ deps-install:
 
 # Version management using git tags
 current-version:
-	@git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"
+	@git tag -l | sort -V | tail -1 2>/dev/null || echo "v0.0.0"
 
 bump-patch:
-	@current=$$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"); \
+	@current=$$(git tag -l | sort -V | tail -1 2>/dev/null || echo "v0.0.0"); \
 	if [ "$$current" = "v0.0.0" ]; then \
 		new="v0.0.1"; \
 	else \
@@ -69,7 +69,7 @@ bump-patch:
 	echo "Tagged and pushed $$new"
 
 bump-minor:
-	@current=$$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"); \
+	@current=$$(git tag -l | sort -V | tail -1 2>/dev/null || echo "v0.0.0"); \
 	if [ "$$current" = "v0.0.0" ]; then \
 		new="v0.1.0"; \
 	else \
@@ -90,7 +90,7 @@ debug-basic:
 	@cd examples/basic && rm -rf data/ && go run main.go
 
 bump-major:
-	@current=$$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0"); \
+	@current=$$(git tag -l | sort -V | tail -1 2>/dev/null || echo "v0.0.0"); \
 	if [ "$$current" = "v0.0.0" ]; then \
 		new="v1.0.0"; \
 	else \

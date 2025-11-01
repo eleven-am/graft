@@ -186,7 +186,7 @@ func NewWithConfig(config *domain.Config) *Manager {
 
 	discoveryManager := createDiscoveryManager(config, logger)
 
-	raftConfig := raft.DefaultRaftConfig(config.NodeID, config.ClusterID, config.BindAddr, config.DataDir, config.Cluster.Policy)
+	raftConfig := raft.DefaultRaftConfig(config.NodeID, config.Cluster.ID, config.BindAddr, config.DataDir, config.Cluster.Policy)
 
 	prov := defaultProviders()
 
@@ -1374,7 +1374,7 @@ func (m *Manager) joinPeers(ctx context.Context, peers []ports.Peer) bool {
 
 	bootMetadata := metadata.GetGlobalBootstrapMetadata()
 	joinMetadata := metadata.ExtendMetadata(map[string]string{
-		"cluster_id": m.config.ClusterID,
+		"cluster_id": m.config.Cluster.ID,
 	}, bootMetadata)
 
 	succeeded := false
