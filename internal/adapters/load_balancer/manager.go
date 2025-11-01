@@ -621,7 +621,7 @@ func (m *Manager) publishLocalMetrics() {
 		err := tp.SendPublishLoad(publishCtx, addr, update)
 		cancel()
 		if err != nil && logger != nil {
-			logger.Warn("failed to publish load", "address", addr, "error", err)
+			logger.Debug("failed to publish load", "address", addr, "error", err)
 		}
 		if baseCtx != nil && baseCtx.Err() != nil {
 			break

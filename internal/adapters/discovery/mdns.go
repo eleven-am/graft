@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"log/slog"
 	"net"
 	"strings"
@@ -20,6 +21,7 @@ var mdnsQueryContext = mdns.QueryContext
 type MDNSProvider struct {
 	mu          sync.RWMutex
 	logger      *slog.Logger
+	mdnsLogger  *log.Logger
 	server      *mdns.Server
 	peers       map[string]ports.Peer
 	ctx         context.Context
@@ -31,6 +33,31 @@ type MDNSProvider struct {
 	disableIPv6 bool
 	events      chan ports.Event
 	wg          sync.WaitGroup
+}
+
+type mdnsLogWriter struct {
+	logger *slog.Logger
+}
+
+func (w *mdnsLogWriter) Write(p []byte) (int, error) {
+	if w == nil || w.logger == nil {
+		return len(p), nil
+	}
+
+	msg := strings.TrimSpace(string(p))
+	switch {
+	case msg == "":
+		return len(p), nil
+	case strings.Contains(msg, "Failed to listen to both unicast and multicast on IPv6"):
+		w.logger.Debug("mdns IPv6 unavailable - continuing with IPv4 only")
+	case strings.Contains(msg, "Failed to listen to both unicast and multicast on IPv4"):
+		w.logger.Warn("mdns IPv4 unavailable - discovery will rely on IPv6", "detail", msg)
+	case strings.Contains(msg, "[ERR]"):
+		w.logger.Error("mdns client error", "detail", msg)
+	default:
+		w.logger.Debug("mdns client message", "detail", msg)
+	}
+	return len(p), nil
 }
 
 func NewMDNSProvider(service, domain, host string, disableIPv6 bool, logger *slog.Logger) *MDNSProvider {
@@ -45,8 +72,13 @@ func NewMDNSProvider(service, domain, host string, disableIPv6 bool, logger *slo
 		domain = "local."
 	}
 
+	writer := &mdnsLogWriter{
+		logger: logger.With("component", "discovery", "provider", "mdns", "source", "hashicorp-mdns"),
+	}
+
 	return &MDNSProvider{
 		logger:      logger.With("component", "discovery", "provider", "mdns"),
+		mdnsLogger:  log.New(writer, "", 0),
 		peers:       make(map[string]ports.Peer),
 		service:     service,
 		domain:      domain,
@@ -277,6 +309,7 @@ func (m *MDNSProvider) performDiscovery(ctx context.Context) {
 		Timeout:     5 * time.Second,
 		Entries:     entries,
 		DisableIPv6: m.disableIPv6,
+		Logger:      m.mdnsLogger,
 	}
 
 	if err := mdnsQueryContext(ctx, params); err != nil && !errors.Is(err, context.Canceled) {
