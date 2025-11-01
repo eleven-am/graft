@@ -2,6 +2,8 @@ package discovery
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +19,7 @@ type Manager struct {
 	logger    *slog.Logger
 	providers []ports.Provider
 	peers     map[string]ports.Peer
+	localNode ports.NodeInfo
 	mu        sync.RWMutex
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -95,6 +98,10 @@ func (m *Manager) Start(ctx context.Context, address string, port int, grpcPort 
 		Metadata: nodeMetadata,
 	}
 
+	m.mu.Lock()
+	m.localNode = node
+	m.mu.Unlock()
+
 	for _, provider := range m.providers {
 		if err := provider.Start(managerCtx, node); err != nil {
 			return err
@@ -122,6 +129,38 @@ func (m *Manager) Start(ctx context.Context, address string, port int, grpcPort 
 	m.updateSnapshots()
 
 	return nil
+}
+
+func (m *Manager) UpdateMetadata(updateFn func(map[string]string) map[string]string) error {
+	m.mu.Lock()
+	if m.cancel == nil {
+		m.mu.Unlock()
+		return fmt.Errorf("discovery manager not started")
+	}
+
+	current := cloneManagerMetadata(m.localNode.Metadata)
+	if updateFn != nil {
+		modified := updateFn(cloneManagerMetadata(current))
+		if modified != nil {
+			current = cloneManagerMetadata(modified)
+		}
+	}
+
+	m.localNode.Metadata = current
+	nodeCopy := m.localNode
+	providers := append([]ports.Provider(nil), m.providers...)
+	m.mu.Unlock()
+
+	var updateErr error
+	for _, provider := range providers {
+		if updater, ok := provider.(interface{ UpdateMetadata(ports.NodeInfo) error }); ok {
+			if err := updater.UpdateMetadata(nodeCopy); err != nil {
+				updateErr = errors.Join(updateErr, err)
+			}
+		}
+	}
+
+	return updateErr
 }
 
 func (m *Manager) Stop() error {
@@ -155,6 +194,17 @@ func (m *Manager) Stop() error {
 	m.subscribersMu.Unlock()
 
 	return nil
+}
+
+func cloneManagerMetadata(src map[string]string) map[string]string {
+	if src == nil {
+		return make(map[string]string)
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 func (m *Manager) watchProvider(provider ports.Provider) {

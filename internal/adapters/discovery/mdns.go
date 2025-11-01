@@ -140,6 +140,22 @@ func (m *MDNSProvider) Name() string {
 	return "mdns"
 }
 
+func (m *MDNSProvider) UpdateMetadata(node ports.NodeInfo) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.ctx == nil {
+		return domain.NewDiscoveryError("mdns", "update", domain.ErrNotStarted)
+	}
+
+	if node.Metadata == nil {
+		node.Metadata = make(map[string]string)
+	}
+
+	m.nodeInfo.Metadata = cloneMetadata(node.Metadata)
+	return m.announce()
+}
+
 func (m *MDNSProvider) announce() error {
 	m.logger.Debug("announcing service via mDNS",
 		"id", m.nodeInfo.ID,
@@ -210,6 +226,17 @@ func (m *MDNSProvider) discoveryLoop() {
 		case <-ticker.C:
 		}
 	}
+}
+
+func cloneMetadata(src map[string]string) map[string]string {
+	if src == nil {
+		return make(map[string]string)
+	}
+	dst := make(map[string]string, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
 }
 
 func (m *MDNSProvider) performDiscovery(ctx context.Context) {

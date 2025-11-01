@@ -59,6 +59,8 @@ type Manager struct {
 	logger                 *slog.Logger
 	nodeID                 string
 	grpcPort               int
+	expectedStaticPeers    int
+	hasDynamicDiscovery    bool
 	readinessManager       *readiness.Manager
 	workflowIntakeMu       sync.RWMutex
 	workflowIntakeOk       bool
@@ -315,6 +317,23 @@ func NewWithConfig(config *domain.Config) *Manager {
 		connectors:        make(map[string]*connectorHandle),
 		leaseManager:      leaseManager,
 	}
+
+	expectedStaticPeers := 0
+	hasDynamicDiscovery := false
+	for _, discoveryConfig := range config.Discovery {
+		switch discoveryConfig.Type {
+		case domain.DiscoveryStatic:
+			for _, peer := range discoveryConfig.Static {
+				if peer.ID != config.NodeID {
+					expectedStaticPeers++
+				}
+			}
+		default:
+			hasDynamicDiscovery = true
+		}
+	}
+	manager.expectedStaticPeers = expectedStaticPeers
+	manager.hasDynamicDiscovery = hasDynamicDiscovery
 
 	if manager.raftAdapter != nil {
 		manager.raftAdapter.SetConnectorLeaseCleaner(manager)
@@ -864,55 +883,87 @@ func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) (
 	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	peers := m.discovery.GetPeers()
-	if len(peers) > 0 {
-		m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "initial_snapshot")
-		return peers, nil
-	}
-
 	events, unsubscribe := m.discovery.Subscribe()
 	defer unsubscribe()
 
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
+	peers := filterPeers(m.discovery.GetPeers(), m.nodeID)
+	hasSmallerPeer := m.hasSmallerPeer(peers)
+	firstPeerTime := time.Time{}
+	if len(peers) > 0 {
+		firstPeerTime = time.Now()
+	}
+
+	settleWindow := 2 * time.Second
+	candidateMinWait := 12 * time.Second
+	if candidateMinWait > timeout {
+		candidateMinWait = timeout
+	}
+
 	for {
+		if len(peers) == 0 {
+			// nothing yet; just wait for events or timeout
+		} else {
+			if m.expectedStaticPeers > 0 && len(peers) >= m.expectedStaticPeers {
+				m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "expected_peers")
+				return peers, nil
+			}
+
+			if firstPeerTime.IsZero() {
+				firstPeerTime = time.Now()
+			}
+
+			if hasSmallerPeer {
+				if time.Since(firstPeerTime) >= settleWindow {
+					m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "settled_with_smaller_peer")
+					return peers, nil
+				}
+			} else {
+				waitFor := candidateMinWait
+				if time.Since(firstPeerTime) >= waitFor {
+					m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "candidate_window_elapsed")
+					return peers, nil
+				}
+			}
+		}
+
 		select {
 		case <-timeoutCtx.Done():
-			if err := timeoutCtx.Err(); err != nil {
+			err := timeoutCtx.Err()
+			if err != nil && !errors.Is(err, context.DeadlineExceeded) {
 				if errors.Is(err, context.Canceled) && ctx.Err() != nil {
 					return nil, fmt.Errorf("discovery wait aborted: %w", err)
 				}
-				if errors.Is(err, context.DeadlineExceeded) {
-					peers = m.discovery.GetPeers()
-					m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "timeout")
-					return peers, nil
-				}
 				return nil, fmt.Errorf("discovery wait aborted: %w", err)
 			}
-			peers = m.discovery.GetPeers()
+			peers = filterPeers(m.discovery.GetPeers(), m.nodeID)
 			m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "timeout")
 			return peers, nil
-		case _, ok := <-events:
+		case evt, ok := <-events:
 			if !ok {
-				peers = m.discovery.GetPeers()
+				peers = filterPeers(m.discovery.GetPeers(), m.nodeID)
 				if len(peers) == 0 {
 					return nil, fmt.Errorf("discovery stopped before peers found: %w", ErrDiscoveryStopped)
 				}
 				m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "events_closed")
 				return peers, nil
 			}
-			peers = m.discovery.GetPeers()
-			if len(peers) > 0 {
-				m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "event")
-				return peers, nil
+			_ = evt
+			peers = filterPeers(m.discovery.GetPeers(), m.nodeID)
+			if len(peers) > 0 && firstPeerTime.IsZero() {
+				firstPeerTime = time.Now()
 			}
+			hasSmallerPeer = m.hasSmallerPeer(peers)
 		case <-ticker.C:
-			peers = m.discovery.GetPeers()
-			if len(peers) > 0 {
-				m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "tick")
-				return peers, nil
+			peers = filterPeers(m.discovery.GetPeers(), m.nodeID)
+			if len(peers) > 0 && firstPeerTime.IsZero() {
+				firstPeerTime = time.Now()
 			}
+			hasSmallerPeer = m.hasSmallerPeer(peers)
+		case <-ctx.Done():
+			return nil, fmt.Errorf("discovery wait aborted: %w", ctx.Err())
 		}
 	}
 }
@@ -1578,4 +1629,28 @@ func (m *Manager) waitForSelfLeadership(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func filterPeers(peers []ports.Peer, selfID string) []ports.Peer {
+	if len(peers) == 0 {
+		return nil
+	}
+
+	result := make([]ports.Peer, 0, len(peers))
+	for _, peer := range peers {
+		if peer.ID == "" || peer.ID == selfID {
+			continue
+		}
+		result = append(result, peer)
+	}
+	return result
+}
+
+func (m *Manager) hasSmallerPeer(peers []ports.Peer) bool {
+	for _, peer := range peers {
+		if peer.ID != "" && peer.ID < m.nodeID {
+			return true
+		}
+	}
+	return false
 }
