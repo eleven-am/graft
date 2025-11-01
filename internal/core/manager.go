@@ -480,6 +480,11 @@ bootstrapLoop:
 		candidateID = m.selectBootstrapCandidate(peersView, nil)
 		m.bootstrapCandidateID = candidateID
 
+		m.logger.Info("bootstrap candidate evaluated",
+			"candidate_id", candidateID,
+			"peer_view_count", len(peersView),
+			"existing_peer_count", len(existingPeers))
+
 		if candidateID == "" {
 			candidateID = m.nodeID
 			m.bootstrapCandidateID = candidateID
@@ -561,6 +566,7 @@ bootstrapLoop:
 	m.logger.Info("starting raft adapter",
 		"node_id", m.nodeID,
 		"bootstrap_multi_node", bootstrapMultiNode,
+		"bootstrap_candidate", candidateID,
 		"peer_count", len(existingPeers))
 
 	if err := m.raftAdapter.Start(ctx, existingPeers, bootstrapMultiNode); err != nil {
@@ -599,6 +605,12 @@ bootstrapLoop:
 	if !bootstrapMultiNode {
 		joinTargets = m.joinTargets(existingPeers, candidateID)
 	}
+
+	m.logger.Info("bootstrap join plan",
+		"node_id", m.nodeID,
+		"bootstrap_candidate", candidateID,
+		"join_target_count", len(joinTargets),
+		"bootstrap_multi_node", bootstrapMultiNode)
 
 	joinRequired := len(joinTargets) > 0 && !bootstrapMultiNode
 
@@ -664,6 +676,10 @@ bootstrapLoop:
 	go m.watchForSeniorPeers()
 
 	if joinRequired {
+		m.logger.Info("joining existing cluster",
+			"node_id", m.nodeID,
+			"target_count", len(joinTargets),
+			"bootstrap_candidate", candidateID)
 		if !m.joinWithRetry(joinTargets) {
 			return fmt.Errorf("failed to join existing peers")
 		}
@@ -1881,11 +1897,21 @@ func (m *Manager) waitForBootstrapReady(parent context.Context, candidate string
 		return m.extractBootstrapStatus(peers)
 	}
 
+	lastCandidate := candidate
+
 	current, ready := check()
+	if ready {
+		m.logger.Info("bootstrap candidate reported ready",
+			"candidate", current,
+			"previous_candidate", lastCandidate)
+	}
 	if ready {
 		return current, nil
 	}
 	if current != "" && current != candidate {
+		m.logger.Info("bootstrap candidate changed before ready",
+			"previous_candidate", candidate,
+			"new_candidate", current)
 		return current, errBootstrapCandidateChanged
 	}
 
@@ -1903,6 +1929,9 @@ func (m *Manager) waitForBootstrapReady(parent context.Context, candidate string
 		case <-waitCtx.Done():
 			current, ready := check()
 			if ready {
+				m.logger.Info("bootstrap candidate reported ready before timeout",
+					"candidate", current,
+					"previous_candidate", lastCandidate)
 				return current, nil
 			}
 			return current, waitCtx.Err()
@@ -1910,23 +1939,48 @@ func (m *Manager) waitForBootstrapReady(parent context.Context, candidate string
 			if !ok {
 				current, ready := check()
 				if ready {
+					m.logger.Info("bootstrap candidate reported ready via event before channel close",
+						"candidate", current,
+						"previous_candidate", lastCandidate)
 					return current, nil
 				}
 				return current, ErrDiscoveryStopped
 			}
 			current, ready := check()
 			if ready {
+				if current != "" && current != lastCandidate {
+					m.logger.Info("bootstrap candidate updated via event",
+						"previous_candidate", lastCandidate,
+						"new_candidate", current)
+					lastCandidate = current
+				}
+				m.logger.Info("bootstrap candidate reported ready via event",
+					"candidate", current)
 				return current, nil
 			}
 			if current != "" && current != candidate {
+				m.logger.Info("bootstrap candidate changed via event",
+					"previous_candidate", candidate,
+					"new_candidate", current)
 				return current, errBootstrapCandidateChanged
 			}
 		case <-ticker.C:
 			current, ready := check()
 			if ready {
+				if current != "" && current != lastCandidate {
+					m.logger.Info("bootstrap candidate updated via poll",
+						"previous_candidate", lastCandidate,
+						"new_candidate", current)
+					lastCandidate = current
+				}
+				m.logger.Info("bootstrap candidate reported ready via poll",
+					"candidate", current)
 				return current, nil
 			}
 			if current != "" && current != candidate {
+				m.logger.Info("bootstrap candidate changed via poll",
+					"previous_candidate", candidate,
+					"new_candidate", current)
 				return current, errBootstrapCandidateChanged
 			}
 		case <-parent.Done():
