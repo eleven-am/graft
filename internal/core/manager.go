@@ -419,14 +419,16 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 		)
 	}
 
-	existingPeers, err := m.waitForDiscovery(ctx, m.config.Raft.DiscoveryTimeout)
+	discoveryTimeout := m.discoveryTimeout()
+
+	existingPeers, err := m.waitForDiscovery(ctx, discoveryTimeout)
 	if err != nil {
 		return domain.NewDomainErrorWithCategory(
 			domain.CategoryDiscovery,
 			"discovery wait failed",
 			err,
 			domain.WithComponent("core.Manager.Start"),
-			domain.WithContextDetail("timeout", m.config.Raft.DiscoveryTimeout.String()),
+			domain.WithContextDetail("timeout", discoveryTimeout.String()),
 		)
 	}
 
@@ -462,7 +464,7 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 		m.logger.Info("designated as bootstrap leader", "peer_count", len(existingPeers))
 		m.readinessManager.SetState(readiness.StateProvisional)
 
-		leaderCtx, leaderCancel := context.WithTimeout(m.ctx, m.config.Raft.DiscoveryTimeout)
+		leaderCtx, leaderCancel := context.WithTimeout(m.ctx, discoveryTimeout)
 		defer leaderCancel()
 
 		if err := m.waitForSelfLeadership(leaderCtx); err != nil {
@@ -476,7 +478,7 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 		m.logger.Info("starting as provisional leader - no existing peers found")
 		m.readinessManager.SetState(readiness.StateProvisional)
 
-		leaderCtx, leaderCancel := context.WithTimeout(m.ctx, m.config.Raft.DiscoveryTimeout)
+		leaderCtx, leaderCancel := context.WithTimeout(m.ctx, discoveryTimeout)
 		defer leaderCancel()
 
 		if err := m.waitForSelfLeadership(leaderCtx); err != nil {
@@ -1435,45 +1437,35 @@ func (m *Manager) joinPeers(ctx context.Context, peers []ports.Peer) bool {
 }
 
 func (m *Manager) joinWithRetry(peers []ports.Peer) bool {
-	deadline := time.Now().Add(m.config.Raft.DiscoveryTimeout)
-
-	backoff := 500 * time.Millisecond
-	if backoff <= 0 {
-		backoff = 500 * time.Millisecond
-	}
+	joiningTimeout := m.discoveryTimeout()
+	deadline := time.Now().Add(joiningTimeout)
 
 	maxAttempts := m.config.Raft.MaxJoinAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = 100
 	}
 
-	attempt := 0
+	backoff := 500 * time.Millisecond
+	if backoff <= 0 {
+		backoff = 500 * time.Millisecond
+	}
 
-	for {
-		attempt++
+	attemptsMade := 0
 
-		if time.Now().After(deadline) {
-			m.logger.Warn("join retry deadline exceeded",
-				"attempts", attempt,
-				"timeout", m.config.Raft.DiscoveryTimeout)
-			return false
-		}
-
-		if attempt > maxAttempts {
-			m.logger.Warn("join retry max attempts exceeded",
-				"attempts", attempt,
-				"max_attempts", maxAttempts)
-			return false
-		}
+	for attempt := 1; time.Now().Before(deadline) && attempt <= maxAttempts; attempt++ {
+		attemptsMade = attempt
 
 		if m.ctx.Err() != nil {
 			return false
 		}
 
-		remainingTime := time.Until(deadline)
+		remaining := time.Until(deadline)
 		joinTimeout := 10 * time.Second
-		if remainingTime < joinTimeout {
-			joinTimeout = remainingTime
+		if remaining < joinTimeout {
+			joinTimeout = remaining
+		}
+		if joinTimeout <= 0 {
+			break
 		}
 
 		joinCtx, cancel := context.WithTimeout(m.ctx, joinTimeout)
@@ -1485,27 +1477,31 @@ func (m *Manager) joinWithRetry(peers []ports.Peer) bool {
 			return true
 		}
 
-		remainingTime = time.Until(deadline)
-		if remainingTime <= 0 {
-			m.logger.Warn("join retry deadline reached after failed attempt",
-				"attempts", attempt)
-			return false
+		if attempt == maxAttempts {
+			break
 		}
 
-		actualBackoff := backoff
-		if actualBackoff > remainingTime {
-			actualBackoff = remainingTime
+		remaining = time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+
+		wait := backoff
+		if wait > remaining {
+			wait = remaining
 		}
 
 		m.logger.Warn("join attempt failed, retrying",
 			"attempt", attempt,
-			"backoff", actualBackoff,
-			"remaining_time", remainingTime)
+			"backoff", wait,
+			"remaining_time", remaining)
 
-		select {
-		case <-time.After(actualBackoff):
-		case <-m.ctx.Done():
-			return false
+		if wait > 0 {
+			select {
+			case <-time.After(wait):
+			case <-m.ctx.Done():
+				return false
+			}
 		}
 
 		if backoff < 2*time.Second {
@@ -1515,6 +1511,24 @@ func (m *Manager) joinWithRetry(peers []ports.Peer) bool {
 			}
 		}
 	}
+
+	m.logger.Warn("join retries exhausted",
+		"attempts", attemptsMade,
+		"max_attempts", maxAttempts,
+		"elapsed", joiningTimeout)
+	return false
+}
+
+func (m *Manager) discoveryTimeout() time.Duration {
+	if m == nil || m.config == nil {
+		return 30 * time.Second
+	}
+
+	timeout := m.config.Raft.DiscoveryTimeout
+	if timeout <= 0 {
+		return 30 * time.Second
+	}
+	return timeout
 }
 
 func (m *Manager) shouldBootstrapMultiNode(peers []ports.Peer) bool {

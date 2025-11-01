@@ -52,7 +52,7 @@ func DefaultRaftConfig() RaftConfig {
 		SnapshotInterval:   120 * time.Second,
 		SnapshotThreshold:  1024,
 		MaxSnapshots:       5,
-		MaxJoinAttempts:    5,
+		MaxJoinAttempts:    10,
 		HeartbeatTimeout:   1000 * time.Millisecond,
 		ElectionTimeout:    1000 * time.Millisecond,
 		CommitTimeout:      500 * time.Millisecond,
@@ -61,7 +61,7 @@ func DefaultRaftConfig() RaftConfig {
 		TrailingLogs:       10240,
 		LeaderLeaseTimeout: 500 * time.Millisecond,
 
-		DiscoveryTimeout: 10 * time.Second,
+		DiscoveryTimeout: 30 * time.Second,
 	}
 }
 
