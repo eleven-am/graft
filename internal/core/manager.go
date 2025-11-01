@@ -482,31 +482,11 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	if bootstrapMultiNode {
 		m.logger.Info("designated as bootstrap leader", "peer_count", len(existingPeers))
 		m.readinessManager.SetState(readiness.StateProvisional)
-
-		leaderCtx, leaderCancel := context.WithTimeout(m.ctx, discoveryTimeout)
-		defer leaderCancel()
-
-		if err := m.waitForSelfLeadership(leaderCtx); err != nil {
-			m.logger.Warn("timed out waiting for raft leadership", "error", err)
-		} else {
-			m.logger.Info("raft leadership established for bootstrap leader")
-			m.readinessManager.SetState(readiness.StateReady)
-			m.resumeWorkflowIntake()
-		}
+		go m.awaitLeadership(discoveryTimeout, "bootstrap leader")
 	} else if len(existingPeers) == 0 {
 		m.logger.Info("starting as provisional leader - no existing peers found")
 		m.readinessManager.SetState(readiness.StateProvisional)
-
-		leaderCtx, leaderCancel := context.WithTimeout(m.ctx, discoveryTimeout)
-		defer leaderCancel()
-
-		if err := m.waitForSelfLeadership(leaderCtx); err != nil {
-			m.logger.Warn("timed out waiting for raft leadership", "error", err)
-		} else {
-			m.logger.Info("raft leadership established for provisional node")
-			m.readinessManager.SetState(readiness.StateReady)
-			m.resumeWorkflowIntake()
-		}
+		go m.awaitLeadership(discoveryTimeout, "provisional node")
 	} else if len(existingPeers) > 0 {
 		m.logger.Info("starting with existing peers", "peer_count", len(existingPeers))
 		m.readinessManager.SetState(readiness.StateDetecting)
@@ -1649,6 +1629,35 @@ func (m *Manager) waitForSelfLeadership(ctx context.Context) error {
 			}
 		}
 	}
+}
+
+func (m *Manager) awaitLeadership(timeout time.Duration, role string) {
+	if m == nil {
+		return
+	}
+
+	leaderCtx, cancel := context.WithTimeout(m.ctx, timeout)
+	defer cancel()
+
+	if err := m.waitForSelfLeadership(leaderCtx); err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			m.logger.Warn("timed out waiting for raft leadership",
+				"role", role,
+				"error", err)
+		} else {
+			m.logger.Warn("failed waiting for raft leadership",
+				"role", role,
+				"error", err)
+		}
+		return
+	}
+
+	m.logger.Info("raft leadership established",
+		"role", role,
+		"node_id", m.nodeID,
+		"leader_addr", m.raftAdapter.LeaderAddr())
+	m.readinessManager.SetState(readiness.StateReady)
+	m.resumeWorkflowIntake()
 }
 
 func filterPeers(peers []ports.Peer, selfID string) []ports.Peer {
