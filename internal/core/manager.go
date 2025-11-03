@@ -9,7 +9,6 @@ import (
 	"math/rand"
 	"net"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -60,7 +59,7 @@ type Manager struct {
 	nodeID                 string
 	grpcPort               int
 	expectedStaticPeers    int
-	hasDynamicDiscovery    bool
+	hasPersistedRaftState  bool
 	bootEpoch              string
 	bootstrapCandidateID   string
 	readinessManager       *readiness.Manager
@@ -212,6 +211,10 @@ func NewWithConfig(config *domain.Config) *Manager {
 		return nil
 	}
 	cleanup = append(cleanup, raftStorage.Close)
+	persistedState := raftStorage.HasExistingState()
+	if persistedState {
+		logger.Info("detected persisted raft state", "data_dir", config.DataDir)
+	}
 
 	appTransport := prov.newTransport(logger, config.Transport)
 
@@ -309,47 +312,43 @@ func NewWithConfig(config *domain.Config) *Manager {
 	}
 
 	manager := &Manager{
-		config:            config,
-		logger:            logger,
-		nodeID:            config.NodeID,
-		discovery:         discoveryManager,
-		raftAdapter:       raftAdapter,
-		storage:           appStorage,
-		eventManager:      eventManager,
-		nodeRegistry:      nodeRegistryManager,
-		connectorRegistry: connectorRegistryManager,
-		queue:             queueAdapter,
-		engine:            engineAdapter,
-		loadBalancer:      loadBalancerManager,
-		clusterManager:    clusterManager,
-		circuitBreakers:   circuitBreakerProvider,
-		rateLimiters:      rateLimiterProvider,
-		tracing:           tracingProvider,
-		transport:         appTransport,
-		readinessManager:  readiness.NewManager(),
-		workflowIntakeOk:  true,
-		connectors:        make(map[string]*connectorHandle),
-		leaseManager:      leaseManager,
+		config:                config,
+		logger:                logger,
+		nodeID:                config.NodeID,
+		discovery:             discoveryManager,
+		raftAdapter:           raftAdapter,
+		storage:               appStorage,
+		eventManager:          eventManager,
+		nodeRegistry:          nodeRegistryManager,
+		connectorRegistry:     connectorRegistryManager,
+		queue:                 queueAdapter,
+		engine:                engineAdapter,
+		loadBalancer:          loadBalancerManager,
+		clusterManager:        clusterManager,
+		circuitBreakers:       circuitBreakerProvider,
+		rateLimiters:          rateLimiterProvider,
+		tracing:               tracingProvider,
+		transport:             appTransport,
+		readinessManager:      readiness.NewManager(),
+		workflowIntakeOk:      true,
+		connectors:            make(map[string]*connectorHandle),
+		leaseManager:          leaseManager,
+		hasPersistedRaftState: persistedState,
 	}
 
 	manager.bootEpoch = metadata.GetBootID(metadata.GetGlobalBootstrapMetadata())
 
 	expectedStaticPeers := 0
-	hasDynamicDiscovery := false
 	for _, discoveryConfig := range config.Discovery {
-		switch discoveryConfig.Type {
-		case domain.DiscoveryStatic:
+		if discoveryConfig.Type == domain.DiscoveryStatic {
 			for _, peer := range discoveryConfig.Static {
 				if peer.ID != config.NodeID {
 					expectedStaticPeers++
 				}
 			}
-		default:
-			hasDynamicDiscovery = true
 		}
 	}
 	manager.expectedStaticPeers = expectedStaticPeers
-	manager.hasDynamicDiscovery = hasDynamicDiscovery
 
 	if manager.raftAdapter != nil {
 		manager.raftAdapter.SetConnectorLeaseCleaner(manager)
@@ -469,124 +468,35 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 
 	readiness.LogPeerMetadata(existingPeers, m.logger)
 
-	var candidateID string
-bootstrapLoop:
-	for {
-		peersView := filterPeers(m.discovery.GetPeers(), m.nodeID)
-		if len(peersView) == 0 && len(existingPeers) > 0 {
-			peersView = existingPeers
-		}
-
-		candidateID = m.selectBootstrapCandidate(peersView, nil)
-		m.bootstrapCandidateID = candidateID
-
-		m.logger.Info("bootstrap candidate evaluated",
-			"candidate_id", candidateID,
-			"peer_view_count", len(peersView),
-			"existing_peer_count", len(existingPeers))
-
-		if candidateID == "" {
-			candidateID = m.nodeID
-			m.bootstrapCandidateID = candidateID
-		}
-
-		if candidateID == m.nodeID {
-			m.updateBootstrapMetadata(bootstrapStateCandidate, candidateID, false)
-			if len(peersView) > 0 {
-				existingPeers = peersView
-			}
-			break bootstrapLoop
-		}
-
-		m.updateBootstrapMetadata(bootstrapStateAwaiting, candidateID, false)
-
-		currentCandidate, err := m.waitForBootstrapReady(ctx, candidateID, discoveryTimeout)
-		if err == nil {
-			if currentCandidate != "" && currentCandidate != candidateID {
-				candidateID = currentCandidate
-				m.bootstrapCandidateID = currentCandidate
-			}
-			refreshedPeers := filterPeers(m.discovery.GetPeers(), m.nodeID)
-			if len(refreshedPeers) > 0 {
-				existingPeers = refreshedPeers
-			} else if len(peersView) > 0 {
-				existingPeers = peersView
-			}
-			readiness.LogPeerMetadata(existingPeers, m.logger)
-			break bootstrapLoop
-		}
-
-		switch {
-		case errors.Is(err, errBootstrapCandidateChanged):
-			m.logger.Warn("bootstrap candidate changed while waiting",
-				"previous_candidate", candidateID,
-				"new_candidate", currentCandidate)
-			if currentCandidate != "" && currentCandidate != candidateID {
-				candidateID = currentCandidate
-				m.bootstrapCandidateID = currentCandidate
-			}
-			continue bootstrapLoop
-		case errors.Is(err, context.DeadlineExceeded):
-			m.logger.Debug("bootstrap candidate timed out waiting for readiness",
-				"candidate", candidateID,
-				"timeout", discoveryTimeout)
-			if len(peersView) > 0 {
-				existingPeers = peersView
-			}
-			readiness.LogPeerMetadata(existingPeers, m.logger)
-			break bootstrapLoop
-		case errors.Is(err, ErrDiscoveryStopped):
-			m.logger.Warn("discovery stopped before bootstrap candidate became ready",
-				"candidate", candidateID)
-			if len(peersView) > 0 {
-				existingPeers = peersView
-			}
-			readiness.LogPeerMetadata(existingPeers, m.logger)
-			break bootstrapLoop
-		default:
-			return domain.NewDomainErrorWithCategory(
-				domain.CategoryDiscovery,
-				"bootstrap leader wait failed",
-				err,
-				domain.WithComponent("core.Manager.Start"),
-				domain.WithContextDetail("candidate", candidateID),
-			)
-		}
-
-		refreshedPeers := filterPeers(m.discovery.GetPeers(), m.nodeID)
-		if len(refreshedPeers) > 0 {
-			existingPeers = refreshedPeers
-		}
+	plan, err := m.prepareBootstrapPlan(ctx, discoveryTimeout, existingPeers)
+	if err != nil {
+		return err
 	}
-
-	readiness.LogPeerMetadata(existingPeers, m.logger)
-
-	bootstrapMultiNode := candidateID == m.nodeID && len(existingPeers) > 0
 
 	m.logger.Info("starting raft adapter",
 		"node_id", m.nodeID,
-		"bootstrap_multi_node", bootstrapMultiNode,
-		"bootstrap_candidate", candidateID,
-		"peer_count", len(existingPeers))
+		"bootstrap_multi_node", plan.BootstrapMultiNode,
+		"bootstrap_candidate", plan.CandidateID,
+		"peer_count", len(plan.ExistingPeers))
 
-	if err := m.raftAdapter.Start(ctx, existingPeers, bootstrapMultiNode); err != nil {
+	if err := m.raftAdapter.Start(ctx, plan.ExistingPeers, plan.BootstrapMultiNode); err != nil {
 		m.logger.Error("raft adapter start failed",
 			"node_id", m.nodeID,
-			"bootstrap_multi_node", bootstrapMultiNode,
-			"peer_count", len(existingPeers),
+			"bootstrap_multi_node", plan.BootstrapMultiNode,
+			"peer_count", len(plan.ExistingPeers),
 			"error", err)
 		return domain.NewRaftError(
 			"failed to start raft node",
 			err,
 			domain.WithComponent("core.Manager.Start"),
-			domain.WithContextDetail("existing_peer_count", strconv.Itoa(len(existingPeers))),
+			domain.WithContextDetail("existing_peer_count", strconv.Itoa(len(plan.ExistingPeers))),
 		)
 	}
 
 	m.logger.Info("raft adapter started",
 		"node_id", m.nodeID,
-		"bootstrap_multi_node", bootstrapMultiNode,
-		"peer_count", len(existingPeers))
+		"bootstrap_multi_node", plan.BootstrapMultiNode,
+		"peer_count", len(plan.ExistingPeers))
 
 	m.raftAdapter.SetReadinessCallback(func(ready bool) {
 		if ready {
@@ -601,30 +511,26 @@ bootstrapLoop:
 
 	m.pauseWorkflowIntake()
 
-	joinTargets := existingPeers
-	if !bootstrapMultiNode {
-		joinTargets = m.joinTargets(existingPeers, candidateID)
-	}
-
 	m.logger.Info("bootstrap join plan",
 		"node_id", m.nodeID,
-		"bootstrap_candidate", candidateID,
-		"join_target_count", len(joinTargets),
-		"bootstrap_multi_node", bootstrapMultiNode)
+		"bootstrap_candidate", plan.CandidateID,
+		"join_target_count", len(plan.JoinTargets),
+		"bootstrap_multi_node", plan.BootstrapMultiNode)
 
-	joinRequired := len(joinTargets) > 0 && !bootstrapMultiNode
+	joinRequired := plan.JoinRequired()
 
-	if bootstrapMultiNode {
-		m.logger.Info("designated as bootstrap leader", "peer_count", len(existingPeers))
-		m.readinessManager.SetState(readiness.StateProvisional)
-		go m.awaitLeadership(discoveryTimeout, "bootstrap leader")
-	} else if len(existingPeers) == 0 {
+	m.readinessManager.SetState(plan.InitialReadinessState)
+
+	if plan.BootstrapMultiNode {
+		m.logger.Info("designated as bootstrap leader", "peer_count", len(plan.ExistingPeers))
+	} else if len(plan.ExistingPeers) == 0 {
 		m.logger.Info("starting as provisional leader - no existing peers found")
-		m.readinessManager.SetState(readiness.StateProvisional)
-		go m.awaitLeadership(discoveryTimeout, "provisional node")
-	} else if len(existingPeers) > 0 {
-		m.logger.Info("starting with existing peers", "peer_count", len(existingPeers))
-		m.readinessManager.SetState(readiness.StateDetecting)
+	} else if len(plan.ExistingPeers) > 0 {
+		m.logger.Info("starting with existing peers", "peer_count", len(plan.ExistingPeers))
+	}
+
+	if plan.AwaitLeadership {
+		go m.awaitLeadership(discoveryTimeout, plan.LeadershipRole)
 	}
 
 	if err := m.loadBalancer.Start(m.ctx); err != nil {
@@ -678,9 +584,9 @@ bootstrapLoop:
 	if joinRequired {
 		m.logger.Info("joining existing cluster",
 			"node_id", m.nodeID,
-			"target_count", len(joinTargets),
-			"bootstrap_candidate", candidateID)
-		if !m.joinWithRetry(joinTargets) {
+			"target_count", len(plan.JoinTargets),
+			"bootstrap_candidate", plan.CandidateID)
+		if !m.joinWithRetry(plan.JoinTargets) {
 			return fmt.Errorf("failed to join existing peers")
 		}
 	}
@@ -1021,15 +927,21 @@ func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) (
 	}
 
 	for {
+		readyPeerDetected := m.hasReadyPeer(peers)
 		if len(peers) == 0 {
-			if time.Since(firstPeerTime) >= candidateMinWait {
+			if !m.hasPersistedRaftState && time.Since(firstPeerTime) >= candidateMinWait {
 				m.logger.Info("discovery phase complete", "peers_found", 0, "reason", "candidate_window_elapsed_no_peers")
 				return peers, nil
 			}
 		} else {
 			if m.expectedStaticPeers > 0 && len(peers) >= m.expectedStaticPeers {
-				m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "expected_peers")
-				return peers, nil
+				reason := "expected_peers"
+				if m.hasPersistedRaftState && !readyPeerDetected {
+					reason = "expected_peers_waiting_ready"
+				} else {
+					m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", reason)
+					return peers, nil
+				}
 			}
 
 			if !firstPeerObserved {
@@ -1037,14 +949,22 @@ func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) (
 				firstPeerTime = time.Now()
 			}
 
-			if hasSmallerPeer {
-				if time.Since(firstPeerTime) >= settleWindow {
-					m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "settled_with_smaller_peer")
+			if m.hasPersistedRaftState {
+				if readyPeerDetected {
+					m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "ready_peer_detected")
+					return peers, nil
+				}
+				if !hasSmallerPeer && time.Since(firstPeerTime) >= candidateMinWait {
+					m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "candidate_window_elapsed_leader")
 					return peers, nil
 				}
 			} else {
-				waitFor := candidateMinWait
-				if time.Since(firstPeerTime) >= waitFor {
+				if hasSmallerPeer {
+					if time.Since(firstPeerTime) >= settleWindow {
+						m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "settled_with_smaller_peer")
+						return peers, nil
+					}
+				} else if time.Since(firstPeerTime) >= candidateMinWait {
 					m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "candidate_window_elapsed")
 					return peers, nil
 				}
@@ -1093,6 +1013,19 @@ func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) (
 			return nil, fmt.Errorf("discovery wait aborted: %w", ctx.Err())
 		}
 	}
+}
+
+func (m *Manager) hasReadyPeer(peers []ports.Peer) bool {
+	for _, peer := range peers {
+		md := peer.Metadata
+		if md == nil {
+			continue
+		}
+		if md[bootstrapReadyKey] == "true" || md[bootstrapStateKey] == bootstrapStateReady {
+			return true
+		}
+	}
+	return false
 }
 
 type WorkflowTrigger struct {
@@ -1711,6 +1644,9 @@ func (m *Manager) discoveryTimeout() time.Duration {
 	if timeout <= 0 {
 		return 30 * time.Second
 	}
+	if m.hasPersistedRaftState {
+		return timeout * 2
+	}
 	return timeout
 }
 
@@ -1719,35 +1655,6 @@ func (m *Manager) timeToExtendJoin(deadline time.Time) bool {
 		return true
 	}
 	return time.Now().Before(deadline)
-}
-
-func (m *Manager) shouldBootstrapMultiNode(peers []ports.Peer) bool {
-	if len(peers) == 0 {
-		return false
-	}
-
-	ids := make([]string, 0, len(peers)+1)
-	seen := make(map[string]struct{}, len(peers)+1)
-	ids = append(ids, m.nodeID)
-	seen[m.nodeID] = struct{}{}
-
-	for _, peer := range peers {
-		if peer.ID == "" {
-			continue
-		}
-		if _, exists := seen[peer.ID]; exists {
-			continue
-		}
-		ids = append(ids, peer.ID)
-		seen[peer.ID] = struct{}{}
-	}
-
-	if len(ids) == 0 {
-		return false
-	}
-
-	sort.Strings(ids)
-	return ids[0] == m.nodeID
 }
 
 func (m *Manager) waitForSelfLeadership(ctx context.Context) error {
@@ -1798,237 +1705,4 @@ func (m *Manager) awaitLeadership(timeout time.Duration, role string) {
 	m.updateBootstrapMetadata(bootstrapStateReady, m.nodeID, true)
 	m.readinessManager.SetState(readiness.StateReady)
 	m.resumeWorkflowIntake()
-}
-
-func filterPeers(peers []ports.Peer, selfID string) []ports.Peer {
-	if len(peers) == 0 {
-		return nil
-	}
-
-	result := make([]ports.Peer, 0, len(peers))
-	for _, peer := range peers {
-		if peer.ID == "" || peer.ID == selfID {
-			continue
-		}
-		result = append(result, peer)
-	}
-	return result
-}
-
-func (m *Manager) hasSmallerPeer(peers []ports.Peer) bool {
-	for _, peer := range peers {
-		if peer.ID != "" && peer.ID < m.nodeID {
-			return true
-		}
-	}
-	return false
-}
-
-func (m *Manager) selectBootstrapCandidate(peers []ports.Peer, exclude map[string]struct{}) string {
-	ids := make(map[string]struct{})
-	ids[m.nodeID] = struct{}{}
-
-	for _, peer := range peers {
-		if peer.ID != "" {
-			ids[peer.ID] = struct{}{}
-		}
-		if peer.Metadata != nil {
-			if cand := peer.Metadata[bootstrapCandidateKey]; cand != "" {
-				ids[cand] = struct{}{}
-			}
-		}
-	}
-
-	ordered := make([]string, 0, len(ids))
-	for id := range ids {
-		if exclude != nil {
-			if _, skip := exclude[id]; skip {
-				continue
-			}
-		}
-		ordered = append(ordered, id)
-	}
-	if len(ordered) == 0 {
-		return m.nodeID
-	}
-	sort.Strings(ordered)
-	return ordered[0]
-}
-
-func (m *Manager) extractBootstrapStatus(peers []ports.Peer) (string, bool) {
-	candidate := m.bootstrapCandidateID
-	ready := false
-
-	for _, peer := range peers {
-		md := peer.Metadata
-		if md == nil {
-			continue
-		}
-
-		state := md[bootstrapStateKey]
-		cand := md[bootstrapCandidateKey]
-		if cand == "" {
-			cand = peer.ID
-		}
-
-		switch state {
-		case bootstrapStateCandidate, bootstrapStateReady:
-			candidate = cand
-			if md[bootstrapReadyKey] == "true" || state == bootstrapStateReady {
-				ready = true
-			}
-		case bootstrapStateAwaiting:
-			if candidate == "" {
-				candidate = cand
-			}
-		}
-	}
-
-	if candidate == "" {
-		candidate = m.bootstrapCandidateID
-	}
-
-	return candidate, ready
-}
-
-func (m *Manager) waitForBootstrapReady(parent context.Context, candidate string, timeout time.Duration) (string, error) {
-	check := func() (string, bool) {
-		peers := m.discovery.GetPeers()
-		return m.extractBootstrapStatus(peers)
-	}
-
-	lastCandidate := candidate
-
-	current, ready := check()
-	if ready {
-		m.logger.Info("bootstrap candidate reported ready",
-			"candidate", current,
-			"previous_candidate", lastCandidate)
-	}
-	if ready {
-		return current, nil
-	}
-	if current != "" && current != candidate {
-		m.logger.Info("bootstrap candidate changed before ready",
-			"previous_candidate", candidate,
-			"new_candidate", current)
-		return current, errBootstrapCandidateChanged
-	}
-
-	events, unsubscribe := m.discovery.Subscribe()
-	defer unsubscribe()
-
-	waitCtx, cancel := context.WithTimeout(parent, timeout)
-	defer cancel()
-
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-waitCtx.Done():
-			current, ready := check()
-			if ready {
-				m.logger.Info("bootstrap candidate reported ready before timeout",
-					"candidate", current,
-					"previous_candidate", lastCandidate)
-				return current, nil
-			}
-			return current, waitCtx.Err()
-		case _, ok := <-events:
-			if !ok {
-				current, ready := check()
-				if ready {
-					m.logger.Info("bootstrap candidate reported ready via event before channel close",
-						"candidate", current,
-						"previous_candidate", lastCandidate)
-					return current, nil
-				}
-				return current, ErrDiscoveryStopped
-			}
-			current, ready := check()
-			if ready {
-				if current != "" && current != lastCandidate {
-					m.logger.Info("bootstrap candidate updated via event",
-						"previous_candidate", lastCandidate,
-						"new_candidate", current)
-					lastCandidate = current
-				}
-				m.logger.Info("bootstrap candidate reported ready via event",
-					"candidate", current)
-				return current, nil
-			}
-			if current != "" && current != candidate {
-				m.logger.Info("bootstrap candidate changed via event",
-					"previous_candidate", candidate,
-					"new_candidate", current)
-				return current, errBootstrapCandidateChanged
-			}
-		case <-ticker.C:
-			current, ready := check()
-			if ready {
-				if current != "" && current != lastCandidate {
-					m.logger.Info("bootstrap candidate updated via poll",
-						"previous_candidate", lastCandidate,
-						"new_candidate", current)
-					lastCandidate = current
-				}
-				m.logger.Info("bootstrap candidate reported ready via poll",
-					"candidate", current)
-				return current, nil
-			}
-			if current != "" && current != candidate {
-				m.logger.Info("bootstrap candidate changed via poll",
-					"previous_candidate", candidate,
-					"new_candidate", current)
-				return current, errBootstrapCandidateChanged
-			}
-		case <-parent.Done():
-			return candidate, parent.Err()
-		}
-	}
-}
-
-func (m *Manager) updateBootstrapMetadata(state, candidate string, ready bool) {
-	if m == nil || m.discovery == nil {
-		return
-	}
-	if candidate == "" {
-		candidate = m.nodeID
-	}
-	m.bootstrapCandidateID = candidate
-	readyValue := "false"
-	if ready {
-		readyValue = "true"
-	}
-	epoch := m.bootEpoch
-	if epoch == "" {
-		epoch = m.nodeID
-	}
-	if err := m.discovery.UpdateMetadata(func(md map[string]string) map[string]string {
-		if md == nil {
-			md = make(map[string]string)
-		}
-		md[bootstrapEpochKey] = epoch
-		md[bootstrapCandidateKey] = candidate
-		if state != "" {
-			md[bootstrapStateKey] = state
-		}
-		md[bootstrapReadyKey] = readyValue
-		return md
-	}); err != nil {
-		m.logger.Warn("failed to update bootstrap metadata", "error", err)
-	}
-}
-
-func (m *Manager) joinTargets(peers []ports.Peer, candidate string) []ports.Peer {
-	if candidate == "" {
-		return peers
-	}
-	for _, peer := range peers {
-		if peer.ID == candidate {
-			return []ports.Peer{peer}
-		}
-	}
-	return peers
 }

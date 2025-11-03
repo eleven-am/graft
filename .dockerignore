@@ -1,0 +1,12 @@
+.git
+.gitignore
+.gocache
+bin
+tmp
+vendor
+**/node_modules
+**/*.log
+**/*.tmp
+**/data/
+**/output.log
+**/*.sqlite

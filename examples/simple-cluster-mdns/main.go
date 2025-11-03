@@ -84,7 +84,7 @@ func main() {
 		logger.Info("manager starting...")
 	}
 
-	readyCtx, readyCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	readyCtx, readyCancel := context.WithTimeout(context.Background(), 180*time.Second)
 	defer readyCancel()
 
 	if err := manager.WaitUntilReady(readyCtx); err != nil {

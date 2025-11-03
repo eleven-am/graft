@@ -120,6 +120,29 @@ func (s *Storage) resources() *StorageResources {
 	}
 }
 
+// HasExistingState reports whether any durable raft state has been persisted.
+// It inspects the log and snapshot stores, tolerating empty stores when the
+// node has never bootstrapped before.
+func (s *Storage) HasExistingState() bool {
+	if s == nil {
+		return false
+	}
+
+	if s.logStore != nil {
+		if lastIndex, err := s.logStore.LastIndex(); err == nil && lastIndex > 0 {
+			return true
+		}
+	}
+
+	if s.snapshotStore != nil {
+		if snapshots, err := s.snapshotStore.List(); err == nil && len(snapshots) > 0 {
+			return true
+		}
+	}
+
+	return false
+}
+
 // Close releases all resources held by the storage instance.
 func (s *Storage) Close() error {
 	var firstErr error

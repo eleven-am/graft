@@ -1,0 +1,72 @@
+version: "3.9"
+
+services:
+  node-1:
+    build:
+      context: ../..
+      dockerfile: examples/docker-mdns/Dockerfile
+    container_name: graft-mdns-node-1
+    hostname: node-1
+    environment:
+      GRAFT_NODE_ID: node-1
+      GRAFT_RAFT_ADDR: node-1:7001
+      GRAFT_GRPC_PORT: "9001"
+      GRAFT_DATA_DIR: /data
+      GRAFT_MDNS_SERVICE: graft-mdns-example
+      GRAFT_MDNS_DOMAIN: local.
+      GRAFT_CLUSTER_ID: docker-mdns-cluster
+    volumes:
+      - node1-data:/data
+    networks:
+      - graft-mdns
+
+  node-2:
+    build:
+      context: ../..
+      dockerfile: examples/docker-mdns/Dockerfile
+    container_name: graft-mdns-node-2
+    hostname: node-2
+    environment:
+      GRAFT_NODE_ID: node-2
+      GRAFT_RAFT_ADDR: node-2:7002
+      GRAFT_GRPC_PORT: "9002"
+      GRAFT_DATA_DIR: /data
+      GRAFT_MDNS_SERVICE: graft-mdns-example
+      GRAFT_MDNS_DOMAIN: local.
+      GRAFT_CLUSTER_ID: docker-mdns-cluster
+    depends_on:
+      - node-1
+    volumes:
+      - node2-data:/data
+    networks:
+      - graft-mdns
+
+  node-3:
+    build:
+      context: ../..
+      dockerfile: examples/docker-mdns/Dockerfile
+    container_name: graft-mdns-node-3
+    hostname: node-3
+    environment:
+      GRAFT_NODE_ID: node-3
+      GRAFT_RAFT_ADDR: node-3:7003
+      GRAFT_GRPC_PORT: "9003"
+      GRAFT_DATA_DIR: /data
+      GRAFT_MDNS_SERVICE: graft-mdns-example
+      GRAFT_MDNS_DOMAIN: local.
+      GRAFT_CLUSTER_ID: docker-mdns-cluster
+    depends_on:
+      - node-1
+    volumes:
+      - node3-data:/data
+    networks:
+      - graft-mdns
+
+volumes:
+  node1-data:
+  node2-data:
+  node3-data:
+
+networks:
+  graft-mdns:
+    driver: bridge

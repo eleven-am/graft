@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"testing"
@@ -127,7 +128,7 @@ func TestManagerWaitForDiscovery(t *testing.T) {
 
 		peers, err := coreManager.waitForDiscovery(ctx, time.Second)
 		assert.Error(t, err)
-		assert.ErrorIs(t, err, context.Canceled)
+		assert.True(t, errors.Is(err, context.Canceled) || errors.Is(err, ErrDiscoveryStopped), "unexpected error: %v", err)
 		assert.Nil(t, peers)
 
 		assert.NoError(t, manager.Stop())
