@@ -455,18 +455,27 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 
 	discoveryTimeout := m.discoveryTimeout()
 
-	existingPeers, err := m.waitForDiscovery(ctx, discoveryTimeout)
-	if err != nil {
-		return domain.NewDomainErrorWithCategory(
-			domain.CategoryDiscovery,
-			"discovery wait failed",
-			err,
-			domain.WithComponent("core.Manager.Start"),
-			domain.WithContextDetail("timeout", discoveryTimeout.String()),
-		)
+	var existingPeers []ports.Peer
+	if m.hasPersistedRaftState {
+		existingPeers = filterPeers(m.discovery.GetPeers(), m.nodeID)
+		head := make([]ports.Peer, len(existingPeers))
+		copy(head, existingPeers)
+		go m.refreshPeersAsync(ctx, discoveryTimeout)
+		readiness.LogPeerMetadata(head, m.logger)
+	} else {
+		var err error
+		existingPeers, err = m.waitForDiscovery(ctx, discoveryTimeout)
+		if err != nil {
+			return domain.NewDomainErrorWithCategory(
+				domain.CategoryDiscovery,
+				"discovery wait failed",
+				err,
+				domain.WithComponent("core.Manager.Start"),
+				domain.WithContextDetail("timeout", discoveryTimeout.String()),
+			)
+		}
+		readiness.LogPeerMetadata(existingPeers, m.logger)
 	}
-
-	readiness.LogPeerMetadata(existingPeers, m.logger)
 
 	plan, err := m.prepareBootstrapPlan(ctx, discoveryTimeout, existingPeers)
 	if err != nil {
@@ -1013,6 +1022,65 @@ func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) (
 			return nil, fmt.Errorf("discovery wait aborted: %w", ctx.Err())
 		}
 	}
+}
+
+func (m *Manager) refreshPeersAsync(ctx context.Context, timeout time.Duration) {
+	if m.discovery == nil {
+		return
+	}
+
+	go func() {
+		head := filterPeers(m.discovery.GetPeers(), m.nodeID)
+		if len(head) == 0 {
+			return
+		}
+		readiness.LogPeerMetadata(head, m.logger)
+	}()
+
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+
+		events, unsubscribe := m.discovery.Subscribe()
+		defer unsubscribe()
+
+		ticker := time.NewTicker(2 * time.Second)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-events:
+				m.logger.Debug("discovery event received during async refresh")
+				if peers := filterPeers(m.discovery.GetPeers(), m.nodeID); len(peers) > 0 {
+					readiness.LogPeerMetadata(peers, m.logger)
+				}
+			case <-ticker.C:
+				if peers := filterPeers(m.discovery.GetPeers(), m.nodeID); len(peers) > 0 {
+					readiness.LogPeerMetadata(peers, m.logger)
+					return
+				}
+			}
+		}
+	}()
+
+	go func() {
+		heartbeatTicker := time.NewTicker(5 * time.Second)
+		defer heartbeatTicker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-heartbeatTicker.C:
+				if peers := filterPeers(m.discovery.GetPeers(), m.nodeID); len(peers) > 0 {
+					readiness.LogPeerMetadata(peers, m.logger)
+					return
+				}
+			}
+		}
+	}()
 }
 
 func (m *Manager) hasReadyPeer(peers []ports.Peer) bool {
@@ -1643,9 +1711,6 @@ func (m *Manager) discoveryTimeout() time.Duration {
 	timeout := m.config.Raft.DiscoveryTimeout
 	if timeout <= 0 {
 		return 30 * time.Second
-	}
-	if m.hasPersistedRaftState {
-		return timeout * 2
 	}
 	return timeout
 }
