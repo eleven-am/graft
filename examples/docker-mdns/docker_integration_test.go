@@ -47,10 +47,8 @@ func TestDockerMDNSClusterFormsSingleLeader(t *testing.T) {
 		return stdout.String(), nil
 	}
 
-	// Ensure clean slate before starting
 	_, _ = runDocker(ctx, composeArgs("down", "--volumes", "--remove-orphans")...)
 
-	// Start cluster
 	if output, err := runDocker(ctx, composeArgs("up", "-d", "--build")...); err != nil {
 		t.Fatalf("docker compose up failed: %v\n%s", err, output)
 	}
