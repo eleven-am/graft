@@ -249,10 +249,40 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 	if termStr, ok := stats["current_term"]; ok {
 		term = parseUint(termStr)
 	}
+
+	leadershipState := ports.RaftLeadershipProvisional
+	leaderID := opts.NodeID
+	leaderAddr := string(advertise)
+
+	currentState := instance.State()
+	leaderAddrRaft, leaderIDRaft := instance.LeaderWithID()
+	if leaderIDRaft != "" {
+		leaderID = string(leaderIDRaft)
+		leaderAddr = string(leaderAddrRaft)
+		if string(leaderIDRaft) == opts.NodeID {
+			leadershipState = ports.RaftLeadershipLeader
+		} else {
+			leadershipState = ports.RaftLeadershipFollower
+		}
+	} else if currentState == raft.Leader {
+		leadershipState = ports.RaftLeadershipLeader
+	} else if currentState == raft.Follower {
+		clusterInfo := r.ClusterInfo()
+		if len(clusterInfo.Members) > 1 {
+			leadershipState = ports.RaftLeadershipFollower
+		}
+	}
+
+	r.deps.Logger.Debug("initial raft leadership state",
+		"node_id", opts.NodeID,
+		"raft_state", currentState.String(),
+		"leader_id", leaderID,
+		"leadership_state", leadershipState)
+
 	r.updateLeadership(ports.RaftLeadershipInfo{
-		State:         ports.RaftLeadershipProvisional,
-		LeaderID:      opts.NodeID,
-		LeaderAddress: string(advertise),
+		State:         leadershipState,
+		LeaderID:      leaderID,
+		LeaderAddress: leaderAddr,
 		Term:          term,
 	})
 
