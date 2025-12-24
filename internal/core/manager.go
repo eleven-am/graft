@@ -528,6 +528,17 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 
 	joinRequired := plan.JoinRequired()
 
+	if m.hasPersistedRaftState && !joinRequired && len(plan.ExistingPeers) > 0 {
+		clusterInfo := m.raftAdapter.GetClusterInfo()
+		if len(clusterInfo.Members) <= 1 {
+			m.logger.Warn("detected single-node raft config with discovered peers - will attempt to join cluster",
+				"member_count", len(clusterInfo.Members),
+				"discovered_peers", len(plan.ExistingPeers))
+			joinRequired = true
+			plan.JoinTargets = plan.ExistingPeers
+		}
+	}
+
 	m.readinessManager.SetState(plan.InitialReadinessState)
 
 	if plan.BootstrapMultiNode {
