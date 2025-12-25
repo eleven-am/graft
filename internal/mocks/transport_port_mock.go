@@ -24,6 +24,70 @@ func (_m *MockTransportPort) EXPECT() *MockTransportPort_Expecter {
 	return &MockTransportPort_Expecter{mock: &_m.Mock}
 }
 
+// GetLeaderInfo provides a mock function with given fields: ctx, peerAddr
+func (_m *MockTransportPort) GetLeaderInfo(ctx context.Context, peerAddr string) (string, string, error) {
+	ret := _m.Called(ctx, peerAddr)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetLeaderInfo")
+	}
+
+	var r0 string
+	var r1 string
+	var r2 error
+	if rf, ok := ret.Get(0).(func(context.Context, string) (string, string, error)); ok {
+		return rf(ctx, peerAddr)
+	}
+	if rf, ok := ret.Get(0).(func(context.Context, string) string); ok {
+		r0 = rf(ctx, peerAddr)
+	} else {
+		r0 = ret.Get(0).(string)
+	}
+
+	if rf, ok := ret.Get(1).(func(context.Context, string) string); ok {
+		r1 = rf(ctx, peerAddr)
+	} else {
+		r1 = ret.Get(1).(string)
+	}
+
+	if rf, ok := ret.Get(2).(func(context.Context, string) error); ok {
+		r2 = rf(ctx, peerAddr)
+	} else {
+		r2 = ret.Error(2)
+	}
+
+	return r0, r1, r2
+}
+
+// MockTransportPort_GetLeaderInfo_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetLeaderInfo'
+type MockTransportPort_GetLeaderInfo_Call struct {
+	*mock.Call
+}
+
+// GetLeaderInfo is a helper method to define mock.On call
+//   - ctx context.Context
+//   - peerAddr string
+func (_e *MockTransportPort_Expecter) GetLeaderInfo(ctx interface{}, peerAddr interface{}) *MockTransportPort_GetLeaderInfo_Call {
+	return &MockTransportPort_GetLeaderInfo_Call{Call: _e.mock.On("GetLeaderInfo", ctx, peerAddr)}
+}
+
+func (_c *MockTransportPort_GetLeaderInfo_Call) Run(run func(ctx context.Context, peerAddr string)) *MockTransportPort_GetLeaderInfo_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *MockTransportPort_GetLeaderInfo_Call) Return(leaderID string, leaderAddr string, err error) *MockTransportPort_GetLeaderInfo_Call {
+	_c.Call.Return(leaderID, leaderAddr, err)
+	return _c
+}
+
+func (_c *MockTransportPort_GetLeaderInfo_Call) RunAndReturn(run func(context.Context, string) (string, string, error)) *MockTransportPort_GetLeaderInfo_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // RegisterEngine provides a mock function with given fields: engine
 func (_m *MockTransportPort) RegisterEngine(engine ports.EnginePort) {
 	_m.Called(engine)
@@ -120,6 +184,55 @@ func (_c *MockTransportPort_RegisterRaft_Call) Return() *MockTransportPort_Regis
 
 func (_c *MockTransportPort_RegisterRaft_Call) RunAndReturn(run func(ports.RaftNode)) *MockTransportPort_RegisterRaft_Call {
 	_c.Run(run)
+	return _c
+}
+
+// RequestAddVoter provides a mock function with given fields: ctx, leaderAddr, nodeID, nodeAddr
+func (_m *MockTransportPort) RequestAddVoter(ctx context.Context, leaderAddr string, nodeID string, nodeAddr string) error {
+	ret := _m.Called(ctx, leaderAddr, nodeID, nodeAddr)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RequestAddVoter")
+	}
+
+	var r0 error
+	if rf, ok := ret.Get(0).(func(context.Context, string, string, string) error); ok {
+		r0 = rf(ctx, leaderAddr, nodeID, nodeAddr)
+	} else {
+		r0 = ret.Error(0)
+	}
+
+	return r0
+}
+
+// MockTransportPort_RequestAddVoter_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RequestAddVoter'
+type MockTransportPort_RequestAddVoter_Call struct {
+	*mock.Call
+}
+
+// RequestAddVoter is a helper method to define mock.On call
+//   - ctx context.Context
+//   - leaderAddr string
+//   - nodeID string
+//   - nodeAddr string
+func (_e *MockTransportPort_Expecter) RequestAddVoter(ctx interface{}, leaderAddr interface{}, nodeID interface{}, nodeAddr interface{}) *MockTransportPort_RequestAddVoter_Call {
+	return &MockTransportPort_RequestAddVoter_Call{Call: _e.mock.On("RequestAddVoter", ctx, leaderAddr, nodeID, nodeAddr)}
+}
+
+func (_c *MockTransportPort_RequestAddVoter_Call) Run(run func(ctx context.Context, leaderAddr string, nodeID string, nodeAddr string)) *MockTransportPort_RequestAddVoter_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(context.Context), args[1].(string), args[2].(string), args[3].(string))
+	})
+	return _c
+}
+
+func (_c *MockTransportPort_RequestAddVoter_Call) Return(_a0 error) *MockTransportPort_RequestAddVoter_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockTransportPort_RequestAddVoter_Call) RunAndReturn(run func(context.Context, string, string, string) error) *MockTransportPort_RequestAddVoter_Call {
+	_c.Call.Return(run)
 	return _c
 }
 

@@ -16,6 +16,7 @@ const (
 	CommandBatch
 	CommandTypeAtomicIncrement
 	CommandTypeDev
+	CommandTypeNoop
 )
 
 type Command struct {
@@ -170,6 +171,8 @@ func (c CommandType) String() string {
 		return "ATOMIC_INCREMENT"
 	case CommandTypeDev:
 		return "DEV_COMMAND"
+	case CommandTypeNoop:
+		return "NOOP"
 	default:
 		return "UNKNOWN"
 	}

@@ -17,7 +17,7 @@ func TestGetClusterInfoMarksNodeAsLeaderWithoutStateCheck(t *testing.T) {
 		Leader: &ports.RaftNodeInfo{
 			ID:      "node-1",
 			Address: "127.0.0.1:9000",
-			State:   ports.NodeFollower, // represents a provisional/follower view despite matching ID.
+			State:   ports.NodeFollower,
 		},
 		Members: []ports.RaftNodeInfo{
 			{ID: "node-1", Address: "127.0.0.1:9000", State: ports.NodeFollower},

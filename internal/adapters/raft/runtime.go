@@ -94,6 +94,11 @@ type Runtime struct {
 	clock     func() time.Time
 	runDone   chan struct{}
 	localAddr string
+
+	staleConfigDetected  bool
+	persistedMemberCount int
+	expectedMemberCount  int
+	reconciliationState  string
 }
 
 // NewRuntime constructs a runtime with the supplied dependencies.
@@ -226,6 +231,8 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 	}
 	r.deps.Logger.Debug("raft instance created successfully", "node_id", opts.NodeID)
 
+	r.detectStaleConfig(instance, opts)
+
 	observerCh := make(chan raft.Observation, 128)
 	observer := raft.NewObserver(observerCh, false, nil)
 	instance.RegisterObserver(observer)
@@ -287,6 +294,59 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 	})
 
 	return nil
+}
+
+func (r *Runtime) detectStaleConfig(instance *raft.Raft, opts domain.RaftControllerOptions) {
+	future := instance.GetConfiguration()
+	if err := future.Error(); err != nil {
+		r.deps.Logger.Warn("failed to get persisted configuration for stale detection", "error", err)
+		return
+	}
+
+	persistedServers := future.Configuration().Servers
+	persistedCount := len(persistedServers)
+	expectedCount := len(opts.Peers) + 1
+
+	r.mu.Lock()
+	r.persistedMemberCount = persistedCount
+	r.expectedMemberCount = expectedCount
+	r.mu.Unlock()
+
+	if persistedCount == 1 && expectedCount > 1 {
+		r.mu.Lock()
+		r.staleConfigDetected = true
+		r.reconciliationState = "pending"
+		r.mu.Unlock()
+
+		r.deps.Logger.Warn("stale single-node configuration detected",
+			"persisted_members", persistedCount,
+			"expected_members", expectedCount,
+			"node_id", opts.NodeID,
+			"action", "reconciliation required")
+	} else if persistedCount > 0 && persistedCount != expectedCount {
+		r.deps.Logger.Info("configuration member count mismatch",
+			"persisted_members", persistedCount,
+			"expected_members", expectedCount,
+			"node_id", opts.NodeID)
+	}
+}
+
+func (r *Runtime) IsStaleReconciliationMode() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.staleConfigDetected && r.reconciliationState == "pending"
+}
+
+func (r *Runtime) SetReconciliationState(state string) {
+	r.mu.Lock()
+	r.reconciliationState = state
+	r.mu.Unlock()
+}
+
+func (r *Runtime) GetStaleConfigInfo() (detected bool, persisted, expected int, state string) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.staleConfigDetected, r.persistedMemberCount, r.expectedMemberCount, r.reconciliationState
 }
 
 // Stop terminates the raft runtime and releases resources.
@@ -406,13 +466,33 @@ func (r *Runtime) LeadershipInfo() ports.RaftLeadershipInfo {
 	r.mu.RLock()
 	leader := r.leadership
 	instance := r.raft
+	opts := r.options
+	localAddr := r.localAddr
 	r.mu.RUnlock()
 
-	if leader.LeaderID == "" && instance != nil {
+	if instance == nil {
+		return leader
+	}
+
+	if leader.LeaderID == "" {
+		leaderAddr, leaderID := instance.LeaderWithID()
+		if leaderID != "" {
+			leader.LeaderID = string(leaderID)
+			leader.LeaderAddress = string(leaderAddr)
+		}
+	}
+
+	if leader.LeaderID == "" && leader.LeaderAddress == "" {
 		state := instance.State()
 		switch state {
 		case raft.Leader:
 			leader.State = ports.RaftLeadershipLeader
+			if leader.LeaderID == "" {
+				leader.LeaderID = opts.NodeID
+			}
+			if leader.LeaderAddress == "" {
+				leader.LeaderAddress = localAddr
+			}
 		case raft.Follower:
 			leader.State = ports.RaftLeadershipFollower
 		case raft.Candidate:
@@ -503,6 +583,9 @@ func (r *Runtime) mapLeaderObservation(obs raft.LeaderObservation) ports.RaftLea
 	info.LeaderID = string(obs.LeaderID)
 	if obs.LeaderID == raft.ServerID(r.options.NodeID) {
 		info.State = ports.RaftLeadershipLeader
+		if info.LeaderAddress == "" {
+			info.LeaderAddress = r.localAddr
+		}
 	} else if obs.LeaderID == "" {
 		cluster := r.ClusterInfo()
 		if len(cluster.Members) > 1 {
@@ -758,6 +841,8 @@ func (r *Runtime) GetRaftStatus() ports.RaftStatus {
 	r.mu.RLock()
 	instance := r.raft
 	leadership := r.leadership
+	opts := r.options
+	localAddr := r.localAddr
 	r.mu.RUnlock()
 
 	status := ports.RaftStatus{
@@ -780,6 +865,12 @@ func (r *Runtime) GetRaftStatus() ports.RaftStatus {
 		switch instance.State() {
 		case raft.Leader:
 			status.Leadership.State = ports.RaftLeadershipLeader
+			if status.Leadership.LeaderID == "" {
+				status.Leadership.LeaderID = opts.NodeID
+			}
+			if status.Leadership.LeaderAddress == "" {
+				status.Leadership.LeaderAddress = localAddr
+			}
 		case raft.Follower:
 			status.Leadership.State = ports.RaftLeadershipFollower
 		case raft.Candidate:
@@ -787,6 +878,18 @@ func (r *Runtime) GetRaftStatus() ports.RaftStatus {
 		default:
 			status.Leadership.State = ports.RaftLeadershipUnknown
 		}
+	}
+
+	if future := instance.GetConfiguration(); future.Error() == nil {
+		cfg := future.Configuration().Servers
+		peers := make([]ports.RaftNodeInfo, 0, len(cfg))
+		for _, srv := range cfg {
+			peers = append(peers, ports.RaftNodeInfo{
+				ID:      string(srv.ID),
+				Address: string(srv.Address),
+			})
+		}
+		status.Config = peers
 	}
 
 	stats := instance.Stats()
@@ -802,15 +905,40 @@ func (r *Runtime) GetRaftStatus() ports.RaftStatus {
 func (r *Runtime) Health() ports.HealthStatus {
 	r.mu.RLock()
 	instance := r.raft
+	staleDetected := r.staleConfigDetected
+	persistedCount := r.persistedMemberCount
+	expectedCount := r.expectedMemberCount
+	reconcileState := r.reconciliationState
 	r.mu.RUnlock()
-	if instance == nil {
-		return ports.HealthStatus{Healthy: false, Error: "raft not started"}
+
+	status := ports.HealthStatus{
+		StaleConfigDetected:  staleDetected,
+		PersistedMemberCount: persistedCount,
+		ExpectedMemberCount:  expectedCount,
+		ReconciliationState:  reconcileState,
 	}
+
+	if instance == nil {
+		status.Healthy = false
+		status.Error = "raft not started"
+		return status
+	}
+
+	if staleDetected && reconcileState != "succeeded" {
+		status.Healthy = false
+		status.Error = "stale single-node configuration detected, reconciliation required"
+		return status
+	}
+
 	leaderAddr, leaderID := instance.LeaderWithID()
 	if leaderID == "" && leaderAddr == "" {
-		return ports.HealthStatus{Healthy: false, Error: "raft has no leader"}
+		status.Healthy = false
+		status.Error = "raft has no leader"
+		return status
 	}
-	return ports.HealthStatus{Healthy: true}
+
+	status.Healthy = true
+	return status
 }
 
 func (r *Runtime) LocalAddress() string {
@@ -848,7 +976,7 @@ func mapLeadershipStateToNodeState(state ports.RaftLeadershipState) ports.NodeSt
 		return ports.NodeLeader
 	case ports.RaftLeadershipFollower:
 		return ports.NodeFollower
-	case ports.RaftLeadershipJoining:
+	case ports.RaftLeadershipJoining, ports.RaftLeadershipReconciling:
 		return ports.NodeCandidate
 	default:
 		return ports.NodeFollower

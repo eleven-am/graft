@@ -31,9 +31,13 @@ type ClusterInfo struct {
 }
 
 type HealthStatus struct {
-	Healthy bool                   `json:"healthy"`
-	Error   string                 `json:"error,omitempty"`
-	Details map[string]interface{} `json:"details,omitempty"`
+	Healthy              bool                   `json:"healthy"`
+	Error                string                 `json:"error,omitempty"`
+	Details              map[string]interface{} `json:"details,omitempty"`
+	StaleConfigDetected  bool                   `json:"stale_config_detected,omitempty"`
+	ReconciliationState  string                 `json:"reconciliation_state,omitempty"`
+	PersistedMemberCount int                    `json:"persisted_member_count,omitempty"`
+	ExpectedMemberCount  int                    `json:"expected_member_count,omitempty"`
 }
 
 type HealthCheckProvider interface {
@@ -85,6 +89,7 @@ type RaftStatus struct {
 	RawState   string             `json:"state"`
 	RawLeader  RaftRawLeader      `json:"raw_leader"`
 	Stats      RaftStatsInfo      `json:"stats"`
+	Config     []RaftNodeInfo     `json:"config,omitempty"`
 }
 
 type RaftNode interface {
@@ -143,6 +148,7 @@ const (
 	RaftLeadershipFollower    RaftLeadershipState = "follower"
 	RaftLeadershipJoining     RaftLeadershipState = "joining"
 	RaftLeadershipDemoted     RaftLeadershipState = "demoted"
+	RaftLeadershipReconciling RaftLeadershipState = "reconciling"
 )
 
 // RaftLeadershipInfo describes the current leadership view of the controller.

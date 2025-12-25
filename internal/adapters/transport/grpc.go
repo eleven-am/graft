@@ -563,3 +563,65 @@ func clampFloat(value, min, max float64) float64 {
 	}
 	return value
 }
+
+func (t *GRPCTransport) GetLeaderInfo(ctx context.Context, peerAddr string) (leaderID, leaderAddr string, err error) {
+	conn, err := t.getConnection(ctx, peerAddr)
+	if err != nil {
+		return "", "", domain.ErrConnection
+	}
+	defer conn.Close()
+
+	client := pb.NewGraftNodeClient(conn)
+
+	noop := domain.Command{Type: domain.CommandTypeNoop}
+	cmdBytes, err := noop.Marshal()
+	if err != nil {
+		return "", "", err
+	}
+
+	req := &pb.ApplyRequest{Command: cmdBytes}
+	resp, err := client.ApplyCommand(ctx, req)
+	if err != nil {
+		return "", "", domain.ErrTimeout
+	}
+
+	if resp.LeaderId != "" || resp.LeaderAddr != "" {
+		return resp.LeaderId, resp.LeaderAddr, nil
+	}
+
+	if resp.Success {
+		return "", peerAddr, nil
+	}
+
+	return "", "", nil
+}
+
+func (t *GRPCTransport) RequestAddVoter(ctx context.Context, leaderAddr, nodeID, nodeAddr string) error {
+	host, portStr, err := net.SplitHostPort(nodeAddr)
+	if err != nil {
+		return fmt.Errorf("invalid node address %q: %w", nodeAddr, err)
+	}
+
+	var port int
+	_, err = fmt.Sscanf(portStr, "%d", &port)
+	if err != nil {
+		return fmt.Errorf("invalid port in address %q: %w", nodeAddr, err)
+	}
+
+	joinReq := &ports.JoinRequest{
+		NodeID:  nodeID,
+		Address: host,
+		Port:    port,
+	}
+
+	resp, err := t.SendJoinRequest(ctx, leaderAddr, joinReq)
+	if err != nil {
+		return err
+	}
+
+	if !resp.Accepted {
+		return fmt.Errorf("add voter rejected: %s", resp.Message)
+	}
+
+	return nil
+}

@@ -23,7 +23,6 @@ func TestRuntimeLeaderObservationNotOverwrittenByInitialSnapshot(t *testing.T) {
 
 	go rt.observe(ctx)
 
-	// Simulate a fast LeaderObservation arriving before the initial snapshot logic completes.
 	rt.observerCh <- raft.Observation{
 		Data: raft.LeaderObservation{
 			LeaderID:   raft.ServerID("node-1"),
@@ -33,7 +32,6 @@ func TestRuntimeLeaderObservationNotOverwrittenByInitialSnapshot(t *testing.T) {
 
 	waitForLeadershipState(t, rt, ports.RaftLeadershipLeader)
 
-	// Mirror the initialization snapshot that currently runs after observe().
 	rt.updateLeadership(ports.RaftLeadershipInfo{
 		State:         ports.RaftLeadershipProvisional,
 		LeaderID:      "node-1",

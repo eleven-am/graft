@@ -21,6 +21,9 @@ type NodeRuntime interface {
 	Demote(ctx context.Context, peer ports.RaftPeer) error
 	LeadershipInfo() ports.RaftLeadershipInfo
 	ClusterInfo() ports.ClusterInfo
+	IsStaleReconciliationMode() bool
+	SetReconciliationState(state string)
+	LocalAddress() string
 }
 
 // ControllerDeps groups external collaborators required by the controller.
@@ -28,6 +31,7 @@ type ControllerDeps struct {
 	Coordinator ports.BootstrapCoordinator
 	Readiness   ports.ReadinessGate
 	Runtime     NodeRuntime
+	Transport   ports.TransportPort
 	Logger      *slog.Logger
 	Clock       func() time.Time
 }
@@ -50,6 +54,8 @@ type Controller struct {
 
 	leadership ports.RaftLeadershipInfo
 	lastEvent  ports.BootstrapEvent
+
+	reconciler *Reconciler
 }
 
 // NewController constructs a controller using the supplied dependencies.
@@ -133,7 +139,62 @@ func (c *Controller) Start(ctx context.Context, opts domain.RaftControllerOption
 
 	go c.consumeEvents(runCtx, c.runDone)
 
+	if c.deps.Runtime.IsStaleReconciliationMode() {
+		c.startReconciliation(runCtx, opts)
+	}
+
 	return nil
+}
+
+func (c *Controller) startReconciliation(ctx context.Context, opts domain.RaftControllerOptions) {
+	if c.deps.Transport == nil {
+		if c.deps.Logger != nil {
+			c.deps.Logger.Warn("stale config detected but no transport available for reconciliation")
+		}
+		return
+	}
+
+	c.mu.Lock()
+	c.updateLeadershipLocked(ports.RaftLeadershipInfo{
+		State: ports.RaftLeadershipReconciling,
+	})
+	c.mu.Unlock()
+
+	reconciler := NewReconciler(ReconcilerConfig{
+		Runtime:   c.deps.Runtime.(*Runtime),
+		Transport: c.deps.Transport,
+		Peers:     opts.Peers,
+		NodeID:    opts.NodeID,
+		NodeAddr:  c.deps.Runtime.LocalAddress(),
+		Logger:    c.deps.Logger,
+	})
+
+	c.mu.Lock()
+	c.reconciler = reconciler
+	c.mu.Unlock()
+
+	go func() {
+		if c.deps.Logger != nil {
+			c.deps.Logger.Info("starting stale config reconciliation",
+				"node_id", opts.NodeID,
+				"peer_count", len(opts.Peers))
+		}
+
+		err := reconciler.ReconcileWithRetry(ctx, 10, 5*time.Second)
+		if err != nil {
+			if c.deps.Logger != nil {
+				c.deps.Logger.Error("reconciliation failed after retries",
+					"node_id", opts.NodeID,
+					"error", err)
+			}
+			return
+		}
+
+		if c.deps.Logger != nil {
+			c.deps.Logger.Info("reconciliation succeeded, node rejoined cluster",
+				"node_id", opts.NodeID)
+		}
+	}()
 }
 
 // Stop terminates the controller and underlying runtime.

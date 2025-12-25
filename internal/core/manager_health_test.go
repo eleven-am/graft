@@ -68,7 +68,6 @@ func TestHealthReadinessNotReadyWhenNoLeaderEvenIfReadinessManagerReady(t *testi
 		LeaderID: "",
 	})
 
-	// Force readiness manager to Ready and intake to true to simulate a drifted state.
 	mgr.readinessManager.SetState(readiness.StateReady)
 	mgr.workflowIntakeOk = true
 
@@ -99,7 +98,7 @@ func TestStartupFailsOnStaleSingleNodeWhenPeersExpected(t *testing.T) {
 	t.Parallel()
 
 	mockRaft := mocks.NewMockRaftNode(t)
-	// Single-node persisted config (only self).
+
 	mockRaft.On("GetClusterInfo").Return(ports.ClusterInfo{
 		NodeID: "node-1",
 		Members: []ports.RaftNodeInfo{
@@ -123,7 +122,7 @@ func TestStartupFailsOnStaleSingleNodeWhenPeersExpected(t *testing.T) {
 		engine:           mockEngine,
 		readinessManager: readiness.NewManager(),
 		workflowIntakeOk: true,
-		// Simulate expected static peers > 1 (e.g., from auto-generated peers or config).
+
 		expectedStaticPeers: 2,
 	}
 

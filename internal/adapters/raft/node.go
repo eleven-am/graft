@@ -70,6 +70,7 @@ func NewNode(cfg *Config, storage *Storage, eventManager ports.EventManager, app
 		Coordinator: coordinator,
 		Readiness:   readiness,
 		Runtime:     runtime,
+		Transport:   appTransport,
 		Logger:      logger,
 	})
 	if err != nil {
