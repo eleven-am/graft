@@ -404,8 +404,25 @@ func (r *Runtime) Demote(ctx context.Context, peer ports.RaftPeer) error {
 // LeadershipInfo returns the last observed leadership snapshot.
 func (r *Runtime) LeadershipInfo() ports.RaftLeadershipInfo {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
-	return r.leadership
+	leader := r.leadership
+	instance := r.raft
+	r.mu.RUnlock()
+
+	if leader.LeaderID == "" && instance != nil {
+		state := instance.State()
+		switch state {
+		case raft.Leader:
+			leader.State = ports.RaftLeadershipLeader
+		case raft.Follower:
+			leader.State = ports.RaftLeadershipFollower
+		case raft.Candidate:
+			leader.State = ports.RaftLeadershipProvisional
+		default:
+			leader.State = ports.RaftLeadershipUnknown
+		}
+	}
+
+	return leader
 }
 
 func (r *Runtime) observe(ctx context.Context) {
@@ -759,6 +776,19 @@ func (r *Runtime) GetRaftStatus() ports.RaftStatus {
 		Addr: string(leaderAddr),
 	}
 
+	if status.Leadership.LeaderID == "" && status.RawLeader.ID == "" {
+		switch instance.State() {
+		case raft.Leader:
+			status.Leadership.State = ports.RaftLeadershipLeader
+		case raft.Follower:
+			status.Leadership.State = ports.RaftLeadershipFollower
+		case raft.Candidate:
+			status.Leadership.State = ports.RaftLeadershipProvisional
+		default:
+			status.Leadership.State = ports.RaftLeadershipUnknown
+		}
+	}
+
 	stats := instance.Stats()
 	status.Stats = ports.RaftStatsInfo{
 		LastLogIndex: parseUint(stats["last_log_index"]),
@@ -775,6 +805,10 @@ func (r *Runtime) Health() ports.HealthStatus {
 	r.mu.RUnlock()
 	if instance == nil {
 		return ports.HealthStatus{Healthy: false, Error: "raft not started"}
+	}
+	leaderAddr, leaderID := instance.LeaderWithID()
+	if leaderID == "" && leaderAddr == "" {
+		return ports.HealthStatus{Healthy: false, Error: "raft has no leader"}
 	}
 	return ports.HealthStatus{Healthy: true}
 }

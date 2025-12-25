@@ -730,7 +730,7 @@ func (m *Manager) GetClusterInfo() ClusterInfo {
 	if m.raftAdapter != nil {
 		raftInfo := m.raftAdapter.GetClusterInfo()
 		leadershipInfo := m.raftAdapter.GetLeadershipInfo()
-		info.IsLeader = leadershipInfo.State == ports.RaftLeadershipLeader
+		info.IsLeader = leadershipInfo.State == ports.RaftLeadershipLeader && leadershipInfo.LeaderID == m.nodeID
 
 		for _, member := range raftInfo.Members {
 			if member.ID != m.nodeID {
@@ -1368,6 +1368,20 @@ func (m *Manager) GetHealth() ports.HealthStatus {
 			"boot_id":     bootID,
 			"timestamp":   timestamp,
 		}
+	}
+
+	if raftDetails, ok := health.Details["raft"].(ports.HealthStatus); ok {
+		if !raftDetails.Healthy {
+			health.Healthy = false
+			if health.Error == "" {
+				health.Error = raftDetails.Error
+			}
+		}
+	}
+
+	if !info.IsLeader && (health.Error == "" && health.Healthy) {
+		health.Healthy = false
+		health.Error = "raft has no leader"
 	}
 
 	return health
