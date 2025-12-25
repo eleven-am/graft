@@ -185,37 +185,53 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 
 	config := r.buildRaftConfig(opts)
 
-	if opts.BootstrapMultiNode {
-		servers := []raft.Server{{
-			ID:      raft.ServerID(opts.NodeID),
-			Address: advertise,
-		}}
-		if err := raft.BootstrapCluster(config, storage.LogStore, storage.StableStore, storage.SnapshotStore, transport, raft.Configuration{Servers: servers}); err != nil && !errors.Is(err, raft.ErrCantBootstrap) {
-			cancel()
-			r.closeTransport(transport)
-			r.closeStores()
-			return r.raftError(
-				"bootstrap failed",
-				err,
-				domain.WithContextDetail("peer_count", strconv.Itoa(len(opts.Peers))),
-			)
+	hasState, hasStateErr := raft.HasExistingState(storage.LogStore, storage.StableStore, storage.SnapshotStore)
+	if hasStateErr != nil {
+		cancel()
+		r.closeTransport(transport)
+		r.closeStores()
+		return r.raftError("failed to inspect existing raft state", hasStateErr)
+	}
+
+	if hasState {
+		r.deps.Logger.Info("existing raft state detected", "node_id", opts.NodeID)
+	} else {
+		if len(opts.Peers) > 0 {
+			opts.BootstrapMultiNode = true
 		}
-	} else if len(opts.Peers) == 0 {
-		bootstrapConfig := raft.Configuration{
-			Servers: []raft.Server{{
+
+		if opts.BootstrapMultiNode {
+			servers := []raft.Server{{
 				ID:      raft.ServerID(opts.NodeID),
 				Address: advertise,
-			}},
-		}
-		if err := raft.BootstrapCluster(config, storage.LogStore, storage.StableStore, storage.SnapshotStore, transport, bootstrapConfig); err != nil && !errors.Is(err, raft.ErrCantBootstrap) {
-			cancel()
-			r.closeTransport(transport)
-			r.closeStores()
-			return r.raftError(
-				"bootstrap failed",
-				err,
-				domain.WithContextDetail("peer_count", strconv.Itoa(len(opts.Peers))),
-			)
+			}}
+			if err := raft.BootstrapCluster(config, storage.LogStore, storage.StableStore, storage.SnapshotStore, transport, raft.Configuration{Servers: servers}); err != nil && !errors.Is(err, raft.ErrCantBootstrap) {
+				cancel()
+				r.closeTransport(transport)
+				r.closeStores()
+				return r.raftError(
+					"bootstrap failed",
+					err,
+					domain.WithContextDetail("peer_count", strconv.Itoa(len(opts.Peers))),
+				)
+			}
+		} else if len(opts.Peers) == 0 {
+			bootstrapConfig := raft.Configuration{
+				Servers: []raft.Server{{
+					ID:      raft.ServerID(opts.NodeID),
+					Address: advertise,
+				}},
+			}
+			if err := raft.BootstrapCluster(config, storage.LogStore, storage.StableStore, storage.SnapshotStore, transport, bootstrapConfig); err != nil && !errors.Is(err, raft.ErrCantBootstrap) {
+				cancel()
+				r.closeTransport(transport)
+				r.closeStores()
+				return r.raftError(
+					"bootstrap failed",
+					err,
+					domain.WithContextDetail("peer_count", strconv.Itoa(len(opts.Peers))),
+				)
+			}
 		}
 	}
 
@@ -970,12 +986,14 @@ func (r *Runtime) GetRaftStatus() ports.RaftStatus {
 	r.mu.RLock()
 	instance := r.raft
 	leadership := r.leadership
+	recovered := r.staleAddressRecovered
 	opts := r.options
 	localAddr := r.localAddr
 	r.mu.RUnlock()
 
 	status := ports.RaftStatus{
-		Leadership: leadership,
+		Leadership:            leadership,
+		StaleAddressRecovered: recovered,
 	}
 
 	if instance == nil {
@@ -1038,13 +1056,15 @@ func (r *Runtime) Health() ports.HealthStatus {
 	persistedCount := r.persistedMemberCount
 	expectedCount := r.expectedMemberCount
 	reconcileState := r.reconciliationState
+	recovered := r.staleAddressRecovered
 	r.mu.RUnlock()
 
 	status := ports.HealthStatus{
-		StaleConfigDetected:  staleDetected,
-		PersistedMemberCount: persistedCount,
-		ExpectedMemberCount:  expectedCount,
-		ReconciliationState:  reconcileState,
+		StaleConfigDetected:   staleDetected,
+		PersistedMemberCount:  persistedCount,
+		ExpectedMemberCount:   expectedCount,
+		ReconciliationState:   reconcileState,
+		StaleAddressRecovered: recovered,
 	}
 
 	if instance == nil {

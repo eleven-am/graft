@@ -31,13 +31,14 @@ type ClusterInfo struct {
 }
 
 type HealthStatus struct {
-	Healthy              bool                   `json:"healthy"`
-	Error                string                 `json:"error,omitempty"`
-	Details              map[string]interface{} `json:"details,omitempty"`
-	StaleConfigDetected  bool                   `json:"stale_config_detected,omitempty"`
-	ReconciliationState  string                 `json:"reconciliation_state,omitempty"`
-	PersistedMemberCount int                    `json:"persisted_member_count,omitempty"`
-	ExpectedMemberCount  int                    `json:"expected_member_count,omitempty"`
+	Healthy               bool                   `json:"healthy"`
+	Error                 string                 `json:"error,omitempty"`
+	Details               map[string]interface{} `json:"details,omitempty"`
+	StaleConfigDetected   bool                   `json:"stale_config_detected,omitempty"`
+	ReconciliationState   string                 `json:"reconciliation_state,omitempty"`
+	PersistedMemberCount  int                    `json:"persisted_member_count,omitempty"`
+	ExpectedMemberCount   int                    `json:"expected_member_count,omitempty"`
+	StaleAddressRecovered bool                   `json:"stale_address_recovered,omitempty"`
 }
 
 type HealthCheckProvider interface {
@@ -85,11 +86,12 @@ type RaftStatsInfo struct {
 }
 
 type RaftStatus struct {
-	Leadership RaftLeadershipInfo `json:"leadership"`
-	RawState   string             `json:"state"`
-	RawLeader  RaftRawLeader      `json:"raw_leader"`
-	Stats      RaftStatsInfo      `json:"stats"`
-	Config     []RaftNodeInfo     `json:"config,omitempty"`
+	Leadership            RaftLeadershipInfo `json:"leadership"`
+	RawState              string             `json:"state"`
+	RawLeader             RaftRawLeader      `json:"raw_leader"`
+	Stats                 RaftStatsInfo      `json:"stats"`
+	Config                []RaftNodeInfo     `json:"config,omitempty"`
+	StaleAddressRecovered bool               `json:"stale_address_recovered,omitempty"`
 }
 
 type RaftNode interface {
