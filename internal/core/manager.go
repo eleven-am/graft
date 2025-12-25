@@ -729,7 +729,8 @@ func (m *Manager) GetClusterInfo() ClusterInfo {
 
 	if m.raftAdapter != nil {
 		raftInfo := m.raftAdapter.GetClusterInfo()
-		info.IsLeader = raftInfo.Leader != nil && raftInfo.Leader.ID == m.nodeID && raftInfo.Leader.State == ports.NodeLeader
+		leadershipInfo := m.raftAdapter.GetLeadershipInfo()
+		info.IsLeader = leadershipInfo.State == ports.RaftLeadershipLeader
 
 		for _, member := range raftInfo.Members {
 			if member.ID != m.nodeID {
@@ -1370,6 +1371,13 @@ func (m *Manager) GetHealth() ports.HealthStatus {
 	}
 
 	return health
+}
+
+func (m *Manager) GetRaftStatus() ports.RaftStatus {
+	if m.raftAdapter == nil {
+		return ports.RaftStatus{}
+	}
+	return m.raftAdapter.GetRaftStatus()
 }
 
 func (m *Manager) GetMetrics() ports.SystemMetrics {

@@ -69,6 +69,24 @@ type RaftMetrics struct {
 	ClusterSize   int    `json:"cluster_size"`
 }
 
+type RaftRawLeader struct {
+	ID   string `json:"leader_id"`
+	Addr string `json:"leader_addr"`
+}
+
+type RaftStatsInfo struct {
+	LastLogIndex uint64 `json:"last_log_index"`
+	CommitIndex  uint64 `json:"commit_index"`
+	AppliedIndex uint64 `json:"applied_index"`
+}
+
+type RaftStatus struct {
+	Leadership RaftLeadershipInfo `json:"leadership"`
+	RawState   string             `json:"state"`
+	RawLeader  RaftRawLeader      `json:"raw_leader"`
+	Stats      RaftStatsInfo      `json:"stats"`
+}
+
 type RaftNode interface {
 	Start(ctx context.Context, existingPeers []Peer, bootstrapMultiNode bool) error
 	Apply(cmd domain.Command, timeout time.Duration) (*domain.CommandResult, error)
@@ -87,6 +105,8 @@ type RaftNode interface {
 	GetClusterInfo() ClusterInfo
 	GetHealth() HealthStatus
 	GetMetrics() RaftMetrics
+	GetRaftStatus() RaftStatus
+	GetLeadershipInfo() RaftLeadershipInfo
 	ReadStale(key string) ([]byte, error)
 	TransferLeadership() error
 	TransferLeadershipTo(serverID string) error

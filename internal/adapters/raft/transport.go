@@ -40,6 +40,8 @@ func (p *TCPTransportProvider) Create(_ context.Context, opts domain.RaftControl
 		}
 	}
 
+	advertiseHost := host
+
 	listener, actualPort, err := netutil.ListenTCP(host, port)
 	if err != nil {
 		return nil, "", fmt.Errorf("raft: listen tcp: %w", err)
@@ -67,5 +69,7 @@ func (p *TCPTransportProvider) Create(_ context.Context, opts domain.RaftControl
 		return nil, "", fmt.Errorf("raft: create tcp transport: %w", err)
 	}
 
-	return transport, raft.ServerAddress(transport.LocalAddr()), nil
+	advertiseAddr := raft.ServerAddress(fmt.Sprintf("%s:%d", advertiseHost, actualPort))
+
+	return transport, advertiseAddr, nil
 }

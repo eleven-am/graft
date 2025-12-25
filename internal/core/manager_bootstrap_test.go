@@ -207,6 +207,7 @@ func createBootstrapTestManager(t *testing.T) (*Manager, *mocks.MockRaftNode, *m
 	mockRaft.EXPECT().GetBootMetadata().Return("test-boot-id", time.Now().UnixNano()).Maybe()
 	mockRaft.EXPECT().GetHealth().Return(ports.HealthStatus{Healthy: true}).Maybe()
 	mockRaft.EXPECT().GetClusterInfo().Return(ports.ClusterInfo{}).Maybe()
+	mockRaft.EXPECT().GetLeadershipInfo().Return(ports.RaftLeadershipInfo{}).Maybe()
 	mockRaft.EXPECT().Stop().Return(nil).Maybe()
 	mockRaft.EXPECT().SetReadinessCallback(mock.AnythingOfType("func(bool)")).Maybe()
 

@@ -22,6 +22,7 @@ func TestGetClusterInfoMarksNodeAsLeaderWithoutStateCheck(t *testing.T) {
 			{ID: "node-1", Address: "127.0.0.1:9000", State: ports.NodeFollower},
 		},
 	})
+	mockRaft.On("GetLeadershipInfo").Return(ports.RaftLeadershipInfo{State: ports.RaftLeadershipFollower})
 
 	mgr := &Manager{
 		nodeID:      "node-1",

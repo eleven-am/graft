@@ -277,6 +277,14 @@ func (n *Node) GetHealth() ports.HealthStatus {
 	return n.runtime.Health()
 }
 
+func (n *Node) GetRaftStatus() ports.RaftStatus {
+	return n.runtime.GetRaftStatus()
+}
+
+func (n *Node) GetLeadershipInfo() ports.RaftLeadershipInfo {
+	return n.controller.LeadershipInfo()
+}
+
 func (n *Node) GetLocalAddress() string {
 	return n.runtime.LocalAddress()
 }

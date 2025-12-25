@@ -374,6 +374,51 @@ func (_c *MockRaftNode_GetHealth_Call) RunAndReturn(run func() ports.HealthStatu
 	return _c
 }
 
+// GetLeadershipInfo provides a mock function with no fields
+func (_m *MockRaftNode) GetLeadershipInfo() ports.RaftLeadershipInfo {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetLeadershipInfo")
+	}
+
+	var r0 ports.RaftLeadershipInfo
+	if rf, ok := ret.Get(0).(func() ports.RaftLeadershipInfo); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(ports.RaftLeadershipInfo)
+	}
+
+	return r0
+}
+
+// MockRaftNode_GetLeadershipInfo_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetLeadershipInfo'
+type MockRaftNode_GetLeadershipInfo_Call struct {
+	*mock.Call
+}
+
+// GetLeadershipInfo is a helper method to define mock.On call
+func (_e *MockRaftNode_Expecter) GetLeadershipInfo() *MockRaftNode_GetLeadershipInfo_Call {
+	return &MockRaftNode_GetLeadershipInfo_Call{Call: _e.mock.On("GetLeadershipInfo")}
+}
+
+func (_c *MockRaftNode_GetLeadershipInfo_Call) Run(run func()) *MockRaftNode_GetLeadershipInfo_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockRaftNode_GetLeadershipInfo_Call) Return(_a0 ports.RaftLeadershipInfo) *MockRaftNode_GetLeadershipInfo_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockRaftNode_GetLeadershipInfo_Call) RunAndReturn(run func() ports.RaftLeadershipInfo) *MockRaftNode_GetLeadershipInfo_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetLocalAddress provides a mock function with no fields
 func (_m *MockRaftNode) GetLocalAddress() string {
 	ret := _m.Called()
@@ -460,6 +505,51 @@ func (_c *MockRaftNode_GetMetrics_Call) Return(_a0 ports.RaftMetrics) *MockRaftN
 }
 
 func (_c *MockRaftNode_GetMetrics_Call) RunAndReturn(run func() ports.RaftMetrics) *MockRaftNode_GetMetrics_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetRaftStatus provides a mock function with no fields
+func (_m *MockRaftNode) GetRaftStatus() ports.RaftStatus {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetRaftStatus")
+	}
+
+	var r0 ports.RaftStatus
+	if rf, ok := ret.Get(0).(func() ports.RaftStatus); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(ports.RaftStatus)
+	}
+
+	return r0
+}
+
+// MockRaftNode_GetRaftStatus_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetRaftStatus'
+type MockRaftNode_GetRaftStatus_Call struct {
+	*mock.Call
+}
+
+// GetRaftStatus is a helper method to define mock.On call
+func (_e *MockRaftNode_Expecter) GetRaftStatus() *MockRaftNode_GetRaftStatus_Call {
+	return &MockRaftNode_GetRaftStatus_Call{Call: _e.mock.On("GetRaftStatus")}
+}
+
+func (_c *MockRaftNode_GetRaftStatus_Call) Run(run func()) *MockRaftNode_GetRaftStatus_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockRaftNode_GetRaftStatus_Call) Return(_a0 ports.RaftStatus) *MockRaftNode_GetRaftStatus_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockRaftNode_GetRaftStatus_Call) RunAndReturn(run func() ports.RaftStatus) *MockRaftNode_GetRaftStatus_Call {
 	_c.Call.Return(run)
 	return _c
 }

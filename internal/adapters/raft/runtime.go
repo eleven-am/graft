@@ -737,6 +737,38 @@ func (r *Runtime) Metrics() ports.RaftMetrics {
 	return metrics
 }
 
+func (r *Runtime) GetRaftStatus() ports.RaftStatus {
+	r.mu.RLock()
+	instance := r.raft
+	leadership := r.leadership
+	r.mu.RUnlock()
+
+	status := ports.RaftStatus{
+		Leadership: leadership,
+	}
+
+	if instance == nil {
+		return status
+	}
+
+	status.RawState = instance.State().String()
+
+	leaderAddr, leaderID := instance.LeaderWithID()
+	status.RawLeader = ports.RaftRawLeader{
+		ID:   string(leaderID),
+		Addr: string(leaderAddr),
+	}
+
+	stats := instance.Stats()
+	status.Stats = ports.RaftStatsInfo{
+		LastLogIndex: parseUint(stats["last_log_index"]),
+		CommitIndex:  parseUint(stats["commit_index"]),
+		AppliedIndex: parseUint(stats["applied_index"]),
+	}
+
+	return status
+}
+
 func (r *Runtime) Health() ports.HealthStatus {
 	r.mu.RLock()
 	instance := r.raft
