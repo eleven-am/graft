@@ -1379,9 +1379,26 @@ func (m *Manager) GetHealth() ports.HealthStatus {
 		}
 	}
 
-	if !info.IsLeader && (health.Error == "" && health.Healthy) {
-		health.Healthy = false
-		health.Error = "raft has no leader"
+	if m.raftAdapter != nil {
+		leadership := m.raftAdapter.GetLeadershipInfo()
+
+		// If expected peers > 1 but only self is present in persisted config, mark unhealthy.
+		if m.expectedStaticPeers > 1 && len(info.Peers) == 0 {
+			health.Healthy = false
+			if health.Error == "" {
+				health.Error = "stale single-node raft state detected"
+			}
+		}
+
+		if leadership.LeaderID == "" && (health.Error == "" && health.Healthy) {
+			health.Healthy = false
+			health.Error = "raft has no leader"
+			// reflect not ready/intake false when leader missing
+			if readinessDetails, ok := health.Details["readiness"].(map[string]interface{}); ok {
+				readinessDetails["ready"] = false
+				readinessDetails["intake"] = false
+			}
+		}
 	}
 
 	return health

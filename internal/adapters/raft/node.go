@@ -18,11 +18,12 @@ import (
 )
 
 type Node struct {
-	config   *Config
-	storage  *Storage
-	events   ports.EventManager
-	logger   *slog.Logger
-	metadata map[string]string
+	config    *Config
+	storage   *Storage
+	events    ports.EventManager
+	transport ports.TransportPort
+	logger    *slog.Logger
+	metadata  map[string]string
 
 	runtime     *Runtime
 	controller  *Controller
@@ -39,7 +40,6 @@ type Node struct {
 }
 
 func NewNode(cfg *Config, storage *Storage, eventManager ports.EventManager, appTransport ports.TransportPort, logger *slog.Logger) (ports.RaftNode, error) {
-	_ = appTransport
 	if cfg == nil {
 		return nil, errors.New("raft: config is required")
 	}
@@ -80,6 +80,7 @@ func NewNode(cfg *Config, storage *Storage, eventManager ports.EventManager, app
 		config:          cfg,
 		storage:         storage,
 		events:          eventManager,
+		transport:       appTransport,
 		logger:          logger.With("component", "raft.node", "node_id", cfg.NodeID),
 		metadata:        bootMeta,
 		runtime:         runtime,
@@ -153,7 +154,67 @@ func (n *Node) Stop() error {
 func (n *Node) Shutdown() error { return n.Stop() }
 
 func (n *Node) Apply(cmd domain.Command, timeout time.Duration) (*domain.CommandResult, error) {
-	return n.controller.Apply(cmd, timeout)
+	result, err := n.controller.Apply(cmd, timeout)
+	if err == nil {
+		return result, nil
+	}
+
+	if !errors.Is(err, errNotLeader) {
+		return nil, err
+	}
+
+	if n.transport == nil {
+		return nil, err
+	}
+
+	leaderAddr := n.LeaderAddr()
+	if leaderAddr == "" {
+		return nil, domain.ErrNotLeader{LeaderAddr: ""}
+	}
+
+	return n.forwardToLeader(cmd, leaderAddr, timeout)
+}
+
+func (n *Node) forwardToLeader(cmd domain.Command, leaderAddr string, timeout time.Duration) (*domain.CommandResult, error) {
+	const maxRetries = 3
+
+	currentLeader := leaderAddr
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		if currentLeader == "" {
+			return nil, domain.ErrNotLeader{LeaderAddr: ""}
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), timeout)
+		result, newLeaderHint, err := n.transport.SendApplyCommand(ctx, currentLeader, &cmd)
+		cancel()
+
+		if err == nil && result != nil {
+			return result, nil
+		}
+
+		if newLeaderHint != "" && newLeaderHint != currentLeader {
+			n.logger.Debug("leader changed during forward, retrying",
+				"old_leader", currentLeader,
+				"new_leader", newLeaderHint,
+				"attempt", attempt+1)
+			currentLeader = newLeaderHint
+			continue
+		}
+
+		if err != nil {
+			n.logger.Warn("forward to leader failed",
+				"leader", currentLeader,
+				"attempt", attempt+1,
+				"error", err)
+			return nil, err
+		}
+
+		n.logger.Debug("forward returned no result, retrying",
+			"leader", currentLeader,
+			"attempt", attempt+1)
+	}
+
+	return nil, domain.ErrNotLeader{LeaderAddr: currentLeader}
 }
 
 func (n *Node) WaitForLeader(ctx context.Context) error {
