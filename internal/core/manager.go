@@ -729,7 +729,7 @@ func (m *Manager) GetClusterInfo() ClusterInfo {
 
 	if m.raftAdapter != nil {
 		raftInfo := m.raftAdapter.GetClusterInfo()
-		info.IsLeader = raftInfo.Leader != nil && raftInfo.Leader.ID == m.nodeID
+		info.IsLeader = raftInfo.Leader != nil && raftInfo.Leader.ID == m.nodeID && raftInfo.Leader.State == ports.NodeLeader
 
 		for _, member := range raftInfo.Members {
 			if member.ID != m.nodeID {

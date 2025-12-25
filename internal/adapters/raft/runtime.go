@@ -251,8 +251,8 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 	}
 
 	leadershipState := ports.RaftLeadershipProvisional
-	leaderID := opts.NodeID
-	leaderAddr := string(advertise)
+	leaderID := ""
+	leaderAddr := ""
 
 	currentState := instance.State()
 	leaderAddrRaft, leaderIDRaft := instance.LeaderWithID()
@@ -507,8 +507,12 @@ func (r *Runtime) currentLeadership() ports.RaftLeadershipInfo {
 
 func (r *Runtime) updateLeadership(info ports.RaftLeadershipInfo) {
 	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.leadership.State == ports.RaftLeadershipLeader && (info.State == ports.RaftLeadershipProvisional || info.State == ports.RaftLeadershipUnknown) {
+		return
+	}
 	r.leadership = info
-	r.mu.Unlock()
 }
 
 func (r *Runtime) buildRaftConfig(opts domain.RaftControllerOptions) *raft.Config {
@@ -693,7 +697,11 @@ func (r *Runtime) ClusterInfo() ports.ClusterInfo {
 
 	leadership := r.LeadershipInfo()
 	if leadership.LeaderID != "" {
-		info.Leader = &ports.RaftNodeInfo{ID: leadership.LeaderID, Address: leadership.LeaderAddress, State: ports.NodeLeader}
+		info.Leader = &ports.RaftNodeInfo{
+			ID:      leadership.LeaderID,
+			Address: leadership.LeaderAddress,
+			State:   mapLeadershipStateToNodeState(leadership.State),
+		}
 	}
 
 	return info
@@ -765,6 +773,19 @@ func mapRaftState(state raft.RaftState) ports.RaftLeadershipState {
 		return ports.RaftLeadershipDemoted
 	default:
 		return ports.RaftLeadershipUnknown
+	}
+}
+
+func mapLeadershipStateToNodeState(state ports.RaftLeadershipState) ports.NodeState {
+	switch state {
+	case ports.RaftLeadershipLeader:
+		return ports.NodeLeader
+	case ports.RaftLeadershipFollower:
+		return ports.NodeFollower
+	case ports.RaftLeadershipJoining:
+		return ports.NodeCandidate
+	default:
+		return ports.NodeFollower
 	}
 }
 
