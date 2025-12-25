@@ -95,10 +95,11 @@ type Runtime struct {
 	runDone   chan struct{}
 	localAddr string
 
-	staleConfigDetected  bool
-	persistedMemberCount int
-	expectedMemberCount  int
-	reconciliationState  string
+	staleConfigDetected   bool
+	staleAddressRecovered bool
+	persistedMemberCount  int
+	expectedMemberCount   int
+	reconciliationState   string
 }
 
 // NewRuntime constructs a runtime with the supplied dependencies.
@@ -218,6 +219,17 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 		}
 	}
 
+	recovered, recoverErr := r.recoverStaleAddressesIfNeeded(opts, storage, fsm, transport, advertise, config)
+	if recoverErr != nil {
+		cancel()
+		r.closeTransport(transport)
+		r.closeStores()
+		return recoverErr
+	}
+	if recovered {
+		r.deps.Logger.Info("stale address recovery completed, proceeding with raft startup", "node_id", opts.NodeID)
+	}
+
 	r.deps.Logger.Debug("creating raft instance", "node_id", opts.NodeID)
 	instance, err := raft.NewRaft(config, fsm, storage.LogStore, storage.StableStore, storage.SnapshotStore, transport)
 	if err != nil {
@@ -296,6 +308,115 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 	return nil
 }
 
+func (r *Runtime) recoverStaleAddressesIfNeeded(
+	opts domain.RaftControllerOptions,
+	storage *StorageResources,
+	fsm raft.FSM,
+	transport raft.Transport,
+	advertise raft.ServerAddress,
+	config *raft.Config,
+) (bool, error) {
+	hasState, err := raft.HasExistingState(storage.LogStore, storage.StableStore, storage.SnapshotStore)
+	if err != nil {
+		return false, err
+	}
+	if !hasState {
+		return false, nil
+	}
+
+	if len(opts.Peers) == 0 {
+		return false, nil
+	}
+
+	expectedAddrs := make(map[raft.ServerID]raft.ServerAddress)
+	expectedAddrs[raft.ServerID(opts.NodeID)] = advertise
+	for _, peer := range opts.Peers {
+		expectedAddrs[raft.ServerID(peer.ID)] = raft.ServerAddress(peer.Address)
+	}
+
+	persistedConfig, err := r.getPersistedConfiguration(storage)
+	if err != nil {
+		r.deps.Logger.Warn("failed to read persisted configuration for stale address check", "error", err)
+		return false, nil
+	}
+
+	staleDetected := false
+	for _, server := range persistedConfig.Servers {
+		expected, ok := expectedAddrs[server.ID]
+		if ok && server.Address != expected {
+			r.deps.Logger.Warn("stale address detected",
+				"node_id", string(server.ID),
+				"persisted_address", string(server.Address),
+				"expected_address", string(expected))
+			staleDetected = true
+		}
+	}
+
+	if !staleDetected {
+		return false, nil
+	}
+
+	recoveryConfig := raft.Configuration{
+		Servers: make([]raft.Server, 0, len(expectedAddrs)),
+	}
+	for id, addr := range expectedAddrs {
+		recoveryConfig.Servers = append(recoveryConfig.Servers, raft.Server{
+			ID:       id,
+			Address:  addr,
+			Suffrage: raft.Voter,
+		})
+	}
+
+	r.deps.Logger.Info("recovering cluster with corrected addresses",
+		"node_id", opts.NodeID,
+		"server_count", len(recoveryConfig.Servers))
+
+	err = raft.RecoverCluster(config, fsm, storage.LogStore, storage.StableStore, storage.SnapshotStore, transport, recoveryConfig)
+	if err != nil {
+		return false, r.raftError("stale address recovery failed", err)
+	}
+
+	r.mu.Lock()
+	r.staleAddressRecovered = true
+	r.mu.Unlock()
+
+	return true, nil
+}
+
+func (r *Runtime) getPersistedConfiguration(storage *StorageResources) (raft.Configuration, error) {
+	snapshots, err := storage.SnapshotStore.List()
+	if err != nil {
+		return raft.Configuration{}, err
+	}
+
+	if len(snapshots) > 0 {
+		meta, rc, err := storage.SnapshotStore.Open(snapshots[0].ID)
+		if err != nil {
+			return raft.Configuration{}, err
+		}
+		_ = rc.Close()
+		return meta.Configuration, nil
+	}
+
+	lastIndex, err := storage.LogStore.LastIndex()
+	if err != nil {
+		return raft.Configuration{}, err
+	}
+
+	for i := lastIndex; i > 0; i-- {
+		var log raft.Log
+		if err := storage.LogStore.GetLog(i, &log); err != nil {
+			continue
+		}
+
+		if log.Type == raft.LogConfiguration {
+			return raft.DecodeConfiguration(log.Data), nil
+		}
+	}
+
+	return raft.Configuration{}, errors.New("no configuration found in persisted state")
+}
+
 func (r *Runtime) detectStaleConfig(instance *raft.Raft, opts domain.RaftControllerOptions) {
 	future := instance.GetConfiguration()
 	if err := future.Error(); err != nil {
@@ -347,6 +468,12 @@ func (r *Runtime) GetStaleConfigInfo() (detected bool, persisted, expected int, 
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	return r.staleConfigDetected, r.persistedMemberCount, r.expectedMemberCount, r.reconciliationState
+}
+
+func (r *Runtime) WasStaleAddressRecovered() bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.staleAddressRecovered
 }
 
 // Stop terminates the raft runtime and releases resources.
