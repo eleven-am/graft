@@ -329,9 +329,11 @@ func (r *Runtime) recoverStaleAddressesIfNeeded(
 	}
 
 	expectedAddrs := make(map[raft.ServerID]raft.ServerAddress)
-	expectedAddrs[raft.ServerID(opts.NodeID)] = advertise
 	for _, peer := range opts.Peers {
 		expectedAddrs[raft.ServerID(peer.ID)] = raft.ServerAddress(peer.Address)
+	}
+	if _, hasSelf := expectedAddrs[raft.ServerID(opts.NodeID)]; !hasSelf {
+		expectedAddrs[raft.ServerID(opts.NodeID)] = advertise
 	}
 
 	persistedConfig, err := r.getPersistedConfiguration(storage)
