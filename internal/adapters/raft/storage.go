@@ -69,6 +69,13 @@ func NewStorage(cfg StorageConfig, logger *slog.Logger) (*Storage, error) {
 
 	logOpts := badger.DefaultOptions(logPath)
 	logOpts.Logger = &badgerAdapter{logger: logger.With("component", "raft.badger-log")}
+	logOpts.MemTableSize = 16 << 20
+	logOpts.NumMemtables = 2
+	logOpts.NumLevelZeroTables = 2
+	logOpts.NumLevelZeroTablesStall = 4
+	logOpts.BlockCacheSize = 8 << 20
+	logOpts.IndexCacheSize = 8 << 20
+	logOpts.ValueLogFileSize = 16 << 20
 
 	store, err := raftbadger.New(raftbadger.Config{DataPath: logPath}, &logOpts)
 	if err != nil {
@@ -79,7 +86,7 @@ func NewStorage(cfg StorageConfig, logger *slog.Logger) (*Storage, error) {
 		)
 	}
 
-	snapshotStore, err := raft.NewFileSnapshotStore(snapshotPath, 3, os.Stderr)
+	snapshotStore, err := raft.NewFileSnapshotStore(snapshotPath, 2, os.Stderr)
 	if err != nil {
 		_ = store.Close()
 		return nil, newRaftStorageError(
@@ -91,6 +98,13 @@ func NewStorage(cfg StorageConfig, logger *slog.Logger) (*Storage, error) {
 
 	stateOpts := badger.DefaultOptions(statePath)
 	stateOpts.Logger = &badgerAdapter{logger: logger.With("component", "raft.badger-state")}
+	stateOpts.MemTableSize = 16 << 20
+	stateOpts.NumMemtables = 2
+	stateOpts.NumLevelZeroTables = 2
+	stateOpts.NumLevelZeroTablesStall = 4
+	stateOpts.BlockCacheSize = 8 << 20
+	stateOpts.IndexCacheSize = 8 << 20
+	stateOpts.ValueLogFileSize = 16 << 20
 
 	stateDB, err := badger.Open(stateOpts)
 	if err != nil {
