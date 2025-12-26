@@ -38,5 +38,6 @@ type RaftControllerOptions struct {
 	BootstrapMetadata  map[string]string
 	BootstrapMultiNode bool
 	Peers              []RaftPeerSpec
+	ExpectedConfig     []RaftPeerSpec
 	RuntimeConfig      RaftRuntimeConfig
 }

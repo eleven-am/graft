@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eleven-am/graft/internal/core/connectors"
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/ports"
 )
@@ -138,8 +139,15 @@ func (m *Manager) StartConnector(connectorName string, config ports.ConnectorCon
 
 	m.startConnectorWatchers()
 
+	if m.connectorFSM != nil {
+		m.connectorFSM.Transition(connectors.StatePending)
+	}
+
 	payload, err := json.Marshal(config)
 	if err != nil {
+		if m.connectorFSM != nil {
+			m.connectorFSM.Transition(connectors.StateError)
+		}
 		return domain.NewValidationError(
 			"failed to marshal connector config",
 			err,
@@ -150,10 +158,16 @@ func (m *Manager) StartConnector(connectorName string, config ports.ConnectorCon
 
 	record, err := m.persistConnectorConfig(connectorName, id, payload)
 	if err != nil {
+		if m.connectorFSM != nil {
+			m.connectorFSM.Transition(connectors.StateError)
+		}
 		return err
 	}
 
 	if err := m.ensureConnectorHandleFromRecord(record); err != nil {
+		if m.connectorFSM != nil {
+			m.connectorFSM.Transition(connectors.StateError)
+		}
 		return err
 	}
 
@@ -185,6 +199,10 @@ func (m *Manager) StopConnector(id string) error {
 
 	if m.logger != nil {
 		m.logger.Info("connector stop requested", "connector", record.Name, "connector_id", id)
+	}
+
+	if m.connectorFSM != nil {
+		m.connectorFSM.Transition(connectors.StateStopped)
 	}
 
 	return nil
@@ -296,6 +314,10 @@ func (m *Manager) stopConnectorHandle(id string, reason connectorReleaseReason) 
 
 	handle.requestRelease(reason)
 	handle.stop()
+
+	if m.connectorFSM != nil {
+		m.connectorFSM.Transition(connectors.StateStopped)
+	}
 }
 
 func (m *Manager) stopAllConnectors() {
@@ -310,6 +332,10 @@ func (m *Manager) stopAllConnectors() {
 	for _, handle := range handles {
 		handle.requestRelease(releaseReasonShutdown)
 		handle.stop()
+	}
+
+	if m.connectorFSM != nil {
+		m.connectorFSM.Transition(connectors.StateStopped)
 	}
 }
 
@@ -860,6 +886,10 @@ func (m *Manager) ensureConnectorHandleFromRecord(record *connectorConfigRecord)
 
 	if m.logger != nil {
 		m.logger.Info("connector handle ready", "connector", record.Name, "connector_id", record.ID)
+	}
+
+	if m.connectorFSM != nil {
+		m.connectorFSM.Transition(connectors.StateRunning)
 	}
 
 	return nil

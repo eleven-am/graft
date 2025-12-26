@@ -31,14 +31,15 @@ type ClusterInfo struct {
 }
 
 type HealthStatus struct {
-	Healthy               bool                   `json:"healthy"`
-	Error                 string                 `json:"error,omitempty"`
-	Details               map[string]interface{} `json:"details,omitempty"`
-	StaleConfigDetected   bool                   `json:"stale_config_detected,omitempty"`
-	ReconciliationState   string                 `json:"reconciliation_state,omitempty"`
-	PersistedMemberCount  int                    `json:"persisted_member_count,omitempty"`
-	ExpectedMemberCount   int                    `json:"expected_member_count,omitempty"`
-	StaleAddressRecovered bool                   `json:"stale_address_recovered,omitempty"`
+	Healthy                bool                   `json:"healthy"`
+	Error                  string                 `json:"error,omitempty"`
+	Details                map[string]interface{} `json:"details,omitempty"`
+	StaleConfigDetected    bool                   `json:"stale_config_detected,omitempty"`
+	ReconciliationState    string                 `json:"reconciliation_state,omitempty"`
+	PersistedMemberCount   int                    `json:"persisted_member_count,omitempty"`
+	ExpectedMemberCount    int                    `json:"expected_member_count,omitempty"`
+	StaleAddressRecovered  bool                   `json:"stale_address_recovered,omitempty"`
+	ConfigMismatchDetected bool                   `json:"config_mismatch_detected,omitempty"`
 }
 
 type HealthCheckProvider interface {
@@ -95,7 +96,7 @@ type RaftStatus struct {
 }
 
 type RaftNode interface {
-	Start(ctx context.Context, existingPeers []Peer, bootstrapMultiNode bool) error
+	Start(ctx context.Context, existingPeers []domain.RaftPeerSpec, bootstrapMultiNode bool) error
 	Apply(cmd domain.Command, timeout time.Duration) (*domain.CommandResult, error)
 	IsLeader() bool
 	IsProvisional() bool

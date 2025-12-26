@@ -187,6 +187,10 @@ func (c *Controller) startReconciliation(ctx context.Context, opts domain.RaftCo
 					"node_id", opts.NodeID,
 					"error", err)
 			}
+			c.mu.Lock()
+			c.updateLeadershipLocked(ports.RaftLeadershipInfo{State: ports.RaftLeadershipProvisional})
+			c.deps.Readiness.SetState(ports.ReadinessStatePending)
+			c.mu.Unlock()
 			return
 		}
 

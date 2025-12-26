@@ -905,7 +905,7 @@ func (_c *MockRaftNode_Shutdown_Call) RunAndReturn(run func() error) *MockRaftNo
 }
 
 // Start provides a mock function with given fields: ctx, existingPeers, bootstrapMultiNode
-func (_m *MockRaftNode) Start(ctx context.Context, existingPeers []ports.Peer, bootstrapMultiNode bool) error {
+func (_m *MockRaftNode) Start(ctx context.Context, existingPeers []domain.RaftPeerSpec, bootstrapMultiNode bool) error {
 	ret := _m.Called(ctx, existingPeers, bootstrapMultiNode)
 
 	if len(ret) == 0 {
@@ -913,7 +913,7 @@ func (_m *MockRaftNode) Start(ctx context.Context, existingPeers []ports.Peer, b
 	}
 
 	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, []ports.Peer, bool) error); ok {
+	if rf, ok := ret.Get(0).(func(context.Context, []domain.RaftPeerSpec, bool) error); ok {
 		r0 = rf(ctx, existingPeers, bootstrapMultiNode)
 	} else {
 		r0 = ret.Error(0)
@@ -929,15 +929,15 @@ type MockRaftNode_Start_Call struct {
 
 // Start is a helper method to define mock.On call
 //   - ctx context.Context
-//   - existingPeers []ports.Peer
+//   - existingPeers []domain.RaftPeerSpec
 //   - bootstrapMultiNode bool
 func (_e *MockRaftNode_Expecter) Start(ctx interface{}, existingPeers interface{}, bootstrapMultiNode interface{}) *MockRaftNode_Start_Call {
 	return &MockRaftNode_Start_Call{Call: _e.mock.On("Start", ctx, existingPeers, bootstrapMultiNode)}
 }
 
-func (_c *MockRaftNode_Start_Call) Run(run func(ctx context.Context, existingPeers []ports.Peer, bootstrapMultiNode bool)) *MockRaftNode_Start_Call {
+func (_c *MockRaftNode_Start_Call) Run(run func(ctx context.Context, existingPeers []domain.RaftPeerSpec, bootstrapMultiNode bool)) *MockRaftNode_Start_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].([]ports.Peer), args[2].(bool))
+		run(args[0].(context.Context), args[1].([]domain.RaftPeerSpec), args[2].(bool))
 	})
 	return _c
 }
@@ -947,7 +947,7 @@ func (_c *MockRaftNode_Start_Call) Return(_a0 error) *MockRaftNode_Start_Call {
 	return _c
 }
 
-func (_c *MockRaftNode_Start_Call) RunAndReturn(run func(context.Context, []ports.Peer, bool) error) *MockRaftNode_Start_Call {
+func (_c *MockRaftNode_Start_Call) RunAndReturn(run func(context.Context, []domain.RaftPeerSpec, bool) error) *MockRaftNode_Start_Call {
 	_c.Call.Return(run)
 	return _c
 }

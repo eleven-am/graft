@@ -3,6 +3,8 @@ package raft
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"strconv"
 	"sync"
 	"time"
@@ -95,6 +97,9 @@ type Runtime struct {
 	runDone   chan struct{}
 	localAddr string
 
+	expectedAddrs      map[raft.ServerID]raft.ServerAddress
+	configMismatchSeen bool
+
 	staleConfigDetected   bool
 	staleAddressRecovered bool
 	persistedMemberCount  int
@@ -185,6 +190,11 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 
 	config := r.buildRaftConfig(opts)
 
+	expectedConfig := opts.ExpectedConfig
+	if len(expectedConfig) == 0 {
+		expectedConfig = opts.Peers
+	}
+
 	hasState, hasStateErr := raft.HasExistingState(storage.LogStore, storage.StableStore, storage.SnapshotStore)
 	if hasStateErr != nil {
 		cancel()
@@ -235,7 +245,29 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 		}
 	}
 
-	recovered, recoverErr := r.recoverStaleAddressesIfNeeded(opts, storage, fsm, transport, advertise, config)
+	// Build canonical expected addresses using the raft transport port derived from advertise.
+	raftPort := parsePortFromAddress(string(advertise))
+	if raftPort <= 0 {
+		cancel()
+		r.closeTransport(transport)
+		r.closeStores()
+		return fmt.Errorf("failed to parse raft port from advertise address: %s", advertise)
+	}
+
+	expectedAddrs, addrErr := r.buildExpectedAddresses(expectedConfig, raftPort, opts.NodeID, advertise)
+	if addrErr != nil {
+		cancel()
+		r.closeTransport(transport)
+		r.closeStores()
+		return addrErr
+	}
+
+	r.mu.Lock()
+	r.expectedAddrs = expectedAddrs
+	r.configMismatchSeen = false
+	r.mu.Unlock()
+
+	recovered, recoverErr := r.recoverStaleAddressesIfNeeded(opts, expectedAddrs, storage, fsm, transport, advertise, config)
 	if recoverErr != nil {
 		cancel()
 		r.closeTransport(transport)
@@ -278,6 +310,7 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 	r.deps.Logger.Debug("raft runtime started", "node_id", opts.NodeID, "peers", len(opts.Peers))
 
 	go r.observe(runtimeCtx)
+	go r.monitorConfig(runtimeCtx)
 
 	stats := instance.Stats()
 	term := uint64(0)
@@ -326,6 +359,7 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 
 func (r *Runtime) recoverStaleAddressesIfNeeded(
 	opts domain.RaftControllerOptions,
+	expectedAddrs map[raft.ServerID]raft.ServerAddress,
 	storage *StorageResources,
 	fsm raft.FSM,
 	transport raft.Transport,
@@ -340,22 +374,17 @@ func (r *Runtime) recoverStaleAddressesIfNeeded(
 		return false, nil
 	}
 
-	if len(opts.Peers) == 0 {
+	if len(expectedAddrs) == 0 {
 		return false, nil
 	}
 
-	expectedAddrs := make(map[raft.ServerID]raft.ServerAddress)
-	for _, peer := range opts.Peers {
-		expectedAddrs[raft.ServerID(peer.ID)] = raft.ServerAddress(peer.Address)
-	}
 	if _, hasSelf := expectedAddrs[raft.ServerID(opts.NodeID)]; !hasSelf {
 		expectedAddrs[raft.ServerID(opts.NodeID)] = advertise
 	}
 
 	persistedConfig, err := r.getPersistedConfiguration(storage)
 	if err != nil {
-		r.deps.Logger.Warn("failed to read persisted configuration for stale address check", "error", err)
-		return false, nil
+		return false, fmt.Errorf("failed to read persisted configuration: %w", err)
 	}
 
 	staleDetected := false
@@ -399,6 +428,25 @@ func (r *Runtime) recoverStaleAddressesIfNeeded(
 	r.mu.Unlock()
 
 	return true, nil
+}
+
+func (r *Runtime) buildExpectedAddresses(expectedPeers []domain.RaftPeerSpec, raftPort int, selfID string, advertise raft.ServerAddress) (map[raft.ServerID]raft.ServerAddress, error) {
+	if raftPort <= 0 {
+		return nil, fmt.Errorf("invalid raft port: %d", raftPort)
+	}
+
+	expectedAddrs := make(map[raft.ServerID]raft.ServerAddress)
+	for _, peer := range expectedPeers {
+		expectedAddrs[raft.ServerID(peer.ID)] = normalizeRaftAddress(peer.Address, raftPort)
+	}
+	if _, hasSelf := expectedAddrs[raft.ServerID(selfID)]; !hasSelf {
+		host, _, err := net.SplitHostPort(string(advertise))
+		if err != nil {
+			return nil, fmt.Errorf("failed to split advertise address: %w", err)
+		}
+		expectedAddrs[raft.ServerID(selfID)] = raft.ServerAddress(net.JoinHostPort(host, strconv.Itoa(raftPort)))
+	}
+	return expectedAddrs, nil
 }
 
 func (r *Runtime) getPersistedConfiguration(storage *StorageResources) (raft.Configuration, error) {
@@ -445,6 +493,11 @@ func (r *Runtime) detectStaleConfig(instance *raft.Raft, opts domain.RaftControl
 	persistedServers := future.Configuration().Servers
 	persistedCount := len(persistedServers)
 	expectedCount := len(opts.Peers) + 1
+
+	// Keep a snapshot of the latest configuration to allow periodic comparison with expected addresses.
+	r.mu.Lock()
+	r.configMismatchSeen = false
+	r.mu.Unlock()
 
 	r.mu.Lock()
 	r.persistedMemberCount = persistedCount
@@ -683,6 +736,21 @@ func (r *Runtime) observe(ctx context.Context) {
 	}
 }
 
+// monitorConfig periodically checks the raft configuration against expected addresses and flags mismatches.
+func (r *Runtime) monitorConfig(ctx context.Context) {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			r.validatePersistedConfig()
+		}
+	}
+}
+
 func (r *Runtime) handleObservation(obs raft.Observation) {
 	switch data := obs.Data.(type) {
 	case raft.LeaderObservation:
@@ -704,6 +772,53 @@ func (r *Runtime) handleObservation(obs raft.Observation) {
 					go cleaner.CleanupNodeLeases(nodeID)
 				}
 			}
+			// Remove server from raft configuration when a peer is removed.
+			r.mu.RLock()
+			instance := r.raft
+			selfID := r.options.NodeID
+			r.mu.RUnlock()
+			if instance != nil && string(data.Peer.ID) != selfID {
+				go func(id raft.ServerID) {
+					_ = instance.RemoveServer(id, 0, 0).Error()
+				}(data.Peer.ID)
+			}
+		}
+	}
+
+	// Periodically validate persisted config against expected addresses to surface mismatches.
+	go r.validatePersistedConfig()
+}
+
+// validatePersistedConfig compares the current raft configuration against the expected addresses snapshot.
+// It logs a warning once per runtime run if a mismatch is observed after startup.
+func (r *Runtime) validatePersistedConfig() {
+	r.mu.RLock()
+	expected := r.expectedAddrs
+	mismatchSeen := r.configMismatchSeen
+	instance := r.raft
+	r.mu.RUnlock()
+
+	if instance == nil || len(expected) == 0 || mismatchSeen {
+		return
+	}
+
+	future := instance.GetConfiguration()
+	if err := future.Error(); err != nil {
+		return
+	}
+
+	config := future.Configuration()
+	for _, srv := range config.Servers {
+		exp, ok := expected[srv.ID]
+		if ok && srv.Address != exp {
+			r.mu.Lock()
+			r.configMismatchSeen = true
+			r.mu.Unlock()
+			r.deps.Logger.Warn("config/expected address mismatch detected post-start",
+				"node_id", string(srv.ID),
+				"persisted_address", string(srv.Address),
+				"expected_address", string(exp))
+			return
 		}
 	}
 }
@@ -754,7 +869,9 @@ func (r *Runtime) updateLeadership(info ports.RaftLeadershipInfo) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if r.leadership.State == ports.RaftLeadershipLeader && (info.State == ports.RaftLeadershipProvisional || info.State == ports.RaftLeadershipUnknown) {
+	// Preserve leader state against provisional/unknown downgrades to avoid losing a real leader signal.
+	if r.leadership.State == ports.RaftLeadershipLeader &&
+		(info.State == ports.RaftLeadershipProvisional || info.State == ports.RaftLeadershipUnknown) {
 		return
 	}
 	r.leadership = info
@@ -1057,14 +1174,16 @@ func (r *Runtime) Health() ports.HealthStatus {
 	expectedCount := r.expectedMemberCount
 	reconcileState := r.reconciliationState
 	recovered := r.staleAddressRecovered
+	configMismatch := r.configMismatchSeen
 	r.mu.RUnlock()
 
 	status := ports.HealthStatus{
-		StaleConfigDetected:   staleDetected,
-		PersistedMemberCount:  persistedCount,
-		ExpectedMemberCount:   expectedCount,
-		ReconciliationState:   reconcileState,
-		StaleAddressRecovered: recovered,
+		StaleConfigDetected:    staleDetected,
+		PersistedMemberCount:   persistedCount,
+		ExpectedMemberCount:    expectedCount,
+		ReconciliationState:    reconcileState,
+		StaleAddressRecovered:  recovered,
+		ConfigMismatchDetected: configMismatch,
 	}
 
 	if instance == nil {
@@ -1088,6 +1207,31 @@ func (r *Runtime) Health() ports.HealthStatus {
 
 	status.Healthy = true
 	return status
+}
+
+func normalizeRaftAddress(addr string, raftPort int) raft.ServerAddress {
+	host, _, err := net.SplitHostPort(addr)
+	if err != nil {
+		host = addr
+	}
+
+	if raftPort <= 0 {
+		return raft.ServerAddress(addr)
+	}
+
+	return raft.ServerAddress(net.JoinHostPort(host, strconv.Itoa(raftPort)))
+}
+
+func parsePortFromAddress(addr string) int {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0
+	}
+	return port
 }
 
 func (r *Runtime) LocalAddress() string {

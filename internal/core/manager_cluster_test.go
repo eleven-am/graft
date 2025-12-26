@@ -10,7 +10,7 @@ import (
 )
 
 func TestManager_ClusterCommandMethods(t *testing.T) {
-	config := domain.NewConfigFromSimple("test-node", "127.0.0.1:0", t.TempDir(), slog.Default())
+	config := domain.NewConfigFromSimple("test-node", "127.0.0.1:9000", t.TempDir(), slog.Default())
 	config.Raft.DiscoveryTimeout = 100 * time.Millisecond
 	manager := NewWithConfig(config)
 	if manager == nil {
@@ -38,6 +38,13 @@ func TestManager_ClusterCommandMethods(t *testing.T) {
 		Params: map[string]interface{}{
 			"message": "hello world",
 		},
+	}
+
+	// Wait for leadership to avoid forwarding to an empty/zero leader address.
+	leaderCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+	if err := manager.raftAdapter.WaitForLeader(leaderCtx); err != nil {
+		t.Fatalf("leader not established in time: %v", err)
 	}
 
 	// Retry BroadcastCommand until it works or timeout is reached

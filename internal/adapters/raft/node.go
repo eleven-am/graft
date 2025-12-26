@@ -96,15 +96,17 @@ func NewNode(cfg *Config, storage *Storage, eventManager ports.EventManager, app
 	return n, nil
 }
 
-func (n *Node) Start(ctx context.Context, existingPeers []ports.Peer, bootstrapMultiNode bool) error {
+func (n *Node) Start(ctx context.Context, existingPeers []domain.RaftPeerSpec, bootstrapMultiNode bool) error {
 	n.setProvisional(len(existingPeers) == 0 || bootstrapMultiNode)
+
 	options := domain.RaftControllerOptions{
 		NodeID:             n.config.NodeID,
 		BindAddress:        n.config.BindAddr,
 		DataDir:            n.config.DataDir,
 		BootstrapMetadata:  metadata.ExtendMetadata(nil, n.metadata),
 		BootstrapMultiNode: bootstrapMultiNode,
-		Peers:              convertPeers(existingPeers),
+		Peers:              existingPeers,
+		ExpectedConfig:     prependSelf(n.config.NodeID, n.config.BindAddr, existingPeers),
 		RuntimeConfig: domain.RaftRuntimeConfig{
 			ClusterID:          n.config.ClusterID,
 			ClusterPolicy:      n.config.ClusterPolicy,
@@ -129,19 +131,23 @@ func (n *Node) Start(ctx context.Context, existingPeers []ports.Peer, bootstrapM
 	return nil
 }
 
-func convertPeers(peers []ports.Peer) []domain.RaftPeerSpec {
-	if len(peers) == 0 {
-		return nil
-	}
-	result := make([]domain.RaftPeerSpec, 0, len(peers))
-	for _, peer := range peers {
-		result = append(result, domain.RaftPeerSpec{
-			ID:       peer.ID,
-			Address:  net.JoinHostPort(peer.Address, strconv.Itoa(peer.Port)),
-			Metadata: peer.Metadata,
-		})
-	}
+func prependSelf(nodeID, bindAddr string, peers []domain.RaftPeerSpec) []domain.RaftPeerSpec {
+	result := make([]domain.RaftPeerSpec, 0, len(peers)+1)
+	result = append(result, domain.RaftPeerSpec{ID: nodeID, Address: bindAddr})
+	result = append(result, peers...)
 	return result
+}
+
+func parsePort(addr string) int {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return 0
+	}
+	return port
 }
 
 func (n *Node) Stop() error {

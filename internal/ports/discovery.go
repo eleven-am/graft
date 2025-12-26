@@ -33,3 +33,10 @@ const (
 	PeerUpdated
 	PeerRemoved
 )
+
+// Discovery abstracts the discovery manager surface needed by bootstrap coordination.
+type Discovery interface {
+	Start(ctx context.Context, host string, port int, grpcPort int, clusterID string) error
+	GetPeers() []Peer
+	Subscribe() (<-chan Event, func())
+}
