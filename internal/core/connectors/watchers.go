@@ -19,7 +19,7 @@ func (g *WatcherGroup) Add(start func(), stop func()) {
 
 func (g *WatcherGroup) Start(ctx context.Context) {
 	for _, fn := range g.startFns {
-		// propagate ctx cancellation if the starter observes it
+
 		go fn()
 	}
 }

@@ -931,7 +931,7 @@ func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) (
 }
 
 func (m *Manager) refreshPeersAsync(ctx context.Context, timeout time.Duration) {
-	// legacy no-op; moved to bootstrap coordinator
+
 }
 
 type WorkflowTrigger struct {

@@ -40,7 +40,6 @@ func TestManager_ClusterCommandMethods(t *testing.T) {
 		},
 	}
 
-	// Wait for leadership to avoid forwarding to an empty/zero leader address.
 	leaderCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	if err := manager.raftAdapter.WaitForLeader(leaderCtx); err != nil {

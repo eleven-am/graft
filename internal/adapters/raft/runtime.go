@@ -245,7 +245,6 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 		}
 	}
 
-	// Build canonical expected addresses using the raft transport port derived from advertise.
 	raftPort := parsePortFromAddress(string(advertise))
 	if raftPort <= 0 {
 		cancel()
@@ -494,7 +493,6 @@ func (r *Runtime) detectStaleConfig(instance *raft.Raft, opts domain.RaftControl
 	persistedCount := len(persistedServers)
 	expectedCount := len(opts.Peers) + 1
 
-	// Keep a snapshot of the latest configuration to allow periodic comparison with expected addresses.
 	r.mu.Lock()
 	r.configMismatchSeen = false
 	r.mu.Unlock()
@@ -772,7 +770,7 @@ func (r *Runtime) handleObservation(obs raft.Observation) {
 					go cleaner.CleanupNodeLeases(nodeID)
 				}
 			}
-			// Remove server from raft configuration when a peer is removed.
+
 			r.mu.RLock()
 			instance := r.raft
 			selfID := r.options.NodeID
@@ -785,7 +783,6 @@ func (r *Runtime) handleObservation(obs raft.Observation) {
 		}
 	}
 
-	// Periodically validate persisted config against expected addresses to surface mismatches.
 	go r.validatePersistedConfig()
 }
 
@@ -869,7 +866,6 @@ func (r *Runtime) updateLeadership(info ports.RaftLeadershipInfo) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	// Preserve leader state against provisional/unknown downgrades to avoid losing a real leader signal.
 	if r.leadership.State == ports.RaftLeadershipLeader &&
 		(info.State == ports.RaftLeadershipProvisional || info.State == ports.RaftLeadershipUnknown) {
 		return

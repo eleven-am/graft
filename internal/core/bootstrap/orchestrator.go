@@ -35,7 +35,6 @@ func (o *Orchestrator) Start(ctx context.Context, grpcPort int) (*Result, error)
 		return nil, err
 	}
 
-	// Readiness callback: enforce leader presence and raft health.
 	o.Raft.SetReadinessCallback(func(ready bool) {
 		leader := o.Raft.GetLeadershipInfo()
 		h := o.Raft.GetHealth()
@@ -74,7 +73,6 @@ func (o *Orchestrator) Start(ctx context.Context, grpcPort int) (*Result, error)
 		o.SetReadiness(readiness.StateDetecting)
 	}
 
-	// Guard readiness on leader presence during bootstrap.
 	go func() {
 		leaderCtx, cancel := context.WithTimeout(ctx, o.DiscoveryTimeout())
 		defer cancel()
