@@ -75,6 +75,8 @@ type Manager struct {
 	connectorRandMu        sync.Mutex
 	connectorRand          *rand.Rand
 	watchers               *connectors.WatcherGroup
+	watchersCtx            context.Context
+	watchersCancel         context.CancelFunc
 	leaseManager           ports.LeaseManagerPort
 
 	ctx    context.Context
@@ -517,12 +519,15 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	}
 
 	if m.watchers != nil {
-		m.watchers.Add(func() { m.watchForSeniorPeers() }, nil)
-		m.watchers.Add(func() { m.reconcilePeersLoop() }, nil)
-		m.watchers.Start(m.ctx)
+		wctx, wcancel := context.WithCancel(m.ctx)
+		m.watchersCtx = wctx
+		m.watchersCancel = wcancel
+		m.watchers.Add(func() { m.watchForSeniorPeers(wctx) }, wcancel)
+		m.watchers.Add(func() { m.reconcilePeersLoop(wctx) }, nil)
+		m.watchers.Start(wctx)
 	} else {
-		go m.watchForSeniorPeers()
-		go m.reconcilePeersLoop()
+		go m.watchForSeniorPeers(m.ctx)
+		go m.reconcilePeersLoop(m.ctx)
 	}
 
 	return nil
@@ -533,6 +538,9 @@ func (m *Manager) Stop() error {
 		m.cancel()
 	}
 
+	if m.watchersCancel != nil {
+		m.watchersCancel()
+	}
 	m.stopConnectorWatchers()
 	m.stopAllConnectors()
 	if m.connectorFSM != nil {
@@ -1319,7 +1327,7 @@ func (m *Manager) isWorkflowIntakeAllowed() bool {
 	return m.workflowIntakeOk
 }
 
-func (m *Manager) watchForSeniorPeers() {
+func (m *Manager) watchForSeniorPeers(ctx context.Context) {
 	if !m.raftAdapter.IsProvisional() {
 		m.logger.Debug("node not provisional, skipping senior peer detection")
 		return
@@ -1334,7 +1342,7 @@ func (m *Manager) watchForSeniorPeers() {
 
 	for {
 		select {
-		case <-m.ctx.Done():
+		case <-ctx.Done():
 			return
 		case event, ok := <-discoveryEvents:
 			if !ok {
@@ -1349,7 +1357,7 @@ func (m *Manager) watchForSeniorPeers() {
 
 // reconcilePeersLoop periodically removes raft members that are no longer present in discovery.
 // This keeps the raft configuration aligned with the active cluster view even if removal events are missed.
-func (m *Manager) reconcilePeersLoop() {
+func (m *Manager) reconcilePeersLoop(ctx context.Context) {
 	if m.discovery == nil || m.raftAdapter == nil {
 		return
 	}
@@ -1359,7 +1367,7 @@ func (m *Manager) reconcilePeersLoop() {
 
 	for {
 		select {
-		case <-m.ctx.Done():
+		case <-ctx.Done():
 			return
 		case <-ticker.C:
 			peers := m.discovery.GetPeers()
