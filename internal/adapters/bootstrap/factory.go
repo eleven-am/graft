@@ -73,7 +73,7 @@ func (f *Factory) CreateBootstrapper() (*bootstrap.Bootstrapper, error) {
 	epochStore := bootstrap.NewFileEpochStore(bootCfg.DataDir, f.logger)
 
 	var fencingManager *bootstrap.FencingManager
-	if f.config.Bootstrap.FencingEnabled && transport != nil {
+	if f.config.Bootstrap.FencingEnabled && transport != nil && secretsManager != nil {
 		fencingManager = bootstrap.NewFencingManager(
 			bootCfg,
 			tokenStore,
