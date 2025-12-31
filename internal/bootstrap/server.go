@@ -556,6 +556,10 @@ func (s *BootstrapServer) getLocalServerID() raft.ServerID {
 }
 
 func (s *BootstrapServer) requireMTLS(ctx context.Context) (*x509.Certificate, error) {
+	if s.config != nil && s.config.TLS.AllowInsecure {
+		return nil, nil
+	}
+
 	if s.tlsConfig == nil {
 		return nil, ErrMTLSRequired
 	}

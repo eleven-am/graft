@@ -90,7 +90,7 @@ func TestIntegration_FullBootstrapFlow_OrdinalZero(t *testing.T) {
 	t.Logf("State after bootstrap attempt: %s", state)
 }
 
-func TestIntegration_FullBootstrapFlow_NonOrdinalZeroWaitsForLeader(t *testing.T) {
+func TestIntegration_FullBootstrapFlow_NonOrdinalZeroInsecureMode(t *testing.T) {
 	tempDir := t.TempDir()
 
 	metaStore := NewFileMetaStore(tempDir, nil)
@@ -127,8 +127,8 @@ func TestIntegration_FullBootstrapFlow_NonOrdinalZeroWaitsForLeader(t *testing.T
 	time.Sleep(100 * time.Millisecond)
 
 	state := bootstrapper.CurrentState()
-	if state != StateUninitialized {
-		t.Errorf("Non-ordinal-0 should remain uninitialized without leader, got %s", state)
+	if state != StateReady {
+		t.Errorf("Non-ordinal-0 in insecure mode (no fencing) should transition to ready, got %s", state)
 	}
 }
 

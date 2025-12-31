@@ -120,17 +120,18 @@ func (c *RetryConfig) Validate() error {
 }
 
 type TLSConfig struct {
-	Enabled     bool               `json:"enabled" yaml:"enabled"`
-	Required    bool               `json:"required" yaml:"required"`
-	CertFile    string             `json:"cert_file" yaml:"cert_file"`
-	KeyFile     string             `json:"key_file" yaml:"key_file"`
-	CAFile      string             `json:"ca_file" yaml:"ca_file"`
-	ClientAuth  tls.ClientAuthType `json:"client_auth" yaml:"client_auth"`
-	ServerName  string             `json:"server_name,omitempty" yaml:"server_name,omitempty"`
-	MinVersion  uint16             `json:"min_version" yaml:"min_version"`
-	AllowedSANs []string           `json:"allowed_sans,omitempty" yaml:"allowed_sans,omitempty"`
-	CRLFile     string             `json:"crl_file,omitempty" yaml:"crl_file,omitempty"`
-	OCSPEnabled bool               `json:"ocsp_enabled" yaml:"ocsp_enabled"`
+	Enabled       bool               `json:"enabled" yaml:"enabled"`
+	Required      bool               `json:"required" yaml:"required"`
+	AllowInsecure bool               `json:"allow_insecure" yaml:"allow_insecure"`
+	CertFile      string             `json:"cert_file" yaml:"cert_file"`
+	KeyFile       string             `json:"key_file" yaml:"key_file"`
+	CAFile        string             `json:"ca_file" yaml:"ca_file"`
+	ClientAuth    tls.ClientAuthType `json:"client_auth" yaml:"client_auth"`
+	ServerName    string             `json:"server_name,omitempty" yaml:"server_name,omitempty"`
+	MinVersion    uint16             `json:"min_version" yaml:"min_version"`
+	AllowedSANs   []string           `json:"allowed_sans,omitempty" yaml:"allowed_sans,omitempty"`
+	CRLFile       string             `json:"crl_file,omitempty" yaml:"crl_file,omitempty"`
+	OCSPEnabled   bool               `json:"ocsp_enabled" yaml:"ocsp_enabled"`
 }
 
 func (c *TLSConfig) Validate() error {

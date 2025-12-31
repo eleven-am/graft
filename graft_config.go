@@ -228,6 +228,11 @@ func (cb *ConfigBuilder) WithClusterPersistence(persistenceFile string) *ConfigB
 	return cb
 }
 
+func (cb *ConfigBuilder) WithBootstrapInsecure() *ConfigBuilder {
+	cb.config.WithBootstrapInsecure()
+	return cb
+}
+
 // Build returns the constructed configuration.
 // This finalizes the configuration and returns it ready for use with NewWithConfig().
 func (cb *ConfigBuilder) Build() *Config {

@@ -323,6 +323,11 @@ func (c *Config) WithBootstrapTimeouts(leaderWait, ready, staleCheck time.Durati
 	return c
 }
 
+func (c *Config) WithBootstrapInsecure() *Config {
+	c.Bootstrap.TLSAllowInsecure = true
+	return c
+}
+
 func (c *Config) Validate() error {
 	if c.NodeID == "" {
 		return NewConfigError("node_id", ErrInvalidInput)

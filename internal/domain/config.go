@@ -184,10 +184,11 @@ type BootstrapConfig struct {
 	FencingKeyPath  string `json:"fencing_key_path,omitempty" yaml:"fencing_key_path,omitempty"`
 	FencingQuorum   int    `json:"fencing_quorum,omitempty" yaml:"fencing_quorum,omitempty"`
 
-	TLSEnabled  bool   `json:"tls_enabled" yaml:"tls_enabled"`
-	TLSCertPath string `json:"tls_cert_path,omitempty" yaml:"tls_cert_path,omitempty"`
-	TLSKeyPath  string `json:"tls_key_path,omitempty" yaml:"tls_key_path,omitempty"`
-	TLSCAPath   string `json:"tls_ca_path,omitempty" yaml:"tls_ca_path,omitempty"`
+	TLSEnabled       bool   `json:"tls_enabled" yaml:"tls_enabled"`
+	TLSCertPath      string `json:"tls_cert_path,omitempty" yaml:"tls_cert_path,omitempty"`
+	TLSKeyPath       string `json:"tls_key_path,omitempty" yaml:"tls_key_path,omitempty"`
+	TLSCAPath        string `json:"tls_ca_path,omitempty" yaml:"tls_ca_path,omitempty"`
+	TLSAllowInsecure bool   `json:"tls_allow_insecure" yaml:"tls_allow_insecure"`
 
 	LeaderWaitTimeout  time.Duration `json:"leader_wait_timeout" yaml:"leader_wait_timeout"`
 	ReadyTimeout       time.Duration `json:"ready_timeout" yaml:"ready_timeout"`

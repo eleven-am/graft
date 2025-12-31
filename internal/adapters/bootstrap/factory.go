@@ -208,8 +208,9 @@ func (f *Factory) buildBootstrapConfig() *bootstrap.BootstrapConfig {
 func (f *Factory) buildTLSConfig(domainCfg domain.BootstrapConfig) bootstrap.TLSConfig {
 	if !domainCfg.TLSEnabled {
 		return bootstrap.TLSConfig{
-			Enabled:  false,
-			Required: false,
+			Enabled:       false,
+			Required:      false,
+			AllowInsecure: domainCfg.TLSAllowInsecure,
 		}
 	}
 
@@ -283,7 +284,7 @@ func (f *Factory) createDiscoveryAdapter(bootCfg *bootstrap.BootstrapConfig) (bo
 }
 
 func (f *Factory) createTransport(bootCfg *bootstrap.BootstrapConfig) (bootstrap.BootstrapTransport, error) {
-	if !bootCfg.TLS.Enabled {
+	if !bootCfg.TLS.Enabled && !bootCfg.TLS.AllowInsecure {
 		return nil, fmt.Errorf("TLS is required for bootstrap transport")
 	}
 

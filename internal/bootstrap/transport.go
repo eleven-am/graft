@@ -10,6 +10,7 @@ import (
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type SecureTransportDeps struct {
@@ -37,6 +38,20 @@ func NewSecureTransport(deps SecureTransportDeps) (*SecureTransport, error) {
 		deps.Logger = slog.Default()
 	}
 
+	t := &SecureTransport{
+		config:    deps.Config,
+		fencing:   deps.Fencing,
+		metaStore: deps.MetaStore,
+		secrets:   deps.Secrets,
+		logger:    deps.Logger,
+		connPool:  make(map[string]*grpc.ClientConn),
+	}
+
+	if deps.Config.TLS.AllowInsecure {
+		deps.Logger.Warn("bootstrap transport running in insecure mode - use only for internal networks")
+		return t, nil
+	}
+
 	if !deps.Config.TLS.Enabled {
 		return nil, ErrTLSNotConfigured
 	}
@@ -51,16 +66,7 @@ func NewSecureTransport(deps SecureTransportDeps) (*SecureTransport, error) {
 		return nil, fmt.Errorf("failed to build TLS config: %w", err)
 	}
 
-	t := &SecureTransport{
-		config:    deps.Config,
-		fencing:   deps.Fencing,
-		metaStore: deps.MetaStore,
-		secrets:   deps.Secrets,
-		logger:    deps.Logger,
-		connPool:  make(map[string]*grpc.ClientConn),
-		tlsConfig: tlsConfig,
-	}
-
+	t.tlsConfig = tlsConfig
 	return t, nil
 }
 
@@ -81,12 +87,14 @@ func (t *SecureTransport) getConnection(addr string) (*grpc.ClientConn, error) {
 
 	var opts []grpc.DialOption
 
-	if t.tlsConfig == nil {
+	if t.tlsConfig != nil {
+		creds := credentials.NewTLS(t.tlsConfig)
+		opts = append(opts, grpc.WithTransportCredentials(creds))
+	} else if t.config.TLS.AllowInsecure {
+		opts = append(opts, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	} else {
 		return nil, ErrTLSNotConfigured
 	}
-
-	creds := credentials.NewTLS(t.tlsConfig)
-	opts = append(opts, grpc.WithTransportCredentials(creds))
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
