@@ -538,9 +538,9 @@ func (b *Bootstrapper) handleNonOrdinalZeroBootstrap(ctx context.Context) {
 		return
 	}
 
-	if b.transport == nil && b.fallbackElection == nil {
-		b.logger.Warn("no fencing manager, transitioning to ready state via bootstrapping")
-		if err := b.transitionState(StateBootstrapping, "no fencing manager - non-TLS mode"); err != nil {
+	if b.fallbackElection == nil {
+		b.logger.Warn("no fallback election configured, transitioning to ready state")
+		if err := b.transitionState(StateBootstrapping, "no fallback election - insecure mode"); err != nil {
 			b.logger.Error("failed to transition to bootstrapping", slog.Any("error", err))
 			return
 		}
