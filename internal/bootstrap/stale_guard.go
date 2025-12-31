@@ -9,15 +9,15 @@ import (
 )
 
 type StaleGuardDeps struct {
-	Config           *BootstrapConfig
-	MetaStore        MetaStore
-	FencingManager   *FencingManager
-	UnfenceTracker   *UnfenceTracker
-	Prober           PeerProber
-	RaftConfigFunc   func() ([]VoterInfo, error)
+	Config            *BootstrapConfig
+	MetaStore         MetaStore
+	FencingManager    *FencingManager
+	UnfenceTracker    *UnfenceTracker
+	Prober            PeerProber
+	RaftConfigFunc    func() ([]VoterInfo, error)
 	ExpectedPeersFunc func() []VoterInfo
-	Logger           *slog.Logger
-	Clock            func() time.Time
+	Logger            *slog.Logger
+	Clock             func() time.Time
 }
 
 type StaleSingleNodeGuard struct {

@@ -180,9 +180,9 @@ type BootstrapConfig struct {
 	HeadlessService string `json:"headless_service,omitempty" yaml:"headless_service,omitempty"`
 	BasePort        int    `json:"base_port" yaml:"base_port"`
 
-	FencingEnabled  bool   `json:"fencing_enabled" yaml:"fencing_enabled"`
-	FencingKeyPath  string `json:"fencing_key_path,omitempty" yaml:"fencing_key_path,omitempty"`
-	FencingQuorum   int    `json:"fencing_quorum,omitempty" yaml:"fencing_quorum,omitempty"`
+	FencingEnabled bool   `json:"fencing_enabled" yaml:"fencing_enabled"`
+	FencingKeyPath string `json:"fencing_key_path,omitempty" yaml:"fencing_key_path,omitempty"`
+	FencingQuorum  int    `json:"fencing_quorum,omitempty" yaml:"fencing_quorum,omitempty"`
 
 	TLSEnabled       bool   `json:"tls_enabled" yaml:"tls_enabled"`
 	TLSCertPath      string `json:"tls_cert_path,omitempty" yaml:"tls_cert_path,omitempty"`

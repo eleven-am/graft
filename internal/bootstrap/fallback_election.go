@@ -48,8 +48,8 @@ type FallbackElection struct {
 	electionMu sync.Mutex
 	inElection bool
 
-	voteMu    sync.Mutex
-	lastVote  *voteState
+	voteMu   sync.Mutex
+	lastVote *voteState
 }
 
 type FallbackCandidate struct {

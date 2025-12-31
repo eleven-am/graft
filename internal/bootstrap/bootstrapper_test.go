@@ -97,11 +97,11 @@ func TestBootstrapper_Start_FreshCluster(t *testing.T) {
 func TestBootstrapper_Start_ExistingCluster(t *testing.T) {
 	metaStore := newMockMetaStoreForBootstrap()
 	metaStore.SetMeta(&ClusterMeta{
-		Version:      CurrentMetaVersion,
-		ClusterUUID:  "test-cluster",
-		FencingEpoch: 5,
-		State:        StateReady,
-		ServerID:     "node-0",
+		Version:       CurrentMetaVersion,
+		ClusterUUID:   "test-cluster",
+		FencingEpoch:  5,
+		State:         StateReady,
+		ServerID:      "node-0",
 		ServerAddress: "10.0.0.1:9000",
 	})
 

@@ -20,16 +20,16 @@ const (
 )
 
 type FencingToken struct {
-	Version      uint8              `json:"version"`
-	Epoch        uint64             `json:"epoch"`
-	HolderID     raft.ServerID      `json:"holder_id"`
-	VoterSetHash [32]byte           `json:"voter_set_hash"`
-	QuorumSize   int                `json:"quorum_size"`
-	Mode         FencingMode        `json:"mode"`
-	AcquiredAt   time.Time          `json:"acquired_at"`
-	ExpiresAt    time.Time          `json:"expires_at,omitempty"`
-	Checksum     uint32             `json:"checksum"`
-	Signature    []byte             `json:"signature"`
+	Version      uint8         `json:"version"`
+	Epoch        uint64        `json:"epoch"`
+	HolderID     raft.ServerID `json:"holder_id"`
+	VoterSetHash [32]byte      `json:"voter_set_hash"`
+	QuorumSize   int           `json:"quorum_size"`
+	Mode         FencingMode   `json:"mode"`
+	AcquiredAt   time.Time     `json:"acquired_at"`
+	ExpiresAt    time.Time     `json:"expires_at,omitempty"`
+	Checksum     uint32        `json:"checksum"`
+	Signature    []byte        `json:"signature"`
 }
 
 func (t *FencingToken) ComputeChecksum() uint32 {

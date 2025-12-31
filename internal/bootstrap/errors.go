@@ -494,9 +494,9 @@ func (e *MetaCorruptionError) Is(target error) bool {
 }
 
 type StateTransitionError struct {
-    From    NodeState
-    To      NodeState
-    Message string
+	From    NodeState
+	To      NodeState
+	Message string
 }
 
 func (e *StateTransitionError) Error() string {
@@ -507,23 +507,23 @@ func (e *StateTransitionError) Error() string {
 }
 
 func (e *StateTransitionError) Is(target error) bool {
-    return errors.Is(target, ErrInvalidStateTransition)
+	return errors.Is(target, ErrInvalidStateTransition)
 }
 
 // CertificateSANMismatchError indicates the presented certificate does not match the expected address
 // for the peer as defined in the committed voter set. This is used when validating mTLS identities
 // in the fallback election handshake.
 type CertificateSANMismatchError struct {
-    PeerID          raft.ServerID
-    ExpectedAddress raft.ServerAddress
-    CertDNSNames    []string
-    CertIPAddresses []net.IP
-    CertCN          string
+	PeerID          raft.ServerID
+	ExpectedAddress raft.ServerAddress
+	CertDNSNames    []string
+	CertIPAddresses []net.IP
+	CertCN          string
 }
 
 func (e *CertificateSANMismatchError) Error() string {
-    return fmt.Sprintf("certificate SAN mismatch for peer %s: expected %s, cert DNS=%v, IPs=%v, CN=%s",
-        e.PeerID, e.ExpectedAddress, e.CertDNSNames, e.CertIPAddresses, e.CertCN)
+	return fmt.Sprintf("certificate SAN mismatch for peer %s: expected %s, cert DNS=%v, IPs=%v, CN=%s",
+		e.PeerID, e.ExpectedAddress, e.CertDNSNames, e.CertIPAddresses, e.CertCN)
 }
 
 type StaleNodeError struct {

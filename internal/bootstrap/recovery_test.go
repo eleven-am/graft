@@ -11,13 +11,13 @@ import (
 )
 
 type mockLogStore struct {
-	logs       map[uint64]*raft.Log
-	firstIndex uint64
-	lastIndex  uint64
+	logs        map[uint64]*raft.Log
+	firstIndex  uint64
+	lastIndex   uint64
 	currentTerm uint64
-	getLogErr  error
-	storeErr   error
-	deleteErr  error
+	getLogErr   error
+	storeErr    error
+	deleteErr   error
 }
 
 func newMockLogStore() *mockLogStore {

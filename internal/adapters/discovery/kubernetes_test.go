@@ -12,13 +12,13 @@ import (
 )
 
 type mockDNSResolver struct {
-	mu           sync.Mutex
-	srvRecords   map[string][]*net.SRV
+	mu            sync.Mutex
+	srvRecords    map[string][]*net.SRV
 	srvConfigured map[string]bool
-	hostRecords  map[string][]string
-	srvErr       error
-	hostErr      error
-	callCount    int
+	hostRecords   map[string][]string
+	srvErr        error
+	hostErr       error
+	callCount     int
 }
 
 func newMockDNSResolver() *mockDNSResolver {

@@ -11,16 +11,16 @@ import (
 )
 
 type mockRaftMembership struct {
-	mu            sync.Mutex
-	servers       []raft.Server
-	state         raft.RaftState
-	appliedIndex  uint64
-	stats         map[string]string
-	addVoterErr   error
+	mu             sync.Mutex
+	servers        []raft.Server
+	state          raft.RaftState
+	appliedIndex   uint64
+	stats          map[string]string
+	addVoterErr    error
 	addNonvoterErr error
-	removeErr     error
-	getConfigErr  error
-	transferErr   error
+	removeErr      error
+	getConfigErr   error
+	transferErr    error
 }
 
 func newMockRaftMembership() *mockRaftMembership {
@@ -40,7 +40,7 @@ type mockIndexFuture struct {
 	err error
 }
 
-func (f *mockIndexFuture) Error() error { return f.err }
+func (f *mockIndexFuture) Error() error  { return f.err }
 func (f *mockIndexFuture) Index() uint64 { return 0 }
 
 type mockFuture struct {
@@ -54,8 +54,8 @@ type mockConfigFuture struct {
 	err    error
 }
 
-func (f *mockConfigFuture) Error() error                   { return f.err }
-func (f *mockConfigFuture) Index() uint64                  { return 0 }
+func (f *mockConfigFuture) Error() error                      { return f.err }
+func (f *mockConfigFuture) Index() uint64                     { return 0 }
 func (f *mockConfigFuture) Configuration() raft.Configuration { return f.config }
 
 func (m *mockRaftMembership) AddVoter(id raft.ServerID, addr raft.ServerAddress, prevIndex uint64, timeout time.Duration) raft.IndexFuture {

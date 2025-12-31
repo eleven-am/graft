@@ -45,25 +45,25 @@ type TokenUsageResponse struct {
 }
 
 type TokenUsageTrackerDeps struct {
-	DataDir       string
-	Fencing       *FencingManager
-	Transport     BootstrapTransport
-	Discovery     PeerDiscovery
-	Meta          *ClusterMeta
-	Config        *BootstrapConfig
-	Secrets       *SecretsManager
-	Logger        *slog.Logger
+	DataDir   string
+	Fencing   *FencingManager
+	Transport BootstrapTransport
+	Discovery PeerDiscovery
+	Meta      *ClusterMeta
+	Config    *BootstrapConfig
+	Secrets   *SecretsManager
+	Logger    *slog.Logger
 }
 
 type TokenUsageTracker struct {
-	dataDir       string
-	fencing       *FencingManager
-	transport     BootstrapTransport
-	discovery     PeerDiscovery
-	meta          *ClusterMeta
-	config        *BootstrapConfig
-	secrets       *SecretsManager
-	logger        *slog.Logger
+	dataDir   string
+	fencing   *FencingManager
+	transport BootstrapTransport
+	discovery PeerDiscovery
+	meta      *ClusterMeta
+	config    *BootstrapConfig
+	secrets   *SecretsManager
+	logger    *slog.Logger
 
 	mu     sync.RWMutex
 	usages map[string]*TokenUsageRecord

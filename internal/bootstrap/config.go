@@ -161,9 +161,9 @@ type SecretsConfig struct {
 }
 
 type ForceBootstrapConfig struct {
-	RequireDedicatedKey    bool   `json:"require_dedicated_key" yaml:"require_dedicated_key"`
-	ServerIDPattern        string `json:"server_id_pattern" yaml:"server_id_pattern"`
-	AllowDRQuorumOverride  bool   `json:"allow_dr_quorum_override" yaml:"allow_dr_quorum_override"`
+	RequireDedicatedKey   bool   `json:"require_dedicated_key" yaml:"require_dedicated_key"`
+	ServerIDPattern       string `json:"server_id_pattern" yaml:"server_id_pattern"`
+	AllowDRQuorumOverride bool   `json:"allow_dr_quorum_override" yaml:"allow_dr_quorum_override"`
 }
 
 func (c *ForceBootstrapConfig) GetServerIDPattern() string {
