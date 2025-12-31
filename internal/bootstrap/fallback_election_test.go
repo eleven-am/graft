@@ -17,7 +17,6 @@ func newTestFallbackElection(
 	membershipStore MembershipStore,
 	transport BootstrapTransport,
 	prober PeerProber,
-	discovery PeerDiscovery,
 ) *FallbackElection {
 	return NewFallbackElection(FallbackElectionDeps{
 		Config: &BootstrapConfig{
@@ -27,7 +26,6 @@ func newTestFallbackElection(
 		MembershipStore: membershipStore,
 		Transport:       transport,
 		Prober:          prober,
-		Discovery:       discovery,
 	})
 }
 
@@ -35,13 +33,12 @@ func TestFallbackElection_RunElection_NoCommittedConfig(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-1",
 		ServerAddress: "10.0.0.2:7946",
-		Ordinal:       1,
 	}
 
 	membershipStore := NewMockMembershipStore()
 	membershipStore.SetError(errors.New("no committed config"))
 
-	election := newTestFallbackElection(meta, membershipStore, nil, nil, nil)
+	election := newTestFallbackElection(meta, membershipStore, nil, nil)
 
 	_, err := election.RunElection(context.Background())
 
@@ -55,7 +52,6 @@ func TestFallbackElection_RunElection_EmptyVoterSet(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-1",
 		ServerAddress: "10.0.0.2:7946",
-		Ordinal:       1,
 	}
 
 	membershipStore := NewMockMembershipStore()
@@ -63,7 +59,7 @@ func TestFallbackElection_RunElection_EmptyVoterSet(t *testing.T) {
 		Servers: []raft.Server{},
 	})
 
-	election := newTestFallbackElection(meta, membershipStore, nil, nil, nil)
+	election := newTestFallbackElection(meta, membershipStore, nil, nil)
 
 	_, err := election.RunElection(context.Background())
 
@@ -73,11 +69,10 @@ func TestFallbackElection_RunElection_EmptyVoterSet(t *testing.T) {
 	}
 }
 
-func TestFallbackElection_RunElection_OrdinalZeroReachable(t *testing.T) {
+func TestFallbackElection_RunElection_ExistingClusterFound(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-1",
 		ServerAddress: "10.0.0.2:7946",
-		Ordinal:       1,
 	}
 
 	membershipStore := NewMockMembershipStore()
@@ -93,20 +88,25 @@ func TestFallbackElection_RunElection_OrdinalZeroReachable(t *testing.T) {
 	prober.SetReachable("10.0.0.1:7946", "node-0", "cluster-uuid", 1)
 	prober.SetReachable("10.0.0.3:7946", "node-2", "cluster-uuid", 1)
 
-	election := newTestFallbackElection(meta, membershipStore, nil, prober, nil)
+	transport := NewMockBootstrapTransport()
+	transport.SetClusterMeta("10.0.0.1:7946", &ClusterMeta{
+		ClusterUUID: "cluster-uuid",
+		State:       StateReady,
+	})
+
+	election := newTestFallbackElection(meta, membershipStore, transport, prober)
 
 	_, err := election.RunElection(context.Background())
 
-	if !errors.Is(err, ErrOrdinalZeroReachable) {
-		t.Errorf("Expected ErrOrdinalZeroReachable, got %v", err)
+	if !errors.Is(err, ErrExistingClusterFound) {
+		t.Errorf("Expected ErrExistingClusterFound, got %v", err)
 	}
 }
 
-func TestFallbackElection_RunElection_NotLowestOrdinal(t *testing.T) {
+func TestFallbackElection_RunElection_NotLowestServerID(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-2",
 		ServerAddress: "10.0.0.3:7946",
-		Ordinal:       2,
 	}
 
 	membershipStore := NewMockMembershipStore()
@@ -120,14 +120,14 @@ func TestFallbackElection_RunElection_NotLowestOrdinal(t *testing.T) {
 
 	prober := NewMockPeerProber()
 	prober.SetUnreachable("10.0.0.1:7946", "node-0", errors.New("unreachable"))
-	prober.SetReachable("10.0.0.2:7946", "node-1", "cluster-uuid", 1)
+	prober.SetReachable("10.0.0.2:7946", "node-1", "", 0)
 
-	election := newTestFallbackElection(meta, membershipStore, nil, prober, nil)
+	election := newTestFallbackElection(meta, membershipStore, nil, prober)
 
 	_, err := election.RunElection(context.Background())
 
-	if !errors.Is(err, ErrNotLowestOrdinal) {
-		t.Errorf("Expected ErrNotLowestOrdinal, got %v", err)
+	if !errors.Is(err, ErrNotLowestServerID) {
+		t.Errorf("Expected ErrNotLowestServerID, got %v", err)
 	}
 }
 
@@ -135,7 +135,6 @@ func TestFallbackElection_RunElection_InsufficientPeers(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-1",
 		ServerAddress: "10.0.0.2:7946",
-		Ordinal:       1,
 	}
 
 	membershipStore := NewMockMembershipStore()
@@ -151,7 +150,7 @@ func TestFallbackElection_RunElection_InsufficientPeers(t *testing.T) {
 	prober.SetUnreachable("10.0.0.1:7946", "node-0", errors.New("unreachable"))
 	prober.SetUnreachable("10.0.0.3:7946", "node-2", errors.New("unreachable"))
 
-	election := newTestFallbackElection(meta, membershipStore, nil, prober, nil)
+	election := newTestFallbackElection(meta, membershipStore, nil, prober)
 
 	_, err := election.RunElection(context.Background())
 
@@ -165,7 +164,6 @@ func TestFallbackElection_RunElection_NilProber(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-1",
 		ServerAddress: "10.0.0.2:7946",
-		Ordinal:       1,
 	}
 
 	membershipStore := NewMockMembershipStore()
@@ -177,7 +175,7 @@ func TestFallbackElection_RunElection_NilProber(t *testing.T) {
 		},
 	})
 
-	election := newTestFallbackElection(meta, membershipStore, nil, nil, nil)
+	election := newTestFallbackElection(meta, membershipStore, nil, nil)
 
 	_, err := election.RunElection(context.Background())
 
@@ -190,13 +188,12 @@ func TestFallbackElection_RunElection_QuorumNotReached(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-1",
 		ServerAddress: "10.0.0.2:7946",
-		Ordinal:       1,
 	}
 
 	voterSet := []VoterInfo{
-		{ServerID: "node-0", Address: "10.0.0.1:7946", Ordinal: 0},
-		{ServerID: "node-1", Address: "10.0.0.2:7946", Ordinal: 1},
-		{ServerID: "node-2", Address: "10.0.0.3:7946", Ordinal: 2},
+		{ServerID: "node-0", Address: "10.0.0.1:7946"},
+		{ServerID: "node-1", Address: "10.0.0.2:7946"},
+		{ServerID: "node-2", Address: "10.0.0.3:7946"},
 	}
 	voterSetHash := HashVoterSet(voterSet)
 
@@ -211,7 +208,7 @@ func TestFallbackElection_RunElection_QuorumNotReached(t *testing.T) {
 
 	prober := NewMockPeerProber()
 	prober.SetUnreachable("10.0.0.1:7946", "node-0", errors.New("unreachable"))
-	prober.SetReachable("10.0.0.3:7946", "node-2", "cluster-uuid", 1)
+	prober.SetReachable("10.0.0.3:7946", "node-2", "", 0)
 
 	transport := NewMockBootstrapTransport()
 	transport.SetVoteResponse("10.0.0.3:7946", &VoteResponse{
@@ -221,7 +218,7 @@ func TestFallbackElection_RunElection_QuorumNotReached(t *testing.T) {
 		VoterSetHash: voterSetHash,
 	})
 
-	election := newTestFallbackElection(meta, membershipStore, transport, prober, nil)
+	election := newTestFallbackElection(meta, membershipStore, transport, prober)
 
 	_, err := election.RunElection(context.Background())
 
@@ -235,13 +232,12 @@ func TestFallbackElection_RunElection_Success(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-1",
 		ServerAddress: "10.0.0.2:7946",
-		Ordinal:       1,
 	}
 
 	voterSet := []VoterInfo{
-		{ServerID: "node-0", Address: "10.0.0.1:7946", Ordinal: 0},
-		{ServerID: "node-1", Address: "10.0.0.2:7946", Ordinal: 1},
-		{ServerID: "node-2", Address: "10.0.0.3:7946", Ordinal: 2},
+		{ServerID: "node-0", Address: "10.0.0.1:7946"},
+		{ServerID: "node-1", Address: "10.0.0.2:7946"},
+		{ServerID: "node-2", Address: "10.0.0.3:7946"},
 	}
 	voterSetHash := HashVoterSet(voterSet)
 
@@ -256,7 +252,7 @@ func TestFallbackElection_RunElection_Success(t *testing.T) {
 
 	prober := NewMockPeerProber()
 	prober.SetUnreachable("10.0.0.1:7946", "node-0", errors.New("unreachable"))
-	prober.SetReachable("10.0.0.3:7946", "node-2", "cluster-uuid", 1)
+	prober.SetReachable("10.0.0.3:7946", "node-2", "", 0)
 
 	transport := NewMockBootstrapTransport()
 	transport.SetVoteResponse("10.0.0.3:7946", &VoteResponse{
@@ -265,7 +261,7 @@ func TestFallbackElection_RunElection_Success(t *testing.T) {
 		VoterSetHash: voterSetHash,
 	})
 
-	election := newTestFallbackElection(meta, membershipStore, transport, prober, nil)
+	election := newTestFallbackElection(meta, membershipStore, transport, prober)
 
 	candidate, err := election.RunElection(context.Background())
 	if err != nil {
@@ -274,10 +270,6 @@ func TestFallbackElection_RunElection_Success(t *testing.T) {
 
 	if candidate.ServerID != "node-1" {
 		t.Errorf("Expected candidate ServerID node-1, got %s", candidate.ServerID)
-	}
-
-	if candidate.Ordinal != 1 {
-		t.Errorf("Expected candidate Ordinal 1, got %d", candidate.Ordinal)
 	}
 
 	if candidate.VotesFor != 2 {
@@ -289,19 +281,18 @@ func TestFallbackElection_RunElection_Success(t *testing.T) {
 	}
 }
 
-func TestFallbackElection_RunElection_LowestOrdinalWins(t *testing.T) {
+func TestFallbackElection_RunElection_LowestServerIDWins(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-1",
 		ServerAddress: "10.0.0.2:7946",
-		Ordinal:       1,
 	}
 
 	voterSet := []VoterInfo{
-		{ServerID: "node-0", Address: "10.0.0.1:7946", Ordinal: 0},
-		{ServerID: "node-1", Address: "10.0.0.2:7946", Ordinal: 1},
-		{ServerID: "node-2", Address: "10.0.0.3:7946", Ordinal: 2},
-		{ServerID: "node-3", Address: "10.0.0.4:7946", Ordinal: 3},
-		{ServerID: "node-4", Address: "10.0.0.5:7946", Ordinal: 4},
+		{ServerID: "node-0", Address: "10.0.0.1:7946"},
+		{ServerID: "node-1", Address: "10.0.0.2:7946"},
+		{ServerID: "node-2", Address: "10.0.0.3:7946"},
+		{ServerID: "node-3", Address: "10.0.0.4:7946"},
+		{ServerID: "node-4", Address: "10.0.0.5:7946"},
 	}
 	voterSetHash := HashVoterSet(voterSet)
 
@@ -318,24 +309,24 @@ func TestFallbackElection_RunElection_LowestOrdinalWins(t *testing.T) {
 
 	prober := NewMockPeerProber()
 	prober.SetUnreachable("10.0.0.1:7946", "node-0", errors.New("unreachable"))
-	prober.SetReachable("10.0.0.3:7946", "node-2", "cluster-uuid", 1)
-	prober.SetReachable("10.0.0.4:7946", "node-3", "cluster-uuid", 1)
-	prober.SetReachable("10.0.0.5:7946", "node-4", "cluster-uuid", 1)
+	prober.SetReachable("10.0.0.3:7946", "node-2", "", 0)
+	prober.SetReachable("10.0.0.4:7946", "node-3", "", 0)
+	prober.SetReachable("10.0.0.5:7946", "node-4", "", 0)
 
 	transport := NewMockBootstrapTransport()
 	transport.SetVoteResponse("10.0.0.3:7946", &VoteResponse{VoteGranted: true, VoterID: "node-2", VoterSetHash: voterSetHash})
 	transport.SetVoteResponse("10.0.0.4:7946", &VoteResponse{VoteGranted: true, VoterID: "node-3", VoterSetHash: voterSetHash})
 	transport.SetVoteResponse("10.0.0.5:7946", &VoteResponse{VoteGranted: true, VoterID: "node-4", VoterSetHash: voterSetHash})
 
-	election := newTestFallbackElection(meta, membershipStore, transport, prober, nil)
+	election := newTestFallbackElection(meta, membershipStore, transport, prober)
 
 	candidate, err := election.RunElection(context.Background())
 	if err != nil {
 		t.Fatalf("RunElection failed: %v", err)
 	}
 
-	if candidate.Ordinal != 1 {
-		t.Errorf("Expected lowest ordinal (1) to win, got %d", candidate.Ordinal)
+	if candidate.ServerID != "node-1" {
+		t.Errorf("Expected lowest reachable ServerID (node-1) to win, got %s", candidate.ServerID)
 	}
 
 	if candidate.VotesFor != 4 {
@@ -347,7 +338,6 @@ func TestFallbackElection_ConcurrentElection(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-1",
 		ServerAddress: "10.0.0.2:7946",
-		Ordinal:       1,
 	}
 
 	membershipStore := NewMockMembershipStore()
@@ -361,12 +351,12 @@ func TestFallbackElection_ConcurrentElection(t *testing.T) {
 
 	prober := NewMockPeerProber()
 	prober.SetUnreachable("10.0.0.1:7946", "node-0", errors.New("unreachable"))
-	prober.SetReachable("10.0.0.3:7946", "node-2", "cluster-uuid", 1)
+	prober.SetReachable("10.0.0.3:7946", "node-2", "", 0)
 
 	transport := NewMockBootstrapTransport()
 	transport.SetVoteResponse("10.0.0.3:7946", &VoteResponse{VoteGranted: true, VoterID: "node-2"})
 
-	election := newTestFallbackElection(meta, membershipStore, transport, prober, nil)
+	election := newTestFallbackElection(meta, membershipStore, transport, prober)
 
 	election.electionMu.Lock()
 	election.inElection = true
@@ -383,15 +373,13 @@ func TestFallbackElection_HandleVoteRequest_NoMTLS(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-2",
 		ServerAddress: "10.0.0.3:7946",
-		Ordinal:       2,
 		State:         StateBootstrapping,
 	}
 
-	election := newTestFallbackElection(meta, nil, nil, nil, nil)
+	election := newTestFallbackElection(meta, nil, nil, nil)
 
 	req := &VoteRequest{
-		CandidateID:      "node-1",
-		CandidateOrdinal: 1,
+		CandidateID: "node-1",
 	}
 
 	resp, err := election.HandleVoteRequest(context.Background(), req, nil, nil)
@@ -412,15 +400,13 @@ func TestFallbackElection_HandleVoteRequest_NoCert(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-2",
 		ServerAddress: "10.0.0.3:7946",
-		Ordinal:       2,
 		State:         StateBootstrapping,
 	}
 
-	election := newTestFallbackElection(meta, nil, nil, nil, nil)
+	election := newTestFallbackElection(meta, nil, nil, nil)
 
 	req := &VoteRequest{
-		CandidateID:      "node-1",
-		CandidateOrdinal: 1,
+		CandidateID: "node-1",
 	}
 
 	tlsConfig := &tls.Config{
@@ -441,15 +427,13 @@ func TestFallbackElection_HandleVoteRequest_AlreadyInCluster(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-2",
 		ServerAddress: "10.0.0.3:7946",
-		Ordinal:       2,
 		State:         StateReady,
 	}
 
-	election := newTestFallbackElection(meta, nil, nil, nil, nil)
+	election := newTestFallbackElection(meta, nil, nil, nil)
 
 	req := &VoteRequest{
-		CandidateID:      "node-1",
-		CandidateOrdinal: 1,
+		CandidateID: "node-1",
 	}
 
 	tlsConfig := &tls.Config{
@@ -474,91 +458,10 @@ func TestFallbackElection_HandleVoteRequest_AlreadyInCluster(t *testing.T) {
 	}
 }
 
-func TestFallbackElection_HandleVoteRequest_HigherOrdinalExists(t *testing.T) {
-	meta := &ClusterMeta{
-		ServerID:      "node-1",
-		ServerAddress: "10.0.0.2:7946",
-		Ordinal:       1,
-		State:         StateBootstrapping,
-	}
-
-	election := newTestFallbackElection(meta, nil, nil, nil, nil)
-
-	req := &VoteRequest{
-		CandidateID:      "node-2",
-		CandidateOrdinal: 2,
-	}
-
-	tlsConfig := &tls.Config{
-		ClientAuth: tls.RequireAndVerifyClientCert,
-	}
-
-	peerCert := &x509.Certificate{
-		DNSNames: []string{"10.0.0.3"},
-	}
-
-	resp, err := election.HandleVoteRequest(context.Background(), req, tlsConfig, peerCert)
-	if err != nil {
-		t.Fatalf("HandleVoteRequest failed: %v", err)
-	}
-
-	if resp.VoteGranted {
-		t.Error("Vote should be denied when higher ordinal exists")
-	}
-
-	if resp.Reason != "higher ordinal exists" {
-		t.Errorf("Expected reason 'higher ordinal exists', got %q", resp.Reason)
-	}
-}
-
-func TestFallbackElection_HandleVoteRequest_OrdinalZeroReachable(t *testing.T) {
-	meta := &ClusterMeta{
-		ServerID:      "node-2",
-		ServerAddress: "10.0.0.3:7946",
-		Ordinal:       2,
-		State:         StateBootstrapping,
-	}
-
-	prober := NewMockPeerProber()
-	prober.SetReachable("10.0.0.1:7946", "node-0", "cluster-uuid", 1)
-
-	discovery := NewMockPeerDiscovery()
-	discovery.SetAddress(0, "10.0.0.1:7946")
-
-	election := newTestFallbackElection(meta, nil, nil, prober, discovery)
-
-	req := &VoteRequest{
-		CandidateID:      "node-1",
-		CandidateOrdinal: 1,
-	}
-
-	tlsConfig := &tls.Config{
-		ClientAuth: tls.RequireAndVerifyClientCert,
-	}
-
-	peerCert := &x509.Certificate{
-		DNSNames: []string{"10.0.0.2"},
-	}
-
-	resp, err := election.HandleVoteRequest(context.Background(), req, tlsConfig, peerCert)
-	if err != nil {
-		t.Fatalf("HandleVoteRequest failed: %v", err)
-	}
-
-	if resp.VoteGranted {
-		t.Error("Vote should be denied when ordinal-0 is reachable")
-	}
-
-	if resp.Reason != "ordinal_0 reachable" {
-		t.Errorf("Expected reason 'ordinal_0 reachable', got %q", resp.Reason)
-	}
-}
-
 func TestFallbackElection_HandleVoteRequest_VoterSetMismatch(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-2",
 		ServerAddress: "10.0.0.3:7946",
-		Ordinal:       2,
 		State:         StateBootstrapping,
 	}
 
@@ -574,15 +477,11 @@ func TestFallbackElection_HandleVoteRequest_VoterSetMismatch(t *testing.T) {
 	prober := NewMockPeerProber()
 	prober.SetUnreachable("10.0.0.1:7946", "node-0", errors.New("unreachable"))
 
-	discovery := NewMockPeerDiscovery()
-	discovery.SetAddress(0, "10.0.0.1:7946")
-
-	election := newTestFallbackElection(meta, membershipStore, nil, prober, discovery)
+	election := newTestFallbackElection(meta, membershipStore, nil, prober)
 
 	req := &VoteRequest{
-		CandidateID:      "node-1",
-		CandidateOrdinal: 1,
-		VoterSetHash:     []byte("different-hash"),
+		CandidateID:  "node-1",
+		VoterSetHash: []byte("different-hash"),
 	}
 
 	tlsConfig := &tls.Config{
@@ -611,21 +510,16 @@ func TestFallbackElection_HandleVoteRequest_Success(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-2",
 		ServerAddress: "10.0.0.3:7946",
-		Ordinal:       2,
 		State:         StateBootstrapping,
 	}
 
 	prober := NewMockPeerProber()
 	prober.SetUnreachable("10.0.0.1:7946", "node-0", errors.New("unreachable"))
 
-	discovery := NewMockPeerDiscovery()
-	discovery.SetAddress(0, "10.0.0.1:7946")
-
-	election := newTestFallbackElection(meta, nil, nil, prober, discovery)
+	election := newTestFallbackElection(meta, nil, nil, prober)
 
 	req := &VoteRequest{
-		CandidateID:      "node-1",
-		CandidateOrdinal: 1,
+		CandidateID: "node-1",
 	}
 
 	tlsConfig := &tls.Config{
@@ -654,15 +548,14 @@ func TestFallbackElection_ValidatePeerCertAgainstVoterSet(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-2",
 		ServerAddress: "10.0.0.3:7946",
-		Ordinal:       2,
 	}
 
-	election := newTestFallbackElection(meta, nil, nil, nil, nil)
+	election := newTestFallbackElection(meta, nil, nil, nil)
 
 	voterSet := []VoterInfo{
-		{ServerID: "node-0", Address: "10.0.0.1:7946", Ordinal: 0},
-		{ServerID: "node-1", Address: "10.0.0.2:7946", Ordinal: 1},
-		{ServerID: "node-2", Address: "10.0.0.3:7946", Ordinal: 2},
+		{ServerID: "node-0", Address: "10.0.0.1:7946"},
+		{ServerID: "node-1", Address: "10.0.0.2:7946"},
+		{ServerID: "node-2", Address: "10.0.0.3:7946"},
 	}
 
 	t.Run("valid DNS name", func(t *testing.T) {
@@ -728,10 +621,9 @@ func TestFallbackElection_IsInElection(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-1",
 		ServerAddress: "10.0.0.2:7946",
-		Ordinal:       1,
 	}
 
-	election := newTestFallbackElection(meta, nil, nil, nil, nil)
+	election := newTestFallbackElection(meta, nil, nil, nil)
 
 	if election.IsInElection() {
 		t.Error("Expected IsInElection to be false initially")
@@ -752,13 +644,12 @@ func TestFallbackElection_VoteResponseValidation_InvalidSignature(t *testing.T) 
 	meta := &ClusterMeta{
 		ServerID:      "node-1",
 		ServerAddress: "10.0.0.2:7946",
-		Ordinal:       1,
 	}
 
 	voterSet := []VoterInfo{
-		{ServerID: "node-0", Address: "10.0.0.1:7946", Ordinal: 0},
-		{ServerID: "node-1", Address: "10.0.0.2:7946", Ordinal: 1},
-		{ServerID: "node-2", Address: "10.0.0.3:7946", Ordinal: 2},
+		{ServerID: "node-0", Address: "10.0.0.1:7946"},
+		{ServerID: "node-1", Address: "10.0.0.2:7946"},
+		{ServerID: "node-2", Address: "10.0.0.3:7946"},
 	}
 	voterSetHash := HashVoterSet(voterSet)
 
@@ -773,7 +664,7 @@ func TestFallbackElection_VoteResponseValidation_InvalidSignature(t *testing.T) 
 
 	prober := NewMockPeerProber()
 	prober.SetUnreachable("10.0.0.1:7946", "node-0", errors.New("unreachable"))
-	prober.SetReachable("10.0.0.3:7946", "node-2", "cluster-uuid", 1)
+	prober.SetReachable("10.0.0.3:7946", "node-2", "", 0)
 
 	transport := NewMockBootstrapTransport()
 	transport.SetVoteResponse("10.0.0.3:7946", &VoteResponse{
@@ -809,7 +700,6 @@ func TestFallbackElection_VoteResponseValidation_VoterSetHashMismatch(t *testing
 	meta := &ClusterMeta{
 		ServerID:      "node-1",
 		ServerAddress: "10.0.0.2:7946",
-		Ordinal:       1,
 	}
 
 	membershipStore := NewMockMembershipStore()
@@ -823,7 +713,7 @@ func TestFallbackElection_VoteResponseValidation_VoterSetHashMismatch(t *testing
 
 	prober := NewMockPeerProber()
 	prober.SetUnreachable("10.0.0.1:7946", "node-0", errors.New("unreachable"))
-	prober.SetReachable("10.0.0.3:7946", "node-2", "cluster-uuid", 1)
+	prober.SetReachable("10.0.0.3:7946", "node-2", "", 0)
 
 	transport := NewMockBootstrapTransport()
 	transport.SetVoteResponse("10.0.0.3:7946", &VoteResponse{
@@ -832,7 +722,7 @@ func TestFallbackElection_VoteResponseValidation_VoterSetHashMismatch(t *testing
 		VoterSetHash: []byte("wrong-voter-set-hash"),
 	})
 
-	election := newTestFallbackElection(meta, membershipStore, transport, prober, nil)
+	election := newTestFallbackElection(meta, membershipStore, transport, prober)
 
 	_, err := election.RunElection(context.Background())
 
@@ -846,13 +736,12 @@ func TestFallbackElection_VoteResponseValidation_NonMemberVoterID(t *testing.T) 
 	meta := &ClusterMeta{
 		ServerID:      "node-1",
 		ServerAddress: "10.0.0.2:7946",
-		Ordinal:       1,
 	}
 
 	voterSet := []VoterInfo{
-		{ServerID: "node-0", Address: "10.0.0.1:7946", Ordinal: 0},
-		{ServerID: "node-1", Address: "10.0.0.2:7946", Ordinal: 1},
-		{ServerID: "node-2", Address: "10.0.0.3:7946", Ordinal: 2},
+		{ServerID: "node-0", Address: "10.0.0.1:7946"},
+		{ServerID: "node-1", Address: "10.0.0.2:7946"},
+		{ServerID: "node-2", Address: "10.0.0.3:7946"},
 	}
 	voterSetHash := HashVoterSet(voterSet)
 
@@ -867,7 +756,7 @@ func TestFallbackElection_VoteResponseValidation_NonMemberVoterID(t *testing.T) 
 
 	prober := NewMockPeerProber()
 	prober.SetUnreachable("10.0.0.1:7946", "node-0", errors.New("unreachable"))
-	prober.SetReachable("10.0.0.3:7946", "node-2", "cluster-uuid", 1)
+	prober.SetReachable("10.0.0.3:7946", "node-2", "", 0)
 
 	transport := NewMockBootstrapTransport()
 	transport.SetVoteResponse("10.0.0.3:7946", &VoteResponse{
@@ -876,7 +765,7 @@ func TestFallbackElection_VoteResponseValidation_NonMemberVoterID(t *testing.T) 
 		VoterSetHash: voterSetHash,
 	})
 
-	election := newTestFallbackElection(meta, membershipStore, transport, prober, nil)
+	election := newTestFallbackElection(meta, membershipStore, transport, prober)
 
 	_, err := election.RunElection(context.Background())
 
@@ -892,13 +781,12 @@ func TestFallbackElection_VoteResponseValidation_ValidSignature(t *testing.T) {
 	meta := &ClusterMeta{
 		ServerID:      "node-1",
 		ServerAddress: "10.0.0.2:7946",
-		Ordinal:       1,
 	}
 
 	voterSet := []VoterInfo{
-		{ServerID: "node-0", Address: "10.0.0.1:7946", Ordinal: 0},
-		{ServerID: "node-1", Address: "10.0.0.2:7946", Ordinal: 1},
-		{ServerID: "node-2", Address: "10.0.0.3:7946", Ordinal: 2},
+		{ServerID: "node-0", Address: "10.0.0.1:7946"},
+		{ServerID: "node-1", Address: "10.0.0.2:7946"},
+		{ServerID: "node-2", Address: "10.0.0.3:7946"},
 	}
 	voterSetHash := HashVoterSet(voterSet)
 
@@ -913,7 +801,7 @@ func TestFallbackElection_VoteResponseValidation_ValidSignature(t *testing.T) {
 
 	prober := NewMockPeerProber()
 	prober.SetUnreachable("10.0.0.1:7946", "node-0", errors.New("unreachable"))
-	prober.SetReachable("10.0.0.3:7946", "node-2", "cluster-uuid", 1)
+	prober.SetReachable("10.0.0.3:7946", "node-2", "", 0)
 
 	voteResp := &VoteResponse{
 		VoteGranted:  true,

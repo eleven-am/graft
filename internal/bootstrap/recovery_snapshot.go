@@ -10,12 +10,8 @@ import (
 )
 
 func (r *RecoveryManager) fetchSnapshotFromPeers(ctx context.Context) error {
-	if r.discovery == nil {
-		return ErrNoPeersForRecovery
-	}
-
-	peers := r.discovery.GetHealthyPeers(ctx)
-	if len(peers) == 0 {
+	peers, err := r.getCommittedPeers()
+	if err != nil || len(peers) == 0 {
 		return ErrNoPeersForRecovery
 	}
 
@@ -42,7 +38,7 @@ func (r *RecoveryManager) fetchSnapshotFromPeers(ctx context.Context) error {
 	return ErrAllPeerRecoveryFailed
 }
 
-func (r *RecoveryManager) fetchSnapshotFromPeer(ctx context.Context, peer PeerInfo) error {
+func (r *RecoveryManager) fetchSnapshotFromPeer(ctx context.Context, peer VoterInfo) error {
 	if r.transport == nil {
 		return fmt.Errorf("no transport configured")
 	}
@@ -82,7 +78,7 @@ func (r *RecoveryManager) fetchSnapshotFromPeer(ctx context.Context, peer PeerIn
 	return nil
 }
 
-func (r *RecoveryManager) streamSnapshotToStore(stream io.Reader, meta *SnapshotMeta, peer PeerInfo) (int64, error) {
+func (r *RecoveryManager) streamSnapshotToStore(stream io.Reader, meta *SnapshotMeta, peer VoterInfo) (int64, error) {
 	checksumEnabled := len(meta.Checksum) > 0
 	var hasher = sha256.New()
 
@@ -159,7 +155,7 @@ func (r *RecoveryManager) streamSnapshotToStore(stream io.Reader, meta *Snapshot
 	return n, nil
 }
 
-func (r *RecoveryManager) fetchMetaFromPeer(ctx context.Context, peer PeerInfo) error {
+func (r *RecoveryManager) fetchMetaFromPeer(ctx context.Context, peer VoterInfo) error {
 	if r.transport == nil {
 		return fmt.Errorf("no transport configured")
 	}
@@ -195,17 +191,13 @@ func (r *RecoveryManager) verifySnapshotChecksum(data []byte, expected []byte) b
 	return bytes.Equal(hash[:], expected)
 }
 
-func (r *RecoveryManager) findBestRecoveryPeer(ctx context.Context) (*PeerInfo, error) {
-	if r.discovery == nil {
+func (r *RecoveryManager) findBestRecoveryPeer(ctx context.Context) (*VoterInfo, error) {
+	peers, err := r.getCommittedPeers()
+	if err != nil || len(peers) == 0 {
 		return nil, ErrNoPeersForRecovery
 	}
 
-	peers := r.discovery.GetHealthyPeers(ctx)
-	if len(peers) == 0 {
-		return nil, ErrNoPeersForRecovery
-	}
-
-	var bestPeer *PeerInfo
+	var bestPeer *VoterInfo
 	var bestIndex uint64
 	var bestTerm uint64
 

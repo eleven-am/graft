@@ -14,7 +14,6 @@ import (
 	"sync"
 	"time"
 
-	bootstrapadapter "github.com/eleven-am/graft/internal/adapters/bootstrap"
 	"github.com/eleven-am/graft/internal/adapters/circuit_breaker"
 	"github.com/eleven-am/graft/internal/adapters/cluster"
 	"github.com/eleven-am/graft/internal/adapters/connector_registry"
@@ -47,7 +46,7 @@ type Manager struct {
 	nodeRegistry      ports.NodeRegistryPort
 	connectorRegistry ports.ConnectorRegistryPort
 	transport         ports.TransportPort
-	discovery         *discovery.Manager
+	seeder            ports.Seeder
 	raftAdapter       ports.RaftNode
 	eventManager      ports.EventManager
 	loadBalancer      ports.LoadBalancer
@@ -195,7 +194,7 @@ func NewWithConfig(config *domain.Config) *Manager {
 		}
 	}()
 
-	discoveryManager := createDiscoveryManager(config, logger)
+	seeder := createSeeder(config, logger)
 
 	raftConfig := raft.DefaultRaftConfig(config.NodeID, config.Cluster.ID, config.BindAddr, config.DataDir, config.Cluster.Policy)
 
@@ -254,14 +253,16 @@ func NewWithConfig(config *domain.Config) *Manager {
 	}); ok {
 		lb.SetTransport(appTransport)
 		lb.SetPeerAddrProvider(func() []string {
-			peers := discoveryManager.GetPeers()
-			addrs := make([]string, 0, len(peers))
-			for _, p := range peers {
-				grpcPortStr := p.Metadata["grpc_port"]
-				if grpcPortStr == "" {
+			if raftAdapter == nil {
+				return nil
+			}
+			clusterInfo := raftAdapter.GetClusterInfo()
+			addrs := make([]string, 0, len(clusterInfo.Members))
+			for _, member := range clusterInfo.Members {
+				if member.ID == config.NodeID {
 					continue
 				}
-				addrs = append(addrs, net.JoinHostPort(p.Address, grpcPortStr))
+				addrs = append(addrs, member.Address)
 			}
 			return addrs
 		})
@@ -313,7 +314,7 @@ func NewWithConfig(config *domain.Config) *Manager {
 		nodeID:                config.NodeID,
 		connectorFSM:          connectors.NewFSM(),
 		watchers:              connectors.NewWatcherGroup(),
-		discovery:             discoveryManager,
+		seeder:                seeder,
 		raftAdapter:           raftAdapter,
 		storage:               appStorage,
 		eventManager:          eventManager,
@@ -358,61 +359,49 @@ func NewWithConfig(config *domain.Config) *Manager {
 	return manager
 }
 
-func createDiscoveryManager(config *domain.Config, logger *slog.Logger) *discovery.Manager {
-	manager := discovery.NewManager(config.NodeID, logger)
+func createSeeder(config *domain.Config, logger *slog.Logger) ports.Seeder {
+	var seederList []ports.Seeder
 
 	for _, discoveryConfig := range config.Discovery {
 		switch discoveryConfig.Type {
 		case domain.DiscoveryMDNS:
+			service := "_graft._tcp"
+			domainStr := "local."
 			if discoveryConfig.MDNS != nil {
-				manager.MDNS(discoveryConfig.MDNS.Service, discoveryConfig.MDNS.Domain, discoveryConfig.MDNS.DisableIPv6)
-			} else {
-				manager.MDNS("", "", true)
+				if discoveryConfig.MDNS.Service != "" {
+					service = discoveryConfig.MDNS.Service
+				}
+				if discoveryConfig.MDNS.Domain != "" {
+					domainStr = discoveryConfig.MDNS.Domain
+				}
 			}
+			seederList = append(seederList, discovery.NewMDNSSeeder(service, domainStr))
 		case domain.DiscoveryStatic:
 			if len(discoveryConfig.Static) > 0 {
 				peers := make([]ports.Peer, len(discoveryConfig.Static))
 				for i, staticPeer := range discoveryConfig.Static {
-					metadata := staticPeer.Metadata
-					if metadata == nil {
-						metadata = make(map[string]string)
-					}
-					if _, exists := metadata["grpc_port"]; !exists {
-						metadata["grpc_port"] = strconv.Itoa(staticPeer.Port)
-					}
-
 					peers[i] = ports.Peer{
-						ID:       staticPeer.ID,
-						Address:  staticPeer.Address,
-						Port:     staticPeer.Port,
-						Metadata: metadata,
+						ID:      staticPeer.ID,
+						Address: staticPeer.Address,
+						Port:    staticPeer.Port,
 					}
 				}
-				manager.Static(peers)
+				seederList = append(seederList, discovery.NewStaticSeeder(peers))
 			}
 		}
 	}
 
-	return manager
+	if len(seederList) == 0 {
+		return discovery.NewStaticSeeder(nil)
+	}
+	if len(seederList) == 1 {
+		return seederList[0]
+	}
+	return discovery.NewCompositeSeeder(seederList)
 }
 
-func (m *Manager) Discovery() *discovery.Manager {
-	return m.discovery
-}
-
-func (m *Manager) MDNS(service, domain string, disableIPv6 bool) *Manager {
-	m.discovery.MDNS(service, domain, disableIPv6)
-	return m
-}
-
-func (m *Manager) AddProvider(provider ports.Provider) *Manager {
-	m.discovery.Add(provider)
-	return m
-}
-
-func (m *Manager) Static(peers []ports.Peer) *Manager {
-	m.discovery.Static(peers)
-	return m
+func (m *Manager) Seeder() ports.Seeder {
+	return m.seeder
 }
 
 func (m *Manager) Start(ctx context.Context, grpcPort int) error {
@@ -472,12 +461,7 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 		wctx, wcancel := context.WithCancel(m.ctx)
 		m.watchersCtx = wctx
 		m.watchersCancel = wcancel
-		m.watchers.Add(func() { m.watchForSeniorPeers(wctx) }, wcancel)
-		m.watchers.Add(func() { m.reconcilePeersLoop(wctx) }, nil)
 		m.watchers.Start(wctx)
-	} else {
-		go m.watchForSeniorPeers(m.ctx)
-		go m.reconcilePeersLoop(m.ctx)
 	}
 
 	return nil
@@ -499,10 +483,6 @@ func (m *Manager) Stop() error {
 
 	if m.watchers != nil {
 		m.watchers.Stop()
-	}
-
-	if m.discovery != nil {
-		m.discovery.Stop()
 	}
 
 	if m.engine != nil {
@@ -537,6 +517,10 @@ func (m *Manager) Stop() error {
 		}
 	}
 
+	if advertiser, ok := m.seeder.(ports.AdvertisableSeeder); ok {
+		advertiser.StopAdvertising()
+	}
+
 	return nil
 }
 
@@ -546,50 +530,43 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 		"ordinal", m.config.Bootstrap.Ordinal,
 		"replicas", m.config.Bootstrap.Replicas)
 
-	if m.discovery != nil {
-		host, portStr, err := net.SplitHostPort(m.config.BindAddr)
-		if err != nil {
-			host = m.config.BindAddr
-			portStr = "7222"
+	if advertiser, ok := m.seeder.(ports.AdvertisableSeeder); ok {
+		raftPort := m.config.Bootstrap.BasePort
+		if _, portStr, err := net.SplitHostPort(m.config.BindAddr); err == nil {
+			if p, _ := strconv.Atoi(portStr); p > 0 {
+				raftPort = p
+			}
 		}
-		port, _ := strconv.Atoi(portStr)
 
-		if err := m.discovery.Start(ctx, host, port, grpcPort, m.config.Cluster.ID); err != nil {
-			return domain.NewDomainErrorWithCategory(
-				domain.CategoryDiscovery,
-				"failed to start discovery manager",
-				err,
-				domain.WithComponent("core.Manager.Start"),
-			)
+		if err := advertiser.StartAdvertising(m.nodeID, m.config.BindAddr, raftPort); err != nil {
+			m.logger.Warn("failed to start seeder advertising", "error", err)
+		} else {
+			m.logger.Info("started seeder advertising", "node_id", m.nodeID, "port", raftPort)
 		}
-		m.logger.Info("discovery manager started", "address", host, "port", port, "grpc_port", grpcPort)
 	}
 
-	factory, err := bootstrapadapter.NewFactory(bootstrapadapter.FactoryDeps{
-		Config:           m.config,
-		DiscoveryManager: m.discovery,
-		Logger:           m.logger,
+	bootstrapConfig := m.buildBootstrapConfig(grpcPort)
+	metaStore := bootstrap.NewFileMetaStore(filepath.Join(m.config.DataDir, "cluster_meta.json"), m.logger)
+	stateMachine, err := bootstrap.NewStateMachine(bootstrap.StateMachineDeps{
+		MetaStore: metaStore,
+		Logger:    m.logger,
 	})
 	if err != nil {
 		return domain.NewDomainErrorWithCategory(
 			domain.CategoryDiscovery,
-			"failed to create bootstrap factory",
+			"failed to create state machine",
 			err,
-			domain.WithComponent("core.Manager.Start"),
+			domain.WithComponent("core.Manager.startBootstrap"),
 		)
 	}
 
-	bootstrapper, err := factory.CreateBootstrapper()
-	if err != nil {
-		return domain.NewDomainErrorWithCategory(
-			domain.CategoryDiscovery,
-			"failed to create bootstrapper",
-			err,
-			domain.WithComponent("core.Manager.Start"),
-		)
-	}
-
-	m.bootstrapper = bootstrapper
+	m.bootstrapper = bootstrap.NewBootstrapper(bootstrap.BootstrapperDeps{
+		Config:       bootstrapConfig,
+		MetaStore:    metaStore,
+		StateMachine: stateMachine,
+		Seeder:       m.seeder,
+		Logger:       m.logger,
+	})
 
 	if err := m.bootstrapper.Start(m.ctx); err != nil {
 		return domain.NewDomainErrorWithCategory(
@@ -630,24 +607,19 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 		return ctx.Err()
 	}
 
-	resolvedOrdinal := m.bootstrapper.GetOrdinal()
+	isClusterInitiator := m.bootstrapper.IsClusterInitiator()
+	serverID := m.bootstrapper.GetServerID()
 	m.logger.Info("bootstrapper ready, starting raft adapter",
 		"state", m.bootstrapper.CurrentState(),
-		"resolved_ordinal", resolvedOrdinal,
-		"config_ordinal", m.config.Bootstrap.Ordinal)
+		"server_id", serverID,
+		"is_cluster_initiator", isClusterInitiator)
 
-	isOrdinalZero := resolvedOrdinal == 0
 	var peers []domain.RaftPeerSpec
-
-	var discoveredPeers []ports.Peer
-	if m.discovery != nil {
-		discoveredPeers = m.discovery.GetPeers()
-	}
+	discoveredPeers := m.bootstrapper.GetDiscoveredPeers()
 
 	m.logger.Debug("cluster formation state",
-		"resolved_ordinal", resolvedOrdinal,
-		"config_ordinal", m.config.Bootstrap.Ordinal,
-		"is_ordinal_zero", isOrdinalZero,
+		"server_id", serverID,
+		"is_cluster_initiator", isClusterInitiator,
 		"headless_service", m.config.Bootstrap.HeadlessService,
 		"service_name", m.config.Bootstrap.ServiceName,
 		"discovered_peers_count", len(discoveredPeers))
@@ -657,75 +629,32 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 			"index", i,
 			"peer_id", p.ID,
 			"peer_address", p.Address,
-			"peer_port", p.Port,
-			"peer_metadata", p.Metadata)
+			"peer_port", p.Port)
 	}
 
-	if !isOrdinalZero {
-		var leaderAddr string
-		var leaderID string
-		var grpcPortStr string
-		var foundFromDiscovery bool
+	if !isClusterInitiator {
+		lowestPeer := findLowestServerIDPeer(discoveredPeers, string(serverID))
+		if lowestPeer != nil {
+			peerAddr := fmt.Sprintf("%s:%d", lowestPeer.Address, lowestPeer.Port)
 
-		for _, p := range discoveredPeers {
-			if ordStr, ok := p.Metadata["ordinal"]; ok && ordStr == "0" {
-				leaderAddr = fmt.Sprintf("%s:%d", p.Address, p.Port)
-				leaderID = fmt.Sprintf("%s-0", m.config.Bootstrap.ServiceName)
-				grpcPortStr = p.Metadata["grpc_port"]
-				foundFromDiscovery = true
-				m.logger.Debug("found ordinal-0 via discovery",
-					"peer_id", p.ID,
-					"peer_address", p.Address,
-					"peer_port", p.Port,
-					"grpc_port", grpcPortStr,
-					"leader_addr", leaderAddr)
-				break
-			}
-		}
+			m.logger.Debug("found lowest ServerID peer to join",
+				"peer_id", lowestPeer.ID,
+				"peer_address", peerAddr)
 
-		if !foundFromDiscovery {
-			headlessSvc := m.config.Bootstrap.HeadlessService
-			if headlessSvc == "" {
-				headlessSvc = m.config.Bootstrap.ServiceName
-			}
-			raftPort := m.config.Bootstrap.BasePort
-			if _, portStr, err := net.SplitHostPort(m.config.BindAddr); err == nil {
-				if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
-					raftPort = p
-				}
-			}
-			leaderAddr = fmt.Sprintf("%s-0.%s:%d",
-				m.config.Bootstrap.ServiceName,
-				headlessSvc,
-				raftPort)
-			leaderID = fmt.Sprintf("%s-0", m.config.Bootstrap.ServiceName)
-			grpcPortStr = strconv.Itoa(grpcPort)
-			m.logger.Debug("using K8s-style leader address (discovery fallback)",
-				"leader_addr", leaderAddr,
-				"grpc_port", grpcPortStr)
+			peers = []domain.RaftPeerSpec{{
+				ID:      lowestPeer.ID,
+				Address: peerAddr,
+			}}
+		} else {
+			m.logger.Warn("no peers found to join, will wait for cluster initiator")
 		}
-
-		peerMeta := make(map[string]string)
-		if grpcPortStr != "" {
-			peerMeta["grpc_port"] = grpcPortStr
-		}
-		peers = []domain.RaftPeerSpec{{
-			ID:       leaderID,
-			Address:  leaderAddr,
-			Metadata: peerMeta,
-		}}
-		m.logger.Debug("constructed peer for joining",
-			"leader_addr", leaderAddr,
-			"leader_id", leaderID,
-			"grpc_port", grpcPortStr,
-			"from_discovery", foundFromDiscovery)
 	}
 
-	if err := m.raftAdapter.Start(ctx, peers, isOrdinalZero); err != nil {
+	if err := m.raftAdapter.Start(ctx, peers, isClusterInitiator); err != nil {
 		m.logger.Error("raft adapter start failed (new bootstrap)",
 			"node_id", m.nodeID,
-			"resolved_ordinal", resolvedOrdinal,
-			"is_bootstrap_leader", isOrdinalZero,
+			"server_id", serverID,
+			"is_cluster_initiator", isClusterInitiator,
 			"error", err)
 		return domain.NewRaftError(
 			"failed to start raft node",
@@ -736,8 +665,8 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 
 	m.logger.Info("raft adapter started (new bootstrap)",
 		"node_id", m.nodeID,
-		"resolved_ordinal", resolvedOrdinal,
-		"is_bootstrap_leader", isOrdinalZero,
+		"server_id", serverID,
+		"is_cluster_initiator", isClusterInitiator,
 		"state", m.bootstrapper.CurrentState())
 
 	m.readinessManager.SetState(readiness.StateReady)
@@ -746,7 +675,6 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 	return nil
 }
 
-// convertPeersToPorts converts raft peer specs back to ports.Peer for the adapter.
 func convertPeersToPorts(peers []domain.RaftPeerSpec) []ports.Peer {
 	if len(peers) == 0 {
 		return nil
@@ -755,14 +683,14 @@ func convertPeersToPorts(peers []domain.RaftPeerSpec) []ports.Peer {
 	for _, p := range peers {
 		host, portStr, err := net.SplitHostPort(p.Address)
 		if err != nil {
-			out = append(out, ports.Peer{ID: p.ID, Address: p.Address, Port: 0, Metadata: p.Metadata})
+			out = append(out, ports.Peer{ID: p.ID, Address: p.Address, Port: 0})
 			continue
 		}
 		port, err := strconv.Atoi(portStr)
 		if err != nil {
 			port = 0
 		}
-		out = append(out, ports.Peer{ID: p.ID, Address: host, Port: port, Metadata: p.Metadata})
+		out = append(out, ports.Peer{ID: p.ID, Address: host, Port: port})
 	}
 	return out
 }
@@ -849,14 +777,6 @@ func (m *Manager) GetClusterInfo() ClusterInfo {
 				info.Peers = append(info.Peers, member.ID)
 			}
 		}
-		info.Status = "running"
-	} else if m.discovery != nil {
-		peers := m.discovery.GetPeers()
-		peerIDs := make([]string, len(peers))
-		for i, peer := range peers {
-			peerIDs[i] = peer.ID
-		}
-		info.Peers = peerIDs
 		info.Status = "running"
 	}
 
@@ -1028,72 +948,6 @@ func (m *Manager) calculateClusterMetrics() ClusterMetrics {
 		FailedWorkflows:    failedWorkflows,
 		NodesExecuted:      nodesExecuted,
 	}
-}
-
-// waitForDiscovery waits for discovery to stabilize and find peers
-func (m *Manager) waitForDiscovery(ctx context.Context, timeout time.Duration) ([]ports.Peer, error) {
-	if m.discovery == nil {
-		return nil, nil
-	}
-
-	m.logger.Info("waiting for discovery to find peers", "timeout", timeout)
-
-	timeoutCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	events, unsubscribe := m.discovery.Subscribe()
-	defer unsubscribe()
-
-	ticker := time.NewTicker(500 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-timeoutCtx.Done():
-			if ctx.Err() != nil && errors.Is(timeoutCtx.Err(), context.Canceled) {
-				return nil, ctx.Err()
-			}
-			peers := filterPeers(m.discovery.GetPeers(), m.nodeID)
-			m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "timeout")
-			return peers, nil
-		case _, ok := <-events:
-			if !ok {
-				peers := filterPeers(m.discovery.GetPeers(), m.nodeID)
-				if len(peers) == 0 {
-					return nil, fmt.Errorf("discovery stopped before peers found: %w", ErrDiscoveryStopped)
-				}
-				m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "events_closed")
-				return peers, nil
-			}
-			peers := filterPeers(m.discovery.GetPeers(), m.nodeID)
-			if m.expectedStaticPeers > 0 {
-				if len(peers) >= m.expectedStaticPeers {
-					m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "expected_peers")
-					return peers, nil
-				}
-			} else if len(peers) > 0 {
-				m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "peers_detected")
-				return peers, nil
-			}
-		case <-ticker.C:
-			peers := filterPeers(m.discovery.GetPeers(), m.nodeID)
-			if m.expectedStaticPeers > 0 {
-				if len(peers) >= m.expectedStaticPeers {
-					m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "expected_peers")
-					return peers, nil
-				}
-			} else if len(peers) > 0 {
-				m.logger.Info("discovery phase complete", "peers_found", len(peers), "reason", "peers_detected")
-				return peers, nil
-			}
-		case <-ctx.Done():
-			return nil, fmt.Errorf("discovery wait aborted: %w", ctx.Err())
-		}
-	}
-}
-
-func (m *Manager) refreshPeersAsync(ctx context.Context, timeout time.Duration) {
-
 }
 
 type WorkflowTrigger struct {
@@ -1489,110 +1343,6 @@ func (m *Manager) isWorkflowIntakeAllowed() bool {
 	return m.workflowIntakeOk
 }
 
-func (m *Manager) watchForSeniorPeers(ctx context.Context) {
-	if !m.raftAdapter.IsProvisional() {
-		m.logger.Debug("node not provisional, skipping senior peer detection")
-		return
-	}
-
-	m.logger.Info("starting senior peer detection for provisional leader")
-
-	discoveryEvents, unsubscribe := m.discovery.Subscribe()
-	defer unsubscribe()
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case event, ok := <-discoveryEvents:
-			if !ok {
-				return
-			}
-			m.handleDiscoveryEvent(event)
-		case <-ticker.C:
-			m.checkForSeniorPeers()
-		}
-	}
-}
-
-// reconcilePeersLoop periodically removes raft members that are no longer present in discovery.
-// This keeps the raft configuration aligned with the active cluster view even if removal events are missed.
-func (m *Manager) reconcilePeersLoop(ctx context.Context) {
-	if m.discovery == nil || m.raftAdapter == nil {
-		return
-	}
-
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			peers := m.discovery.GetPeers()
-			peerSet := make(map[string]struct{}, len(peers))
-			for _, p := range peers {
-				peerSet[p.ID] = struct{}{}
-			}
-
-			cluster := m.raftAdapter.GetClusterInfo()
-			for _, member := range cluster.Members {
-				if member.ID == m.nodeID {
-					continue
-				}
-				if _, ok := peerSet[member.ID]; !ok {
-					if err := m.raftAdapter.RemoveServer(member.ID); err != nil {
-						m.logger.Warn("failed to remove missing peer from raft config", "peer_id", member.ID, "error", err)
-					} else {
-						m.logger.Info("removed missing peer from raft config", "peer_id", member.ID)
-					}
-				}
-			}
-		}
-	}
-}
-
-func (m *Manager) handleDiscoveryEvent(event ports.Event) {
-	switch event.Type {
-	case ports.PeerAdded, ports.PeerUpdated:
-		peers := m.discovery.GetPeers()
-		seniorPeer := readiness.FindSeniorPeer(m.nodeID, peers, m.logger)
-
-		if seniorPeer != nil {
-			m.logger.Info("discovered senior peer via event", "senior_peer", seniorPeer.ID)
-			m.initiateDemotion(*seniorPeer)
-		}
-	case ports.PeerRemoved:
-		if m.raftAdapter == nil {
-			return
-		}
-		peerID := event.Peer.ID
-		if peerID == "" || peerID == m.nodeID {
-			return
-		}
-		if err := m.raftAdapter.RemoveServer(peerID); err != nil {
-			m.logger.Warn("failed to remove peer from raft config", "peer_id", peerID, "error", err)
-		}
-	}
-}
-
-func (m *Manager) checkForSeniorPeers() {
-	if !m.raftAdapter.IsProvisional() {
-		return
-	}
-
-	peers := m.discovery.GetPeers()
-	seniorPeer := readiness.FindSeniorPeer(m.nodeID, peers, m.logger)
-
-	if seniorPeer != nil {
-		m.logger.Info("discovered senior peer via periodic check", "senior_peer", seniorPeer.ID)
-		m.initiateDemotion(*seniorPeer)
-	}
-}
-
 func (m *Manager) initiateDemotion(seniorPeer ports.Peer) {
 	if !m.raftAdapter.IsProvisional() {
 		m.logger.Debug("node no longer provisional, skipping demotion")
@@ -1653,25 +1403,13 @@ func (m *Manager) joinPeers(ctx context.Context, peers []ports.Peer) bool {
 			continue
 		}
 
-		grpcPortStr, ok := peer.Metadata["grpc_port"]
-		if !ok {
-			m.logger.Warn("peer missing grpc_port metadata", "peer_id", peer.ID)
-			continue
-		}
-		grpcPort, err := strconv.Atoi(grpcPortStr)
-		if err != nil {
-			m.logger.Warn("invalid grpc_port in peer metadata", "peer_id", peer.ID, "value", grpcPortStr)
-			continue
-		}
-
-		peerAddr := net.JoinHostPort(peer.Address, strconv.Itoa(grpcPort))
+		peerAddr := net.JoinHostPort(peer.Address, strconv.Itoa(peer.Port))
 
 		m.logger.Debug("sending join request",
 			"peer_addr", peerAddr,
 			"node_id", m.nodeID,
 			"raft_address", host,
-			"raft_port", raftPort,
-			"grpc_port", m.grpcPort)
+			"raft_port", raftPort)
 
 		req := &ports.JoinRequest{
 			NodeID:   m.nodeID,
@@ -1870,4 +1608,42 @@ func filterPeers(peers []ports.Peer, selfID string) []ports.Peer {
 		result = append(result, p)
 	}
 	return result
+}
+
+func findLowestServerIDPeer(peers []ports.Peer, selfID string) *ports.Peer {
+	var lowest *ports.Peer
+	for i := range peers {
+		p := &peers[i]
+		if p.ID == selfID {
+			continue
+		}
+		if lowest == nil || p.ID < lowest.ID {
+			lowest = p
+		}
+	}
+	return lowest
+}
+
+func (m *Manager) buildBootstrapConfig(grpcPort int) *bootstrap.BootstrapConfig {
+	raftPort := m.config.Bootstrap.BasePort
+	if _, portStr, err := net.SplitHostPort(m.config.BindAddr); err == nil {
+		if p, _ := strconv.Atoi(portStr); p > 0 {
+			raftPort = p
+		}
+	}
+
+	return &bootstrap.BootstrapConfig{
+		ServiceName:       m.config.Bootstrap.ServiceName,
+		DataDir:           m.config.DataDir,
+		Ordinal:           m.config.Bootstrap.Ordinal,
+		ExpectedNodes:     m.config.Bootstrap.Replicas,
+		MinQuorum:         (m.config.Bootstrap.Replicas / 2) + 1,
+		RaftPort:          raftPort,
+		JoinPort:          grpcPort,
+		BindAddr:          m.config.BindAddr,
+		HeadlessService:   m.config.Bootstrap.HeadlessService,
+		BootstrapTimeout:  60 * time.Second,
+		JoinTimeout:       30 * time.Second,
+		LeaderWaitTimeout: 30 * time.Second,
+	}
 }

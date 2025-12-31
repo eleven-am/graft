@@ -283,17 +283,17 @@ func TestPreflight_Check_Success_NoPeersReachable(t *testing.T) {
 
 func TestPreflight_DisasterRecovery_ExistingRaftLog(t *testing.T) {
 	transport := NewMockBootstrapTransport()
-	discovery := NewMockPeerDiscovery()
+	membershipStore := NewMockMembershipStore()
 
-	discovery.SetAddress(0, "10.0.0.1:7946")
-	discovery.SetAddress(1, "10.0.0.2:7946")
-	discovery.SetAddress(2, "10.0.0.3:7946")
+	membershipStore.SetConfiguration(&raft.Configuration{
+		Servers: []raft.Server{
+			{ID: "node-0", Address: "10.0.0.1:7946", Suffrage: raft.Voter},
+			{ID: "node-1", Address: "10.0.0.2:7946", Suffrage: raft.Voter},
+			{ID: "node-2", Address: "10.0.0.3:7946", Suffrage: raft.Voter},
+		},
+	})
 
 	transport.SetLastIndex("10.0.0.1:7946", 100)
-
-	config := &BootstrapConfig{
-		ExpectedNodes: 3,
-	}
 
 	expectedVoters := []VoterInfo{
 		{ServerID: "node-0", Address: "10.0.0.1:7946", Ordinal: 0},
@@ -302,9 +302,8 @@ func TestPreflight_DisasterRecovery_ExistingRaftLog(t *testing.T) {
 	}
 
 	preflight := NewForceBootstrapPreflight(ForceBootstrapPreflightDeps{
-		Transport: transport,
-		Discovery: discovery,
-		Config:    config,
+		Transport:       transport,
+		MembershipStore: membershipStore,
 	})
 
 	token := &ForceBootstrapToken{
@@ -329,11 +328,15 @@ func TestPreflight_DisasterRecovery_ExistingRaftLog(t *testing.T) {
 
 func TestPreflight_DisasterRecovery_IgnoreQuorumCheck(t *testing.T) {
 	transport := NewMockBootstrapTransport()
-	discovery := NewMockPeerDiscovery()
+	membershipStore := NewMockMembershipStore()
 
-	discovery.SetAddress(0, "10.0.0.1:7946")
-	discovery.SetAddress(1, "10.0.0.2:7946")
-	discovery.SetAddress(2, "10.0.0.3:7946")
+	membershipStore.SetConfiguration(&raft.Configuration{
+		Servers: []raft.Server{
+			{ID: "node-0", Address: "10.0.0.1:7946", Suffrage: raft.Voter},
+			{ID: "node-1", Address: "10.0.0.2:7946", Suffrage: raft.Voter},
+			{ID: "node-2", Address: "10.0.0.3:7946", Suffrage: raft.Voter},
+		},
+	})
 
 	transport.SetLastIndex("10.0.0.1:7946", 0)
 	transport.SetLastIndex("10.0.0.2:7946", 0)
@@ -352,9 +355,9 @@ func TestPreflight_DisasterRecovery_IgnoreQuorumCheck(t *testing.T) {
 	}
 
 	preflight := NewForceBootstrapPreflight(ForceBootstrapPreflightDeps{
-		Transport: transport,
-		Discovery: discovery,
-		Config:    config,
+		Transport:       transport,
+		MembershipStore: membershipStore,
+		Config:          config,
 	})
 
 	token := &ForceBootstrapToken{
@@ -381,11 +384,15 @@ func TestPreflight_DisasterRecovery_IgnoreQuorumCheck(t *testing.T) {
 
 func TestPreflight_DisasterRecovery_RequiresAllowDRQuorumOverride(t *testing.T) {
 	transport := NewMockBootstrapTransport()
-	discovery := NewMockPeerDiscovery()
+	membershipStore := NewMockMembershipStore()
 
-	discovery.SetAddress(0, "10.0.0.1:7946")
-	discovery.SetAddress(1, "10.0.0.2:7946")
-	discovery.SetAddress(2, "10.0.0.3:7946")
+	membershipStore.SetConfiguration(&raft.Configuration{
+		Servers: []raft.Server{
+			{ID: "node-0", Address: "10.0.0.1:7946", Suffrage: raft.Voter},
+			{ID: "node-1", Address: "10.0.0.2:7946", Suffrage: raft.Voter},
+			{ID: "node-2", Address: "10.0.0.3:7946", Suffrage: raft.Voter},
+		},
+	})
 
 	transport.SetLastIndex("10.0.0.1:7946", 0)
 	transport.SetLastIndex("10.0.0.2:7946", 0)
@@ -404,9 +411,9 @@ func TestPreflight_DisasterRecovery_RequiresAllowDRQuorumOverride(t *testing.T) 
 	}
 
 	preflight := NewForceBootstrapPreflight(ForceBootstrapPreflightDeps{
-		Transport: transport,
-		Discovery: discovery,
-		Config:    config,
+		Transport:       transport,
+		MembershipStore: membershipStore,
+		Config:          config,
 	})
 
 	token := &ForceBootstrapToken{
@@ -474,7 +481,7 @@ func TestExecutor_CheckForToken_Expired(t *testing.T) {
 	secrets := NewMockSecretsManager()
 	secrets.SetFencingKey([]byte("test-fencing-key-32-bytes-long!!"))
 
-	generator := NewForceBootstrapTokenGenerator("", nil, nil, secrets, nil)
+	generator := NewForceBootstrapTokenGenerator("", nil, secrets, nil)
 	token, err := generator.Generate(
 		context.Background(),
 		"cluster-uuid",
@@ -568,7 +575,7 @@ func TestExecutor_CheckForToken_WrongOrdinal(t *testing.T) {
 	secrets := NewMockSecretsManager()
 	secrets.SetFencingKey([]byte("test-fencing-key-32-bytes-long!!"))
 
-	generator := NewForceBootstrapTokenGenerator("", nil, nil, secrets, nil)
+	generator := NewForceBootstrapTokenGenerator("", nil, secrets, nil)
 	token, err := generator.Generate(
 		context.Background(),
 		"cluster-uuid",

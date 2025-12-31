@@ -348,7 +348,7 @@ func TestAdminAPI_HandleForce_NoExecutor(t *testing.T) {
 	secrets.SetAdminToken([]byte("test-admin-token"))
 	secrets.SetForceBootstrapKey([]byte("test-force-key-32-bytes-long!!!"))
 
-	tokenGenerator := NewForceBootstrapTokenGenerator("", nil, nil, secrets, nil)
+	tokenGenerator := NewForceBootstrapTokenGenerator("", nil, secrets, nil)
 
 	api := NewAdminAPI(AdminAPIConfig{
 		SecretsManager: secrets,
@@ -384,7 +384,7 @@ func TestAdminAPI_HandleForce_StateCheckReady(t *testing.T) {
 	secrets.SetAdminToken([]byte("test-admin-token"))
 	secrets.SetForceBootstrapKey([]byte("test-force-key-32-bytes-long!!!"))
 
-	tokenGenerator := NewForceBootstrapTokenGenerator("", nil, nil, secrets, nil)
+	tokenGenerator := NewForceBootstrapTokenGenerator("", nil, secrets, nil)
 
 	metaStore := newMockMetaStore()
 	metaStore.meta = &ClusterMeta{

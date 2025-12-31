@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/eleven-am/graft/internal/domain"
-	"github.com/eleven-am/graft/internal/helpers/metadata"
 	"github.com/eleven-am/graft/internal/mocks"
 	"github.com/eleven-am/graft/internal/ports"
 	"github.com/eleven-am/graft/internal/readiness"
@@ -21,15 +20,10 @@ func TestManagerBootstrapHandoff(t *testing.T) {
 		manager, _, _ := createBootstrapTestManager(t)
 		defer manager.Stop()
 
-		olderTimestamp := time.Now().Add(-5 * time.Minute).UnixNano()
 		seniorPeer := ports.Peer{
 			ID:      "senior-node",
 			Address: "127.0.0.1",
 			Port:    8080,
-			Metadata: map[string]string{
-				metadata.BootIDKey:          "senior-boot-id",
-				metadata.LaunchTimestampKey: time.Unix(0, olderTimestamp).Format(time.RFC3339Nano),
-			},
 		}
 
 		manager.initiateDemotion(seniorPeer)
@@ -54,10 +48,6 @@ func TestManagerBootstrapHandoff(t *testing.T) {
 			ID:      "senior-node",
 			Address: "127.0.0.1",
 			Port:    8080,
-			Metadata: map[string]string{
-				metadata.BootIDKey:          "senior-boot-id",
-				metadata.LaunchTimestampKey: time.Now().Format(time.RFC3339Nano),
-			},
 		}
 
 		manager.initiateDemotion(seniorPeer)
@@ -316,63 +306,4 @@ func createBootstrapTestManager(t *testing.T) (*Manager, *mocks.MockRaftNode, *m
 	}
 
 	return manager, mockRaft, mockEngine
-}
-
-func TestManager_K8sFallbackPeerConstructionIncludesGRPCPort(t *testing.T) {
-	t.Run("K8s fallback sets grpc_port in peer metadata", func(t *testing.T) {
-		manager, _, _ := createBootstrapTestManager(t)
-		defer manager.Stop()
-
-		manager.config.Bootstrap = domain.BootstrapConfig{
-			ServiceName:     "test-service",
-			HeadlessService: "test-headless",
-			BasePort:        9191,
-		}
-		manager.grpcPort = 9192
-
-		discoveredPeers := []ports.Peer{}
-		isOrdinalZero := false
-
-		var peers []domain.RaftPeerSpec
-		var grpcPort string
-		var leaderAddr string
-		var leaderID string
-
-		foundFromDiscovery := false
-		for _, p := range discoveredPeers {
-			if ordStr, ok := p.Metadata["ordinal"]; ok && ordStr == "0" {
-				leaderAddr = p.Address
-				grpcPort = p.Metadata["grpc_port"]
-				foundFromDiscovery = true
-				break
-			}
-		}
-
-		if !foundFromDiscovery && !isOrdinalZero {
-			headlessSvc := manager.config.Bootstrap.HeadlessService
-			if headlessSvc == "" {
-				headlessSvc = manager.config.Bootstrap.ServiceName
-			}
-			leaderAddr = manager.config.Bootstrap.ServiceName + "-0." + headlessSvc + ":9191"
-			leaderID = manager.config.Bootstrap.ServiceName + "-0"
-			grpcPort = "9192"
-		}
-
-		if !isOrdinalZero {
-			peerMeta := make(map[string]string)
-			if grpcPort != "" {
-				peerMeta["grpc_port"] = grpcPort
-			}
-			peers = []domain.RaftPeerSpec{{
-				ID:       leaderID,
-				Address:  leaderAddr,
-				Metadata: peerMeta,
-			}}
-		}
-
-		assert.Len(t, peers, 1)
-		assert.Equal(t, "test-service-0", peers[0].ID)
-		assert.Equal(t, "test-service-0.test-headless:9191", peers[0].Address)
-		assert.Equal(t, "9192", peers[0].Metadata["grpc_port"], "grpc_port should be set in K8s fallback")
-	})
 }

@@ -165,13 +165,12 @@ func protoToAck(resp *pb.ProposeTokenResponse) *FencingAck {
 
 func voteRequestToProto(req *VoteRequest) *pb.VoteRequestProto {
 	return &pb.VoteRequestProto{
-		CandidateId:      string(req.CandidateID),
-		CandidateOrdinal: int32(req.CandidateOrdinal),
-		ElectionReason:   req.ElectionReason,
-		Timestamp:        req.Timestamp.UnixNano(),
-		VoterSetHash:     req.VoterSetHash,
-		RequiredQuorum:   int32(req.RequiredQuorum),
-		Signature:        req.Signature,
+		CandidateId:    string(req.CandidateID),
+		ElectionReason: req.ElectionReason,
+		Timestamp:      req.Timestamp.UnixNano(),
+		VoterSetHash:   req.VoterSetHash,
+		RequiredQuorum: int32(req.RequiredQuorum),
+		Signature:      req.Signature,
 	}
 }
 
@@ -281,13 +280,12 @@ func ackToProto(a *FencingAck) *pb.ProposeTokenResponse {
 
 func protoToVoteRequest(req *pb.VoteRequestProto) *VoteRequest {
 	return &VoteRequest{
-		CandidateID:      raft.ServerID(req.CandidateId),
-		CandidateOrdinal: int(req.CandidateOrdinal),
-		ElectionReason:   req.ElectionReason,
-		Timestamp:        time.Unix(0, req.Timestamp),
-		VoterSetHash:     req.VoterSetHash,
-		RequiredQuorum:   int(req.RequiredQuorum),
-		Signature:        req.Signature,
+		CandidateID:    raft.ServerID(req.CandidateId),
+		ElectionReason: req.ElectionReason,
+		Timestamp:      time.Unix(0, req.Timestamp),
+		VoterSetHash:   req.VoterSetHash,
+		RequiredQuorum: int(req.RequiredQuorum),
+		Signature:      req.Signature,
 	}
 }
 

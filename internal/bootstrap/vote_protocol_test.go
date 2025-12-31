@@ -63,41 +63,15 @@ func TestHashVoterSet_DifferentVoters(t *testing.T) {
 	}
 }
 
-func TestExtractOrdinal(t *testing.T) {
-	tests := []struct {
-		serverID raft.ServerID
-		expected int
-	}{
-		{"myservice-0", 0},
-		{"myservice-1", 1},
-		{"myservice-10", 10},
-		{"my-complex-service-name-5", 5},
-		{"node0", -1},
-		{"node", -1},
-		{"", -1},
-		{"-1", 1},
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.serverID), func(t *testing.T) {
-			result := ExtractOrdinal(tt.serverID)
-			if result != tt.expected {
-				t.Errorf("ExtractOrdinal(%q) = %d, want %d", tt.serverID, result, tt.expected)
-			}
-		})
-	}
-}
-
 func TestSignVerifyVoteRequest(t *testing.T) {
 	key := []byte("test-fencing-key-32-bytes-long!!")
 
 	req := &VoteRequest{
-		CandidateID:      "node-1",
-		CandidateOrdinal: 1,
-		ElectionReason:   "ordinal_0_unreachable",
-		Timestamp:        time.Now(),
-		VoterSetHash:     []byte("voter-set-hash"),
-		RequiredQuorum:   2,
+		CandidateID:    "node-1",
+		ElectionReason: "lowest_server_id_unreachable",
+		Timestamp:      time.Now(),
+		VoterSetHash:   []byte("voter-set-hash"),
+		RequiredQuorum: 2,
 	}
 
 	err := SignVoteRequest(req, key)
@@ -119,12 +93,11 @@ func TestSignVerifyVoteRequest_InvalidKey(t *testing.T) {
 	key2 := []byte("different-key-32-bytes-long!!!!!")
 
 	req := &VoteRequest{
-		CandidateID:      "node-1",
-		CandidateOrdinal: 1,
-		ElectionReason:   "ordinal_0_unreachable",
-		Timestamp:        time.Now(),
-		VoterSetHash:     []byte("voter-set-hash"),
-		RequiredQuorum:   2,
+		CandidateID:    "node-1",
+		ElectionReason: "lowest_server_id_unreachable",
+		Timestamp:      time.Now(),
+		VoterSetHash:   []byte("voter-set-hash"),
+		RequiredQuorum: 2,
 	}
 
 	_ = SignVoteRequest(req, key1)
@@ -136,12 +109,11 @@ func TestSignVerifyVoteRequest_InvalidKey(t *testing.T) {
 
 func TestSignVerifyVoteRequest_NoKey(t *testing.T) {
 	req := &VoteRequest{
-		CandidateID:      "node-1",
-		CandidateOrdinal: 1,
-		ElectionReason:   "ordinal_0_unreachable",
-		Timestamp:        time.Now(),
-		VoterSetHash:     []byte("voter-set-hash"),
-		RequiredQuorum:   2,
+		CandidateID:    "node-1",
+		ElectionReason: "lowest_server_id_unreachable",
+		Timestamp:      time.Now(),
+		VoterSetHash:   []byte("voter-set-hash"),
+		RequiredQuorum: 2,
 	}
 
 	err := SignVoteRequest(req, nil)
@@ -162,17 +134,16 @@ func TestSignVerifyVoteRequest_TamperedData(t *testing.T) {
 	key := []byte("test-fencing-key-32-bytes-long!!")
 
 	req := &VoteRequest{
-		CandidateID:      "node-1",
-		CandidateOrdinal: 1,
-		ElectionReason:   "ordinal_0_unreachable",
-		Timestamp:        time.Now(),
-		VoterSetHash:     []byte("voter-set-hash"),
-		RequiredQuorum:   2,
+		CandidateID:    "node-1",
+		ElectionReason: "lowest_server_id_unreachable",
+		Timestamp:      time.Now(),
+		VoterSetHash:   []byte("voter-set-hash"),
+		RequiredQuorum: 2,
 	}
 
 	_ = SignVoteRequest(req, key)
 
-	req.CandidateOrdinal = 0
+	req.CandidateID = "node-2"
 
 	if VerifyVoteRequestSignature(req, key) {
 		t.Error("VerifyVoteRequestSignature should return false for tampered data")
@@ -278,22 +249,5 @@ func TestMockMembershipStore(t *testing.T) {
 
 	if len(result.Servers) != 2 {
 		t.Errorf("Expected 2 servers, got %d", len(result.Servers))
-	}
-}
-
-func TestMockPeerDiscovery(t *testing.T) {
-	discovery := NewMockPeerDiscovery()
-
-	discovery.SetAddress(0, "10.0.0.1:7946")
-	discovery.SetAddress(1, "10.0.0.2:7946")
-
-	addr := discovery.AddressForOrdinal(0)
-	if addr != "10.0.0.1:7946" {
-		t.Errorf("AddressForOrdinal(0) = %q, want %q", addr, "10.0.0.1:7946")
-	}
-
-	addr = discovery.AddressForOrdinal(2)
-	if addr != "" {
-		t.Errorf("AddressForOrdinal(2) = %q, want empty string", addr)
 	}
 }

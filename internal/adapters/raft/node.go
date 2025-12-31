@@ -289,7 +289,7 @@ func (n *Node) SetReadinessCallback(cb func(bool)) {
 }
 
 func (n *Node) DemoteAndJoin(ctx context.Context, peer ports.Peer) error {
-	return n.controller.Demote(ctx, ports.RaftPeer{ID: peer.ID, Address: net.JoinHostPort(peer.Address, fmt.Sprintf("%d", peer.Port)), Metadata: peer.Metadata})
+	return n.controller.Demote(ctx, ports.RaftPeer{ID: peer.ID, Address: net.JoinHostPort(peer.Address, fmt.Sprintf("%d", peer.Port))})
 }
 
 func (n *Node) LeaderAddr() string {

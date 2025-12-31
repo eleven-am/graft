@@ -12,6 +12,7 @@ import (
 func TestManager_ClusterCommandMethods(t *testing.T) {
 	config := domain.NewConfigFromSimple("test-node", "127.0.0.1:9000", t.TempDir(), slog.Default())
 	config.Raft.DiscoveryTimeout = 100 * time.Millisecond
+	config.Bootstrap.Replicas = 1
 	manager := NewWithConfig(config)
 	if manager == nil {
 		t.Fatal("Failed to create manager")

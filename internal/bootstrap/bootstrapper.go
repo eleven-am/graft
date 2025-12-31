@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/hashicorp/raft"
+
+	"github.com/eleven-am/graft/internal/ports"
 )
 
 const (
@@ -25,7 +27,7 @@ type BootstrapperDeps struct {
 	FencingManager         *FencingManager
 	StateMachine           *StateMachine
 	RecoveryManager        *RecoveryManager
-	Discovery              PeerDiscovery
+	Seeder                 ports.Seeder
 	Transport              BootstrapTransport
 	SecretsManager         *SecretsManager
 	FallbackElection       *FallbackElection
@@ -44,7 +46,7 @@ type Bootstrapper struct {
 	fencingManager         *FencingManager
 	stateMachine           *StateMachine
 	recoveryManager        *RecoveryManager
-	discovery              PeerDiscovery
+	seeder                 ports.Seeder
 	transport              BootstrapTransport
 	secretsManager         *SecretsManager
 	fallbackElection       *FallbackElection
@@ -57,6 +59,7 @@ type Bootstrapper struct {
 	staleCheckInterval  time.Duration
 	leaderWaitStartTime time.Time
 	lastStaleCheck      time.Time
+	discoveredPeers     []ports.Peer
 
 	mu       sync.RWMutex
 	started  bool
@@ -100,7 +103,7 @@ func NewBootstrapper(deps BootstrapperDeps) *Bootstrapper {
 		fencingManager:         deps.FencingManager,
 		stateMachine:           deps.StateMachine,
 		recoveryManager:        deps.RecoveryManager,
-		discovery:              deps.Discovery,
+		seeder:                 deps.Seeder,
 		transport:              deps.Transport,
 		secretsManager:         deps.SecretsManager,
 		fallbackElection:       deps.FallbackElection,
@@ -197,11 +200,6 @@ func (b *Bootstrapper) Stop() error {
 			slog.Any("error", err))
 	}
 
-	if lifecycleDiscovery, ok := b.discovery.(LifecyclePeerDiscovery); ok {
-		lifecycleDiscovery.Stop()
-		b.logger.Debug("discovery adapter stopped")
-	}
-
 	b.logger.Info("bootstrapper stopped")
 	return nil
 }
@@ -233,10 +231,10 @@ func (b *Bootstrapper) CurrentState() NodeState {
 	return b.currentStateUnsafe()
 }
 
-func (b *Bootstrapper) GetOrdinal() int {
+func (b *Bootstrapper) GetServerID() raft.ServerID {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	return b.config.Ordinal
+	return b.getOwnServerID()
 }
 
 func (b *Bootstrapper) currentStateUnsafe() NodeState {
@@ -258,11 +256,16 @@ func (b *Bootstrapper) GetMeta() *ClusterMeta {
 }
 
 func (b *Bootstrapper) initialize(ctx context.Context) error {
-	if lifecycleDiscovery, ok := b.discovery.(LifecyclePeerDiscovery); ok {
-		if err := lifecycleDiscovery.Start(ctx); err != nil {
-			return fmt.Errorf("start discovery: %w", err)
+	if b.seeder != nil {
+		peers, err := b.seeder.Discover(ctx)
+		if err != nil {
+			b.logger.Warn("initial peer discovery failed", slog.Any("error", err))
+		} else {
+			b.discoveredPeers = peers
+			b.logger.Info("discovered initial peers",
+				slog.Int("count", len(peers)),
+				slog.String("seeder", b.seeder.Name()))
 		}
-		b.logger.Debug("discovery adapter started")
 	}
 
 	if b.secretsManager != nil {
@@ -436,16 +439,80 @@ func (b *Bootstrapper) handleUninitialized(ctx context.Context) {
 		return
 	}
 
-	if b.discovery == nil {
+	if len(b.discoveredPeers) == 0 && b.seeder != nil {
+		peers, err := b.seeder.Discover(ctx)
+		if err != nil {
+			b.logger.Warn("peer discovery failed", slog.Any("error", err))
+			return
+		}
+		b.discoveredPeers = peers
+	}
+
+	existingCluster := b.findExistingCluster(ctx)
+	if existingCluster != nil {
+		b.logger.Info("existing cluster found, transitioning to joining",
+			slog.String("cluster_uuid", existingCluster.ClusterUUID))
+
+		if b.stateMachine != nil {
+			if err := b.stateMachine.SetClusterUUID(existingCluster.ClusterUUID); err != nil {
+				b.logger.Error("failed to set ClusterUUID before joining", slog.Any("error", err))
+				return
+			}
+		}
+
+		if err := b.transitionState(StateJoining, "existing cluster discovered"); err != nil {
+			b.logger.Error("failed to transition to joining", slog.Any("error", err))
+		}
 		return
 	}
 
-	ordinal := b.config.Ordinal
+	quorum := b.config.CalculateQuorum()
+	peersNeeded := quorum - 1
 
-	if ordinal == 0 {
-		b.handleOrdinalZeroBootstrap(ctx)
+	if len(b.discoveredPeers) < peersNeeded {
+		b.logger.Debug("waiting for quorum peers before bootstrap decision",
+			slog.Int("discovered", len(b.discoveredPeers)),
+			slog.Int("needed", peersNeeded))
+		return
+	}
+
+	myServerID := b.getOwnServerID()
+	if b.isLowestServerID(myServerID) {
+		b.logger.Info("initiating bootstrap (lowest ServerID)",
+			slog.String("server_id", string(myServerID)),
+			slog.Int("discovered_peers", len(b.discoveredPeers)),
+			slog.Int("quorum_size", quorum))
+
+		if err := b.transitionState(StateBootstrapping, "lowest ServerID initiating bootstrap"); err != nil {
+			b.logger.Error("failed to transition to bootstrapping", slog.Any("error", err))
+		}
+		return
+	}
+
+	if b.leaderWaitStartTime.IsZero() {
+		b.leaderWaitStartTime = time.Now()
+		b.logger.Info("not lowest ServerID, waiting for leader",
+			slog.String("my_id", string(myServerID)),
+			slog.Duration("timeout", b.config.LeaderWaitTimeout))
+		return
+	}
+
+	elapsed := time.Since(b.leaderWaitStartTime)
+	if elapsed < b.config.LeaderWaitTimeout {
+		b.logger.Debug("waiting for leader",
+			slog.Duration("elapsed", elapsed),
+			slog.Duration("timeout", b.config.LeaderWaitTimeout))
+		return
+	}
+
+	if b.fallbackElection != nil {
+		b.logger.Warn("leader wait timeout, triggering fallback election")
+		b.triggerFallbackElection(ctx)
 	} else {
-		b.handleNonOrdinalZeroBootstrap(ctx)
+		b.logger.Warn("leader wait timeout, no fallback election - proceeding with bootstrap")
+		if err := b.transitionState(StateBootstrapping, "leader wait timeout - insecure mode"); err != nil {
+			b.logger.Error("failed to transition to bootstrapping", slog.Any("error", err))
+		}
 	}
 }
 
@@ -486,112 +553,40 @@ func (b *Bootstrapper) checkAndExecuteForceBootstrap(ctx context.Context) bool {
 	return true
 }
 
-func (b *Bootstrapper) handleOrdinalZeroBootstrap(ctx context.Context) {
-	peers := b.discovery.GetHealthyPeers(ctx)
-	quorum := b.config.CalculateQuorum()
-
-	b.logger.Info("ordinal-0 initiating bootstrap",
-		slog.Int("discovered_peers", len(peers)),
-		slog.Int("quorum_size", quorum))
-
-	if err := b.transitionState(StateBootstrapping, "ordinal-0 initiating bootstrap"); err != nil {
-		b.logger.Error("failed to transition to bootstrapping", slog.Any("error", err))
-		return
-	}
+func (b *Bootstrapper) getOwnServerID() raft.ServerID {
+	return raft.ServerID(fmt.Sprintf("%s-%d", b.config.ServiceName, b.config.Ordinal))
 }
 
-func (b *Bootstrapper) handleNonOrdinalZeroBootstrap(ctx context.Context) {
-	leaderMeta := b.getLeaderMeta(ctx)
-	if leaderMeta != nil && leaderMeta.ClusterUUID != "" && leaderMeta.State == StateReady {
-		b.logger.Info("leader has bootstrapped, setting ClusterUUID and transitioning to joining",
-			slog.String("cluster_uuid", leaderMeta.ClusterUUID))
-
-		if err := b.stateMachine.SetClusterUUID(leaderMeta.ClusterUUID); err != nil {
-			b.logger.Error("failed to set ClusterUUID before joining", slog.Any("error", err))
-			return
+func (b *Bootstrapper) isLowestServerID(myID raft.ServerID) bool {
+	for _, peer := range b.discoveredPeers {
+		if peer.ID != "" && peer.ID < string(myID) {
+			return false
 		}
-
-		if err := b.transitionState(StateJoining, "leader discovered"); err != nil {
-			b.logger.Error("failed to transition to joining", slog.Any("error", err))
-		}
-		return
 	}
-
-	if b.leaderWaitStartTime.IsZero() {
-		b.leaderWaitStartTime = time.Now()
-		b.logger.Info("starting leader wait timer",
-			slog.Duration("timeout", b.config.LeaderWaitTimeout))
-		return
-	}
-
-	elapsed := time.Since(b.leaderWaitStartTime)
-	if elapsed < b.config.LeaderWaitTimeout {
-		b.logger.Debug("waiting for leader",
-			slog.Duration("elapsed", elapsed),
-			slog.Duration("timeout", b.config.LeaderWaitTimeout))
-		return
-	}
-
-	ordinalZeroReachable := b.isOrdinalZeroReachable(ctx)
-	if ordinalZeroReachable {
-		b.logger.Debug("ordinal-0 reachable but no leader, continuing wait")
-		return
-	}
-
-	if b.fallbackElection == nil {
-		b.logger.Warn("no fallback election configured, transitioning to ready state")
-		if err := b.transitionState(StateBootstrapping, "no fallback election - insecure mode"); err != nil {
-			b.logger.Error("failed to transition to bootstrapping", slog.Any("error", err))
-			return
-		}
-		return
-	}
-
-	b.logger.Warn("ordinal-0 unreachable, triggering fallback election")
-	b.triggerFallbackElection(ctx)
+	return true
 }
 
-func (b *Bootstrapper) checkLeaderBootstrapped(ctx context.Context) bool {
-	meta := b.getLeaderMeta(ctx)
-	return meta != nil && meta.ClusterUUID != "" && meta.State == StateReady
-}
-
-func (b *Bootstrapper) getLeaderMeta(ctx context.Context) *ClusterMeta {
+func (b *Bootstrapper) findExistingCluster(ctx context.Context) *ClusterMeta {
 	if b.transport == nil {
 		return nil
 	}
 
-	ordinalZeroAddr := b.getAddressForOrdinal(0)
-	if ordinalZeroAddr == "" {
-		return nil
+	for _, peer := range b.discoveredPeers {
+		addr := fmt.Sprintf("%s:%d", peer.Address, peer.Port)
+		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		meta, err := b.transport.GetClusterMeta(probeCtx, addr)
+		cancel()
+
+		if err != nil {
+			continue
+		}
+
+		if meta != nil && meta.ClusterUUID != "" && meta.State == StateReady {
+			return meta
+		}
 	}
 
-	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	meta, err := b.transport.GetClusterMeta(probeCtx, string(ordinalZeroAddr))
-	if err != nil {
-		return nil
-	}
-
-	return meta
-}
-
-func (b *Bootstrapper) isOrdinalZeroReachable(ctx context.Context) bool {
-	if b.transport == nil {
-		return false
-	}
-
-	ordinalZeroAddr := b.getAddressForOrdinal(0)
-	if ordinalZeroAddr == "" {
-		return false
-	}
-
-	probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	_, err := b.transport.GetFencingEpoch(probeCtx, string(ordinalZeroAddr))
-	return err == nil
+	return nil
 }
 
 func (b *Bootstrapper) triggerFallbackElection(ctx context.Context) {
@@ -602,12 +597,12 @@ func (b *Bootstrapper) triggerFallbackElection(ctx context.Context) {
 
 	result, err := b.fallbackElection.RunElection(ctx)
 	if err != nil {
-		if errors.Is(err, ErrNotLowestOrdinal) {
-			b.logger.Info("lost fallback election (not lowest ordinal)")
+		if errors.Is(err, ErrNotLowestServerID) {
+			b.logger.Info("lost fallback election (not lowest ServerID)")
 			return
 		}
-		if errors.Is(err, ErrOrdinalZeroReachable) {
-			b.logger.Info("fallback election aborted (ordinal-0 reachable)")
+		if errors.Is(err, ErrExistingClusterFound) {
+			b.logger.Info("fallback election aborted (existing cluster found)")
 			return
 		}
 		b.logger.Error("fallback election failed", slog.Any("error", err))
@@ -616,7 +611,7 @@ func (b *Bootstrapper) triggerFallbackElection(ctx context.Context) {
 
 	if result != nil {
 		b.logger.Info("won fallback election, transitioning to bootstrapping",
-			slog.Int("ordinal", result.Ordinal),
+			slog.String("server_id", string(result.ServerID)),
 			slog.Int("votes", result.VotesFor))
 		if err := b.transitionState(StateBootstrapping, "fallback election won"); err != nil {
 			b.logger.Error("failed to transition to bootstrapping", slog.Any("error", err))
@@ -759,14 +754,12 @@ func (b *Bootstrapper) handleDegraded(ctx context.Context) {
 		}
 	}
 
-	if b.discovery != nil {
-		peers := b.discovery.GetHealthyPeers(ctx)
-		quorum := b.config.CalculateQuorum()
-		if len(peers)+1 >= quorum {
-			if err := b.transitionState(StateRecovering, "quorum restored"); err != nil {
-				b.logger.Error("failed to transition to recovering",
-					slog.Any("error", err))
-			}
+	reachablePeers := b.countReachablePeers(ctx)
+	quorum := b.config.CalculateQuorum()
+	if reachablePeers+1 >= quorum {
+		if err := b.transitionState(StateRecovering, "quorum restored"); err != nil {
+			b.logger.Error("failed to transition to recovering",
+				slog.Any("error", err))
 		}
 	}
 }
@@ -843,6 +836,20 @@ func (b *Bootstrapper) SetVoters(voters []VoterInfo) {
 	}
 }
 
+func (b *Bootstrapper) IsClusterInitiator() bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.isLowestServerID(b.getOwnServerID())
+}
+
+func (b *Bootstrapper) GetDiscoveredPeers() []ports.Peer {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	result := make([]ports.Peer, len(b.discoveredPeers))
+	copy(result, b.discoveredPeers)
+	return result
+}
+
 func (b *Bootstrapper) RegisterTransitionCallback(callback func(from, to NodeState)) {
 	if b.stateMachine != nil {
 		b.stateMachine.OnTransition(func(from, to NodeState, meta *ClusterMeta) {
@@ -852,6 +859,13 @@ func (b *Bootstrapper) RegisterTransitionCallback(callback func(from, to NodeSta
 }
 
 func (b *Bootstrapper) getOwnAddress() raft.ServerAddress {
+	if b.config.HeadlessService != "" && b.config.ServiceName != "" {
+		return raft.ServerAddress(fmt.Sprintf("%s-%d.%s:%d",
+			b.config.ServiceName,
+			b.config.Ordinal,
+			b.config.HeadlessService,
+			b.config.RaftPort))
+	}
 	addr := b.config.AdvertiseAddr
 	if addr == "" {
 		addr = b.config.BindAddr
@@ -862,14 +876,21 @@ func (b *Bootstrapper) getOwnAddress() raft.ServerAddress {
 	return raft.ServerAddress(fmt.Sprintf("%s:%d", addr, b.config.RaftPort))
 }
 
-func (b *Bootstrapper) getAddressForOrdinal(ordinal int) raft.ServerAddress {
-	if ordinal == b.config.Ordinal {
-		return b.getOwnAddress()
+func (b *Bootstrapper) countReachablePeers(ctx context.Context) int {
+	if b.transport == nil {
+		return 0
 	}
-	if b.discovery != nil {
-		if addr := b.discovery.AddressForOrdinal(ordinal); addr != "" {
-			return addr
+
+	count := 0
+	for _, peer := range b.discoveredPeers {
+		addr := fmt.Sprintf("%s:%d", peer.Address, peer.Port)
+		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		_, err := b.transport.GetFencingEpoch(probeCtx, addr)
+		cancel()
+
+		if err == nil {
+			count++
 		}
 	}
-	return ""
+	return count
 }

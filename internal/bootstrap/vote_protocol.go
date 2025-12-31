@@ -6,27 +6,24 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"sort"
-	"strconv"
-	"strings"
 	"time"
 
+	"github.com/eleven-am/graft/internal/ports"
 	"github.com/hashicorp/raft"
 )
 
 type PeerInfo struct {
 	ServerID raft.ServerID
 	Address  raft.ServerAddress
-	Ordinal  int
 }
 
 type VoteRequest struct {
-	CandidateID      raft.ServerID
-	CandidateOrdinal int
-	ElectionReason   string
-	Timestamp        time.Time
-	VoterSetHash     []byte
-	RequiredQuorum   int
-	Signature        []byte
+	CandidateID    raft.ServerID
+	ElectionReason string
+	Timestamp      time.Time
+	VoterSetHash   []byte
+	RequiredQuorum int
+	Signature      []byte
 }
 
 type VoteResponse struct {
@@ -51,17 +48,6 @@ type MembershipStore interface {
 	GetLastCommittedConfiguration() (*raft.Configuration, error)
 }
 
-type PeerDiscovery interface {
-	AddressForOrdinal(ordinal int) raft.ServerAddress
-	GetHealthyPeers(ctx context.Context) []PeerInfo
-}
-
-type LifecyclePeerDiscovery interface {
-	PeerDiscovery
-	Start(ctx context.Context) error
-	Stop()
-}
-
 func HashVoterSet(voters []VoterInfo) []byte {
 	sorted := make([]VoterInfo, len(voters))
 	copy(sorted, voters)
@@ -78,24 +64,9 @@ func HashVoterSet(voters []VoterInfo) []byte {
 	return h.Sum(nil)
 }
 
-func ExtractOrdinal(serverID raft.ServerID) int {
-	parts := strings.Split(string(serverID), "-")
-	if len(parts) == 0 {
-		return -1
-	}
-
-	lastPart := parts[len(parts)-1]
-	ordinal, err := strconv.Atoi(lastPart)
-	if err != nil {
-		return -1
-	}
-	return ordinal
-}
-
 func (r *VoteRequest) computeSignatureData() []byte {
 	h := sha256.New()
 	h.Write([]byte(r.CandidateID))
-	binary.Write(h, binary.BigEndian, int32(r.CandidateOrdinal))
 	h.Write([]byte(r.ElectionReason))
 	binary.Write(h, binary.BigEndian, r.Timestamp.UnixNano())
 	h.Write(r.VoterSetHash)
@@ -313,74 +284,34 @@ func (m *MockMembershipStore) GetLastCommittedConfiguration() (*raft.Configurati
 	return m.config, nil
 }
 
-type MockPeerDiscovery struct {
-	addresses    map[int]raft.ServerAddress
-	healthyPeers []PeerInfo
-}
-
-func NewMockPeerDiscovery() *MockPeerDiscovery {
-	return &MockPeerDiscovery{
-		addresses:    make(map[int]raft.ServerAddress),
-		healthyPeers: make([]PeerInfo, 0),
-	}
-}
-
-func (m *MockPeerDiscovery) SetAddress(ordinal int, addr raft.ServerAddress) {
-	m.addresses[ordinal] = addr
-}
-
-func (m *MockPeerDiscovery) SetHealthyPeers(peers []PeerInfo) {
-	m.healthyPeers = peers
-}
-
-func (m *MockPeerDiscovery) AddressForOrdinal(ordinal int) raft.ServerAddress {
-	if addr, ok := m.addresses[ordinal]; ok {
-		return addr
-	}
-	return ""
-}
-
-func (m *MockPeerDiscovery) GetHealthyPeers(_ context.Context) []PeerInfo {
-	return m.healthyPeers
-}
-
-type MockLifecyclePeerDiscovery struct {
-	MockPeerDiscovery
-	started  bool
-	stopped  bool
-	startErr error
-}
-
-func NewMockLifecyclePeerDiscovery() *MockLifecyclePeerDiscovery {
-	return &MockLifecyclePeerDiscovery{
-		MockPeerDiscovery: *NewMockPeerDiscovery(),
-	}
-}
-
-func (m *MockLifecyclePeerDiscovery) Start(_ context.Context) error {
-	if m.startErr != nil {
-		return m.startErr
-	}
-	m.started = true
-	return nil
-}
-
-func (m *MockLifecyclePeerDiscovery) Stop() {
-	m.stopped = true
-}
-
-func (m *MockLifecyclePeerDiscovery) Started() bool {
-	return m.started
-}
-
-func (m *MockLifecyclePeerDiscovery) Stopped() bool {
-	return m.stopped
-}
-
-func (m *MockLifecyclePeerDiscovery) SetStartError(err error) {
-	m.startErr = err
-}
-
 func NewMockSecretsManager() *SecretsManager {
 	return NewSecretsManager(SecretsConfig{}, nil)
+}
+
+type MockSeeder struct {
+	peers []ports.Peer
+	err   error
+}
+
+func NewMockSeeder() *MockSeeder {
+	return &MockSeeder{}
+}
+
+func (m *MockSeeder) SetPeers(peers []ports.Peer) {
+	m.peers = peers
+}
+
+func (m *MockSeeder) SetError(err error) {
+	m.err = err
+}
+
+func (m *MockSeeder) Discover(_ context.Context) ([]ports.Peer, error) {
+	if m.err != nil {
+		return nil, m.err
+	}
+	return m.peers, nil
+}
+
+func (m *MockSeeder) Name() string {
+	return "mock"
 }

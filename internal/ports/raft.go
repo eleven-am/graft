@@ -164,9 +164,8 @@ type RaftLeadershipInfo struct {
 
 // RaftPeer identifies a peer in the cluster.
 type RaftPeer struct {
-	ID       string
-	Address  string
-	Metadata map[string]string
+	ID      string
+	Address string
 }
 
 // BootstrapCoordinator drives bootstrap/join flows based on discovery events.

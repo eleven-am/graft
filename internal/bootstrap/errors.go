@@ -48,18 +48,18 @@ var (
 		domain.WithCode("BOOTSTRAP_ELECTION_IN_PROGRESS"),
 	)
 
-	ErrOrdinalZeroReachable = domain.NewDomainErrorWithCategory(
+	ErrExistingClusterFound = domain.NewDomainErrorWithCategory(
 		domain.CategoryRaft,
-		"ordinal 0 is reachable, fallback election not needed",
+		"existing cluster found, fallback election not needed",
 		nil,
-		domain.WithCode("BOOTSTRAP_ORDINAL_ZERO_REACHABLE"),
+		domain.WithCode("BOOTSTRAP_EXISTING_CLUSTER_FOUND"),
 	)
 
-	ErrNotLowestOrdinal = domain.NewDomainErrorWithCategory(
+	ErrNotLowestServerID = domain.NewDomainErrorWithCategory(
 		domain.CategoryRaft,
-		"not the lowest ordinal, deferring to lower ordinal node",
+		"not the lowest ServerID, deferring to lower ID node",
 		nil,
-		domain.WithCode("BOOTSTRAP_NOT_LOWEST_ORDINAL"),
+		domain.WithCode("BOOTSTRAP_NOT_LOWEST_SERVER_ID"),
 	)
 
 	ErrNoToken = domain.NewDomainErrorWithCategory(

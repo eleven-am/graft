@@ -204,13 +204,20 @@ func (t *GRPCTransport) RequestJoin(ctx context.Context, req *pb.JoinRequest) (*
 	}
 
 	if !t.raft.IsLeader() {
-		t.logger.Warn("not a leader, rejecting join request",
-			"node_id", req.NodeId)
-		return &pb.JoinResponse{
-			Accepted: false,
-			NodeId:   req.NodeId,
-			Message:  "not a leader",
-		}, nil
+		leaderAddr := t.raft.LeaderAddr()
+		if leaderAddr == "" {
+			return &pb.JoinResponse{
+				Accepted: false,
+				NodeId:   req.NodeId,
+				Message:  "no leader available",
+			}, nil
+		}
+
+		t.logger.Debug("proxying join request to leader",
+			"node_id", req.NodeId,
+			"leader_addr", leaderAddr)
+
+		return t.proxyJoinToLeader(ctx, leaderAddr, req)
 	}
 
 	nodeAddress := fmt.Sprintf("%s:%d", req.Address, req.Port)
@@ -625,4 +632,19 @@ func (t *GRPCTransport) RequestAddVoter(ctx context.Context, leaderAddr, nodeID,
 	}
 
 	return nil
+}
+
+func (t *GRPCTransport) proxyJoinToLeader(ctx context.Context, leaderAddr string, req *pb.JoinRequest) (*pb.JoinResponse, error) {
+	conn, err := t.getConnection(ctx, leaderAddr)
+	if err != nil {
+		return &pb.JoinResponse{
+			Accepted: false,
+			NodeId:   req.NodeId,
+			Message:  fmt.Sprintf("failed to connect to leader: %v", err),
+		}, nil
+	}
+	defer conn.Close()
+
+	client := pb.NewGraftNodeClient(conn)
+	return client.RequestJoin(ctx, req)
 }

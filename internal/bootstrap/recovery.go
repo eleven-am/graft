@@ -65,7 +65,7 @@ type RecoveryManagerDeps struct {
 	SnapshotStore         RaftSnapshotStore
 	RecoverySnapshotStore RecoverySnapshotStore
 	MetaStore             MetaStore
-	Discovery             PeerDiscovery
+	MembershipStore       MembershipStore
 	Transport             RecoveryTransport
 	Config                *BootstrapConfig
 	Logger                *slog.Logger
@@ -76,7 +76,7 @@ type RecoveryManager struct {
 	snapshotStore         RaftSnapshotStore
 	recoverySnapshotStore RecoverySnapshotStore
 	metaStore             MetaStore
-	discovery             PeerDiscovery
+	membershipStore       MembershipStore
 	transport             RecoveryTransport
 	config                *BootstrapConfig
 	logger                *slog.Logger
@@ -102,7 +102,7 @@ func NewRecoveryManager(deps RecoveryManagerDeps) *RecoveryManager {
 		snapshotStore:         deps.SnapshotStore,
 		recoverySnapshotStore: deps.RecoverySnapshotStore,
 		metaStore:             deps.MetaStore,
-		discovery:             deps.Discovery,
+		membershipStore:       deps.MembershipStore,
 		transport:             deps.Transport,
 		config:                config,
 		logger:                logger,
@@ -246,12 +246,8 @@ func (r *RecoveryManager) validateSnapshot() (bool, error) {
 }
 
 func (r *RecoveryManager) recoverFromPeers(ctx context.Context) error {
-	if r.discovery == nil {
-		return ErrNoPeersForRecovery
-	}
-
-	peers := r.discovery.GetHealthyPeers(ctx)
-	if len(peers) == 0 {
+	peers, err := r.getCommittedPeers()
+	if err != nil || len(peers) == 0 {
 		return ErrNoPeersForRecovery
 	}
 
@@ -292,6 +288,31 @@ func (r *RecoveryManager) recoverFromPeers(ctx context.Context) error {
 	}
 
 	return ErrAllPeerRecoveryFailed
+}
+
+func (r *RecoveryManager) getCommittedPeers() ([]VoterInfo, error) {
+	if r.membershipStore == nil {
+		return nil, fmt.Errorf("membership store not configured")
+	}
+
+	config, err := r.membershipStore.GetLastCommittedConfiguration()
+	if err != nil {
+		return nil, err
+	}
+
+	if config == nil {
+		return nil, fmt.Errorf("no committed configuration available")
+	}
+
+	peers := make([]VoterInfo, 0)
+	for _, server := range config.Servers {
+		peers = append(peers, VoterInfo{
+			ServerID: server.ID,
+			Address:  server.Address,
+		})
+	}
+
+	return peers, nil
 }
 
 func (r *RecoveryManager) syncWALWithSnapshot() error {

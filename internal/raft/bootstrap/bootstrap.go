@@ -27,9 +27,8 @@ func BuildSpec(discoveredPeers []ports.Peer, selfID, bindAddr string, hasPersist
 	for _, p := range discoveredPeers {
 		addr := normalizeAddress(p.Address, raftPort)
 		normalizedPeers = append(normalizedPeers, domain.RaftPeerSpec{
-			ID:       p.ID,
-			Address:  addr,
-			Metadata: p.Metadata,
+			ID:      p.ID,
+			Address: addr,
 		})
 	}
 

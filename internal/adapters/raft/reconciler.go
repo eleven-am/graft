@@ -3,8 +3,6 @@ package raft
 import (
 	"context"
 	"errors"
-	"fmt"
-	"net"
 	"sync"
 	"time"
 
@@ -182,15 +180,6 @@ func (r *Reconciler) findLeader(ctx context.Context) (string, error) {
 }
 
 func (r *Reconciler) getGRPCAddress(peer domain.RaftPeerSpec) string {
-	if peer.Metadata != nil {
-		if grpcPort, ok := peer.Metadata["grpc_port"]; ok && grpcPort != "" {
-			host, _, err := net.SplitHostPort(peer.Address)
-			if err != nil {
-				host = peer.Address
-			}
-			return fmt.Sprintf("%s:%s", host, grpcPort)
-		}
-	}
 	return peer.Address
 }
 

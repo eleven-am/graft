@@ -45,25 +45,25 @@ type TokenUsageResponse struct {
 }
 
 type TokenUsageTrackerDeps struct {
-	DataDir   string
-	Fencing   *FencingManager
-	Transport BootstrapTransport
-	Discovery PeerDiscovery
-	Meta      *ClusterMeta
-	Config    *BootstrapConfig
-	Secrets   *SecretsManager
-	Logger    *slog.Logger
+	DataDir         string
+	Fencing         *FencingManager
+	Transport       BootstrapTransport
+	MembershipStore MembershipStore
+	Meta            *ClusterMeta
+	Config          *BootstrapConfig
+	Secrets         *SecretsManager
+	Logger          *slog.Logger
 }
 
 type TokenUsageTracker struct {
-	dataDir   string
-	fencing   *FencingManager
-	transport BootstrapTransport
-	discovery PeerDiscovery
-	meta      *ClusterMeta
-	config    *BootstrapConfig
-	secrets   *SecretsManager
-	logger    *slog.Logger
+	dataDir         string
+	fencing         *FencingManager
+	transport       BootstrapTransport
+	membershipStore MembershipStore
+	meta            *ClusterMeta
+	config          *BootstrapConfig
+	secrets         *SecretsManager
+	logger          *slog.Logger
 
 	mu     sync.RWMutex
 	usages map[string]*TokenUsageRecord
@@ -76,15 +76,15 @@ func NewTokenUsageTracker(deps TokenUsageTrackerDeps) *TokenUsageTracker {
 	}
 
 	return &TokenUsageTracker{
-		dataDir:   deps.DataDir,
-		fencing:   deps.Fencing,
-		transport: deps.Transport,
-		discovery: deps.Discovery,
-		meta:      deps.Meta,
-		config:    deps.Config,
-		secrets:   deps.Secrets,
-		logger:    logger,
-		usages:    make(map[string]*TokenUsageRecord),
+		dataDir:         deps.DataDir,
+		fencing:         deps.Fencing,
+		transport:       deps.Transport,
+		membershipStore: deps.MembershipStore,
+		meta:            deps.Meta,
+		config:          deps.Config,
+		secrets:         deps.Secrets,
+		logger:          logger,
+		usages:          make(map[string]*TokenUsageRecord),
 	}
 }
 
@@ -106,29 +106,30 @@ func (t *TokenUsageTracker) CheckClusterWideUsage(
 		}
 	}
 
-	if t.transport == nil || t.discovery == nil || t.config == nil {
+	if t.transport == nil || t.membershipStore == nil {
 		return false, "", time.Time{}, nil
 	}
 
-	myOrdinal := 0
-	if t.meta != nil {
-		myOrdinal = t.meta.Ordinal
+	peers, err := t.getCommittedPeers()
+	if err != nil {
+		t.logger.Debug("failed to get committed peers for usage check", "error", err)
+		return false, "", time.Time{}, nil
 	}
 
-	for ordinal := 0; ordinal < t.config.ExpectedNodes; ordinal++ {
-		if ordinal == myOrdinal {
+	myServerID := ""
+	if t.meta != nil {
+		myServerID = string(t.meta.ServerID)
+	}
+
+	for _, peer := range peers {
+		if string(peer.ServerID) == myServerID {
 			continue
 		}
 
-		addr := t.discovery.AddressForOrdinal(ordinal)
-		if addr == "" {
-			continue
-		}
-
-		resp, err := t.queryPeerUsage(ctx, string(addr), tokenHash)
+		resp, err := t.queryPeerUsage(ctx, string(peer.Address), tokenHash)
 		if err != nil {
 			t.logger.Debug("failed to query peer for token usage",
-				"ordinal", ordinal,
+				"peer", peer.ServerID,
 				"error", err,
 			)
 			continue
@@ -140,6 +141,31 @@ func (t *TokenUsageTracker) CheckClusterWideUsage(
 	}
 
 	return false, "", time.Time{}, nil
+}
+
+func (t *TokenUsageTracker) getCommittedPeers() ([]VoterInfo, error) {
+	if t.membershipStore == nil {
+		return nil, fmt.Errorf("membership store not configured")
+	}
+
+	config, err := t.membershipStore.GetLastCommittedConfiguration()
+	if err != nil {
+		return nil, err
+	}
+
+	if config == nil {
+		return nil, fmt.Errorf("no committed configuration available")
+	}
+
+	peers := make([]VoterInfo, 0)
+	for _, server := range config.Servers {
+		peers = append(peers, VoterInfo{
+			ServerID: server.ID,
+			Address:  server.Address,
+		})
+	}
+
+	return peers, nil
 }
 
 func (t *TokenUsageTracker) queryPeerUsage(

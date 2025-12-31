@@ -53,7 +53,6 @@ type ForceTokenOptions struct {
 
 type ForceBootstrapTokenGenerator struct {
 	keyFile   string
-	discovery PeerDiscovery
 	transport BootstrapTransport
 	secrets   *SecretsManager
 	config    *ForceBootstrapConfig
@@ -61,14 +60,12 @@ type ForceBootstrapTokenGenerator struct {
 
 func NewForceBootstrapTokenGenerator(
 	keyFile string,
-	discovery PeerDiscovery,
 	transport BootstrapTransport,
 	secrets *SecretsManager,
 	config *ForceBootstrapConfig,
 ) *ForceBootstrapTokenGenerator {
 	return &ForceBootstrapTokenGenerator{
 		keyFile:   keyFile,
-		discovery: discovery,
 		transport: transport,
 		secrets:   secrets,
 		config:    config,

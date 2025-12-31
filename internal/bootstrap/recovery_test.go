@@ -441,9 +441,9 @@ func TestRecoveryManager_ValidateSnapshot_WithSnapshot(t *testing.T) {
 }
 
 func TestRecoveryManager_RecoverFromPeers_NoPeers(t *testing.T) {
-	discovery := NewMockPeerDiscovery()
+	membershipStore := NewMockMembershipStore()
 	manager := NewRecoveryManager(RecoveryManagerDeps{
-		Discovery: discovery,
+		MembershipStore: membershipStore,
 	})
 
 	ctx := context.Background()
@@ -460,9 +460,11 @@ func TestRecoveryManager_FetchMissingEntries_Success(t *testing.T) {
 		&raft.Log{Index: 2, Term: 1, Type: raft.LogCommand},
 	)
 
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{
-		{ServerID: "node-1", Address: "localhost:8001", Ordinal: 1},
+	membershipStore := NewMockMembershipStore()
+	membershipStore.SetConfiguration(&raft.Configuration{
+		Servers: []raft.Server{
+			{ID: "node-1", Address: "localhost:8001", Suffrage: raft.Voter},
+		},
 	})
 
 	transport := newMockRecoveryTransport()
@@ -474,9 +476,9 @@ func TestRecoveryManager_FetchMissingEntries_Success(t *testing.T) {
 	transport.fetchPrevTerm = 1
 
 	manager := NewRecoveryManager(RecoveryManagerDeps{
-		LogStore:  logStore,
-		Discovery: discovery,
-		Transport: transport,
+		LogStore:        logStore,
+		MembershipStore: membershipStore,
+		Transport:       transport,
 	})
 
 	ctx := context.Background()
@@ -492,11 +494,11 @@ func TestRecoveryManager_FetchMissingEntries_Success(t *testing.T) {
 
 func TestRecoveryManager_FetchMissingEntries_NoPeers(t *testing.T) {
 	logStore := newMockLogStore()
-	discovery := NewMockPeerDiscovery()
+	membershipStore := NewMockMembershipStore()
 
 	manager := NewRecoveryManager(RecoveryManagerDeps{
-		LogStore:  logStore,
-		Discovery: discovery,
+		LogStore:        logStore,
+		MembershipStore: membershipStore,
 	})
 
 	ctx := context.Background()
@@ -523,7 +525,7 @@ func TestRecoveryManager_FindCommonAncestor(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	peer := PeerInfo{ServerID: "node-1", Address: "localhost:8001"}
+	peer := VoterInfo{ServerID: "node-1", Address: "localhost:8001"}
 
 	commonIdx, err := manager.findCommonAncestor(ctx, peer, 2)
 	if err != nil {
@@ -557,7 +559,7 @@ func TestRecoveryManager_FetchSnapshotFromPeer_Success(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	peer := PeerInfo{ServerID: "node-1", Address: "localhost:8001"}
+	peer := VoterInfo{ServerID: "node-1", Address: "localhost:8001"}
 
 	err := manager.fetchSnapshotFromPeer(ctx, peer)
 	if err != nil {
@@ -587,7 +589,7 @@ func TestRecoveryManager_FetchSnapshotFromPeer_ChecksumMismatch(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	peer := PeerInfo{ServerID: "node-1", Address: "localhost:8001"}
+	peer := VoterInfo{ServerID: "node-1", Address: "localhost:8001"}
 
 	err := manager.fetchSnapshotFromPeer(ctx, peer)
 	if !errors.Is(err, ErrSnapshotChecksumMismatch) {
@@ -718,7 +720,7 @@ func TestRecoveryManager_StoreEntriesWithValidation_IndexMismatch(t *testing.T) 
 	entries := []raft.Log{
 		{Index: 5, Term: 1, Type: raft.LogCommand},
 	}
-	peer := PeerInfo{ServerID: "node-1"}
+	peer := VoterInfo{ServerID: "node-1"}
 
 	err := manager.storeEntriesWithValidation(entries, peer, 1, 1)
 	var idxErr *LogIndexMismatchError
@@ -736,7 +738,7 @@ func TestRecoveryManager_StoreEntriesWithValidation_TermRegression(t *testing.T)
 	entries := []raft.Log{
 		{Index: 2, Term: 1, Type: raft.LogCommand},
 	}
-	peer := PeerInfo{ServerID: "node-1"}
+	peer := VoterInfo{ServerID: "node-1"}
 
 	err := manager.storeEntriesWithValidation(entries, peer, 1, 5)
 	var termErr *TermRegressionError
@@ -755,9 +757,11 @@ func TestRecoveryManager_FetchMissingEntries_TruncationWithRealignment(t *testin
 		&raft.Log{Index: 5, Term: 3, Type: raft.LogCommand},
 	)
 
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{
-		{ServerID: "node-1", Address: "localhost:8001", Ordinal: 1},
+	membershipStore := NewMockMembershipStore()
+	membershipStore.SetConfiguration(&raft.Configuration{
+		Servers: []raft.Server{
+			{ID: "node-1", Address: "localhost:8001", Suffrage: raft.Voter},
+		},
 	})
 
 	fetchCallCount := 0
@@ -793,9 +797,9 @@ func TestRecoveryManager_FetchMissingEntries_TruncationWithRealignment(t *testin
 	}
 
 	manager := NewRecoveryManager(RecoveryManagerDeps{
-		LogStore:  logStore,
-		Discovery: discovery,
-		Transport: transport,
+		LogStore:        logStore,
+		MembershipStore: membershipStore,
+		Transport:       transport,
 	})
 
 	ctx := context.Background()
@@ -835,9 +839,11 @@ func TestRecoveryManager_FetchMissingEntries_RefetchMismatchSkipsPeer(t *testing
 		&raft.Log{Index: 3, Term: 2, Type: raft.LogCommand},
 	)
 
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{
-		{ServerID: "node-1", Address: "localhost:8001", Ordinal: 1},
+	membershipStore := NewMockMembershipStore()
+	membershipStore.SetConfiguration(&raft.Configuration{
+		Servers: []raft.Server{
+			{ID: "node-1", Address: "localhost:8001", Suffrage: raft.Voter},
+		},
 	})
 
 	fetchCallCount := 0
@@ -863,9 +869,9 @@ func TestRecoveryManager_FetchMissingEntries_RefetchMismatchSkipsPeer(t *testing
 	}
 
 	manager := NewRecoveryManager(RecoveryManagerDeps{
-		LogStore:  logStore,
-		Discovery: discovery,
-		Transport: transport,
+		LogStore:        logStore,
+		MembershipStore: membershipStore,
+		Transport:       transport,
 	})
 
 	ctx := context.Background()
@@ -901,7 +907,7 @@ func TestRecoveryManager_FetchSnapshotFromPeer_PersistsSnapshot(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	peer := PeerInfo{ServerID: "node-1", Address: "localhost:8001"}
+	peer := VoterInfo{ServerID: "node-1", Address: "localhost:8001"}
 
 	err := manager.fetchSnapshotFromPeer(ctx, peer)
 	if err != nil {
@@ -1028,7 +1034,7 @@ func TestRecoveryManager_PersistSnapshot_SizeMismatch(t *testing.T) {
 	})
 
 	ctx := context.Background()
-	peer := PeerInfo{ServerID: "node-1", Address: "localhost:8001"}
+	peer := VoterInfo{ServerID: "node-1", Address: "localhost:8001"}
 
 	err := manager.fetchSnapshotFromPeer(ctx, peer)
 	if err == nil {
@@ -1061,9 +1067,11 @@ func TestRecoveryManager_RecoverFromPeers_FullRecovery(t *testing.T) {
 		State:       StateReady,
 	}
 
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{
-		{ServerID: "node-1", Address: "localhost:8001", Ordinal: 1},
+	membershipStore := NewMockMembershipStore()
+	membershipStore.SetConfiguration(&raft.Configuration{
+		Servers: []raft.Server{
+			{ID: "node-1", Address: "localhost:8001", Suffrage: raft.Voter},
+		},
 	})
 
 	logStore := newMockLogStore()
@@ -1078,7 +1086,7 @@ func TestRecoveryManager_RecoverFromPeers_FullRecovery(t *testing.T) {
 
 	manager := NewRecoveryManager(RecoveryManagerDeps{
 		LogStore:              logStore,
-		Discovery:             discovery,
+		MembershipStore:       membershipStore,
 		Transport:             transport,
 		RecoverySnapshotStore: recoverySnapStore,
 		MetaStore:             metaStore,

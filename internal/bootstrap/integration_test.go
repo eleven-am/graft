@@ -11,19 +11,14 @@ import (
 	"github.com/hashicorp/raft"
 )
 
-func createTestBootstrapperWithComponents(t *testing.T, ordinal int, tempDir string) (*Bootstrapper, *StateMachine, *FencingManager, *MockPeerDiscovery) {
-	t.Helper()
-
+func TestIntegration_BootstrapperStartStop(t *testing.T) {
+	tempDir := t.TempDir()
 	metaStore := NewFileMetaStore(tempDir, nil)
 
 	config := &BootstrapConfig{
 		ExpectedNodes:     3,
-		Ordinal:           ordinal,
 		LeaderWaitTimeout: 100 * time.Millisecond,
 	}
-
-	prober := NewMockPeerProber()
-	discovery := NewMockPeerDiscovery()
 
 	stateMachine, err := NewStateMachine(StateMachineDeps{
 		MetaStore:      metaStore,
@@ -37,44 +32,6 @@ func createTestBootstrapperWithComponents(t *testing.T, ordinal int, tempDir str
 		Config:             config,
 		MetaStore:          metaStore,
 		StateMachine:       stateMachine,
-		Discovery:          discovery,
-		StateCheckInterval: 10 * time.Millisecond,
-		StaleCheckInterval: 50 * time.Millisecond,
-	})
-
-	_ = prober
-
-	return bootstrapper, stateMachine, nil, discovery
-}
-
-func TestIntegration_FullBootstrapFlow_OrdinalZero(t *testing.T) {
-	tempDir := t.TempDir()
-	metaStore := NewFileMetaStore(tempDir, nil)
-
-	config := &BootstrapConfig{
-		ExpectedNodes:     3,
-		Ordinal:           0,
-		LeaderWaitTimeout: 100 * time.Millisecond,
-	}
-
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{
-		{ServerID: "node-1", Address: "127.0.0.1:8301", Ordinal: 1},
-		{ServerID: "node-2", Address: "127.0.0.1:8302", Ordinal: 2},
-	})
-
-	stateMachine, err := NewStateMachine(StateMachineDeps{
-		MetaStore: metaStore,
-	})
-	if err != nil {
-		t.Fatalf("NewStateMachine: %v", err)
-	}
-
-	bootstrapper := NewBootstrapper(BootstrapperDeps{
-		Config:             config,
-		MetaStore:          metaStore,
-		StateMachine:       stateMachine,
-		Discovery:          discovery,
 		StateCheckInterval: 10 * time.Millisecond,
 	})
 
@@ -84,52 +41,10 @@ func TestIntegration_FullBootstrapFlow_OrdinalZero(t *testing.T) {
 	}
 	defer bootstrapper.Stop()
 
-	time.Sleep(100 * time.Millisecond)
+	time.Sleep(50 * time.Millisecond)
 
 	state := bootstrapper.CurrentState()
 	t.Logf("State after bootstrap attempt: %s", state)
-}
-
-func TestIntegration_FullBootstrapFlow_NonOrdinalZeroInsecureMode(t *testing.T) {
-	tempDir := t.TempDir()
-
-	metaStore := NewFileMetaStore(tempDir, nil)
-	config := &BootstrapConfig{
-		ExpectedNodes:     3,
-		Ordinal:           1,
-		LeaderWaitTimeout: 50 * time.Millisecond,
-	}
-
-	stateMachine, err := NewStateMachine(StateMachineDeps{
-		MetaStore: metaStore,
-	})
-	if err != nil {
-		t.Fatalf("NewStateMachine: %v", err)
-	}
-
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{})
-
-	bootstrapper := NewBootstrapper(BootstrapperDeps{
-		Config:             config,
-		MetaStore:          metaStore,
-		StateMachine:       stateMachine,
-		Discovery:          discovery,
-		StateCheckInterval: 10 * time.Millisecond,
-	})
-
-	ctx := context.Background()
-	if err := bootstrapper.Start(ctx); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-	defer bootstrapper.Stop()
-
-	time.Sleep(100 * time.Millisecond)
-
-	state := bootstrapper.CurrentState()
-	if state != StateReady {
-		t.Errorf("Non-ordinal-0 in insecure mode (no fencing) should transition to ready, got %s", state)
-	}
 }
 
 func TestIntegration_RecoveryFlow_FromExistingCluster(t *testing.T) {
@@ -144,7 +59,6 @@ func TestIntegration_RecoveryFlow_FromExistingCluster(t *testing.T) {
 		State:         StateReady,
 		FencingEpoch:  5,
 		BootstrapTime: time.Now().Add(-24 * time.Hour),
-		Ordinal:       0,
 	}
 	meta.UpdateChecksum()
 	if err := metaStore.SaveMeta(meta); err != nil {
@@ -153,7 +67,6 @@ func TestIntegration_RecoveryFlow_FromExistingCluster(t *testing.T) {
 
 	config := &BootstrapConfig{
 		ExpectedNodes: 3,
-		Ordinal:       0,
 	}
 
 	stateMachine, err := NewStateMachine(StateMachineDeps{
@@ -163,13 +76,10 @@ func TestIntegration_RecoveryFlow_FromExistingCluster(t *testing.T) {
 		t.Fatalf("NewStateMachine: %v", err)
 	}
 
-	discovery := NewMockPeerDiscovery()
-
 	bootstrapper := NewBootstrapper(BootstrapperDeps{
 		Config:             config,
 		MetaStore:          metaStore,
 		StateMachine:       stateMachine,
-		Discovery:          discovery,
 		StateCheckInterval: 10 * time.Millisecond,
 	})
 
@@ -207,7 +117,6 @@ func TestIntegration_ForceBootstrap_TokenFileExecution(t *testing.T) {
 		State:         StateFenced,
 		FencingEpoch:  10,
 		BootstrapTime: time.Now().Add(-24 * time.Hour),
-		Ordinal:       0,
 	}
 	meta.UpdateChecksum()
 	if err := metaStore.SaveMeta(meta); err != nil {
@@ -215,9 +124,9 @@ func TestIntegration_ForceBootstrap_TokenFileExecution(t *testing.T) {
 	}
 
 	voters := []VoterInfo{
-		{ServerID: "node-0", Address: "127.0.0.1:8300", Ordinal: 0},
-		{ServerID: "node-1", Address: "127.0.0.1:8301", Ordinal: 1},
-		{ServerID: "node-2", Address: "127.0.0.1:8302", Ordinal: 2},
+		{ServerID: "node-0", Address: "127.0.0.1:8300"},
+		{ServerID: "node-1", Address: "127.0.0.1:8301"},
+		{ServerID: "node-2", Address: "127.0.0.1:8302"},
 	}
 
 	tokenFile := filepath.Join(tempDir, "force_bootstrap.json")
@@ -241,7 +150,6 @@ func TestIntegration_ForceBootstrap_TokenFileExecution(t *testing.T) {
 
 	config := &BootstrapConfig{
 		ExpectedNodes:      3,
-		Ordinal:            0,
 		DataDir:            tempDir,
 		ForceBootstrapFile: tokenFile,
 	}
@@ -253,20 +161,15 @@ func TestIntegration_ForceBootstrap_TokenFileExecution(t *testing.T) {
 		t.Fatalf("NewStateMachine: %v", err)
 	}
 
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{})
-
 	executor := NewForceBootstrapExecutor(ForceBootstrapExecutorDeps{
-		Config:    config,
-		Meta:      meta,
-		Discovery: discovery,
+		Config: config,
+		Meta:   meta,
 	})
 
 	bootstrapper := NewBootstrapper(BootstrapperDeps{
 		Config:                 config,
 		MetaStore:              metaStore,
 		StateMachine:           stateMachine,
-		Discovery:              discovery,
 		ForceBootstrapExecutor: executor,
 		StateCheckInterval:     10 * time.Millisecond,
 	})
@@ -295,19 +198,18 @@ func TestIntegration_StaleGuard_DetectsStaleNode(t *testing.T) {
 		State:         StateDegraded,
 		FencingEpoch:  1,
 		BootstrapTime: time.Now().Add(-1 * time.Hour),
-		Ordinal:       0,
 	}
 	meta.UpdateChecksum()
 	if err := metaStore.SaveMeta(meta); err != nil {
 		t.Fatalf("save meta: %v", err)
 	}
 
-	config := &BootstrapConfig{ExpectedNodes: 3, Ordinal: 0}
+	config := &BootstrapConfig{ExpectedNodes: 3}
 
 	voters := []VoterInfo{
-		{ServerID: "node-0", Address: "127.0.0.1:8300", Ordinal: 0},
-		{ServerID: "node-1", Address: "127.0.0.1:8301", Ordinal: 1},
-		{ServerID: "node-2", Address: "127.0.0.1:8302", Ordinal: 2},
+		{ServerID: "node-0", Address: "127.0.0.1:8300"},
+		{ServerID: "node-1", Address: "127.0.0.1:8301"},
+		{ServerID: "node-2", Address: "127.0.0.1:8302"},
 	}
 
 	tokenStore := NewFileTokenStore(tempDir, nil)
@@ -342,15 +244,11 @@ func TestIntegration_StaleGuard_DetectsStaleNode(t *testing.T) {
 		t.Fatalf("NewStateMachine: %v", err)
 	}
 
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{})
-
 	bootstrapper := NewBootstrapper(BootstrapperDeps{
 		Config:             config,
 		MetaStore:          metaStore,
 		StateMachine:       stateMachine,
 		FencingManager:     fm,
-		Discovery:          discovery,
 		StateCheckInterval: 10 * time.Millisecond,
 		StaleCheckInterval: 20 * time.Millisecond,
 	})
@@ -371,9 +269,9 @@ func TestIntegration_FencingTokenAcquisition(t *testing.T) {
 	tempDir := t.TempDir()
 
 	voters := []VoterInfo{
-		{ServerID: "node-0", Address: "127.0.0.1:8300", Ordinal: 0},
-		{ServerID: "node-1", Address: "127.0.0.1:8301", Ordinal: 1},
-		{ServerID: "node-2", Address: "127.0.0.1:8302", Ordinal: 2},
+		{ServerID: "node-0", Address: "127.0.0.1:8300"},
+		{ServerID: "node-1", Address: "127.0.0.1:8301"},
+		{ServerID: "node-2", Address: "127.0.0.1:8302"},
 	}
 
 	fencingKey := []byte("test-fencing-key-32-bytes-long!!")
@@ -468,7 +366,7 @@ func TestIntegration_StateTransitionCallbacks(t *testing.T) {
 		t.Fatalf("save meta: %v", err)
 	}
 
-	config := &BootstrapConfig{ExpectedNodes: 3, Ordinal: 0}
+	config := &BootstrapConfig{ExpectedNodes: 3}
 
 	stateMachine, err := NewStateMachine(StateMachineDeps{
 		MetaStore: metaStore,
@@ -477,17 +375,10 @@ func TestIntegration_StateTransitionCallbacks(t *testing.T) {
 		t.Fatalf("NewStateMachine: %v", err)
 	}
 
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{
-		{ServerID: "node-1", Address: "127.0.0.1:8301", Ordinal: 1},
-		{ServerID: "node-2", Address: "127.0.0.1:8302", Ordinal: 2},
-	})
-
 	bootstrapper := NewBootstrapper(BootstrapperDeps{
 		Config:             config,
 		MetaStore:          metaStore,
 		StateMachine:       stateMachine,
-		Discovery:          discovery,
 		StateCheckInterval: 10 * time.Millisecond,
 	})
 
@@ -510,59 +401,11 @@ func TestIntegration_StateTransitionCallbacks(t *testing.T) {
 	}
 }
 
-func TestIntegration_DiscoveryLifecycleWithBootstrapper(t *testing.T) {
-	tempDir := t.TempDir()
-	metaStore := NewFileMetaStore(tempDir, nil)
-
-	config := &BootstrapConfig{ExpectedNodes: 3, Ordinal: 0}
-
-	stateMachine, err := NewStateMachine(StateMachineDeps{
-		MetaStore: metaStore,
-	})
-	if err != nil {
-		t.Fatalf("NewStateMachine: %v", err)
-	}
-
-	discovery := NewMockLifecyclePeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{})
-
-	bootstrapper := NewBootstrapper(BootstrapperDeps{
-		Config:             config,
-		MetaStore:          metaStore,
-		StateMachine:       stateMachine,
-		Discovery:          discovery,
-		StateCheckInterval: 10 * time.Millisecond,
-	})
-
-	if discovery.Started() {
-		t.Error("Discovery should not be started before bootstrapper.Start()")
-	}
-
-	ctx := context.Background()
-	if err := bootstrapper.Start(ctx); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-
-	if !discovery.Started() {
-		t.Error("Discovery should be started after bootstrapper.Start()")
-	}
-
-	time.Sleep(50 * time.Millisecond)
-
-	if err := bootstrapper.Stop(); err != nil {
-		t.Fatalf("Stop() error = %v", err)
-	}
-
-	if !discovery.Stopped() {
-		t.Error("Discovery should be stopped after bootstrapper.Stop()")
-	}
-}
-
 func TestIntegration_MultipleBootstrappersConcurrentAccess(t *testing.T) {
 	tempDir := t.TempDir()
 	metaStore := NewFileMetaStore(tempDir, nil)
 
-	config := &BootstrapConfig{ExpectedNodes: 3, Ordinal: 0}
+	config := &BootstrapConfig{ExpectedNodes: 3}
 
 	stateMachine, err := NewStateMachine(StateMachineDeps{
 		MetaStore: metaStore,
@@ -571,14 +414,10 @@ func TestIntegration_MultipleBootstrappersConcurrentAccess(t *testing.T) {
 		t.Fatalf("NewStateMachine: %v", err)
 	}
 
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{})
-
 	bootstrapper := NewBootstrapper(BootstrapperDeps{
 		Config:             config,
 		MetaStore:          metaStore,
 		StateMachine:       stateMachine,
-		Discovery:          discovery,
 		StateCheckInterval: 10 * time.Millisecond,
 	})
 
@@ -623,7 +462,7 @@ func TestIntegration_ReadyChannelSignaling(t *testing.T) {
 		t.Fatalf("save meta: %v", err)
 	}
 
-	config := &BootstrapConfig{ExpectedNodes: 3, Ordinal: 0}
+	config := &BootstrapConfig{ExpectedNodes: 3}
 
 	stateMachine, err := NewStateMachine(StateMachineDeps{
 		MetaStore: metaStore,
@@ -632,13 +471,10 @@ func TestIntegration_ReadyChannelSignaling(t *testing.T) {
 		t.Fatalf("NewStateMachine: %v", err)
 	}
 
-	discovery := NewMockPeerDiscovery()
-
 	bootstrapper := NewBootstrapper(BootstrapperDeps{
 		Config:             config,
 		MetaStore:          metaStore,
 		StateMachine:       stateMachine,
-		Discovery:          discovery,
 		StateCheckInterval: 10 * time.Millisecond,
 		ReadyTimeout:       500 * time.Millisecond,
 	})
@@ -663,15 +499,15 @@ func TestIntegration_ReadyChannelSignaling(t *testing.T) {
 
 func TestIntegration_VoterSetValidation(t *testing.T) {
 	voters1 := []VoterInfo{
-		{ServerID: "node-0", Address: "127.0.0.1:8300", Ordinal: 0},
-		{ServerID: "node-1", Address: "127.0.0.1:8301", Ordinal: 1},
-		{ServerID: "node-2", Address: "127.0.0.1:8302", Ordinal: 2},
+		{ServerID: "node-0", Address: "127.0.0.1:8300"},
+		{ServerID: "node-1", Address: "127.0.0.1:8301"},
+		{ServerID: "node-2", Address: "127.0.0.1:8302"},
 	}
 
 	voters2 := []VoterInfo{
-		{ServerID: "node-2", Address: "127.0.0.1:8302", Ordinal: 2},
-		{ServerID: "node-0", Address: "127.0.0.1:8300", Ordinal: 0},
-		{ServerID: "node-1", Address: "127.0.0.1:8301", Ordinal: 1},
+		{ServerID: "node-2", Address: "127.0.0.1:8302"},
+		{ServerID: "node-0", Address: "127.0.0.1:8300"},
+		{ServerID: "node-1", Address: "127.0.0.1:8301"},
 	}
 
 	hash1 := HashVoterSet(voters1)
@@ -682,8 +518,8 @@ func TestIntegration_VoterSetValidation(t *testing.T) {
 	}
 
 	voters3 := []VoterInfo{
-		{ServerID: "node-0", Address: "127.0.0.1:8300", Ordinal: 0},
-		{ServerID: "node-1", Address: "127.0.0.1:8301", Ordinal: 1},
+		{ServerID: "node-0", Address: "127.0.0.1:8300"},
+		{ServerID: "node-1", Address: "127.0.0.1:8301"},
 	}
 
 	hash3 := HashVoterSet(voters3)
@@ -696,9 +532,9 @@ func TestIntegration_CommitTokenRejectsUnknownVoters(t *testing.T) {
 	tempDir := t.TempDir()
 
 	voters := []VoterInfo{
-		{ServerID: "node-0", Address: "127.0.0.1:8300", Ordinal: 0},
-		{ServerID: "node-1", Address: "127.0.0.1:8301", Ordinal: 1},
-		{ServerID: "node-2", Address: "127.0.0.1:8302", Ordinal: 2},
+		{ServerID: "node-0", Address: "127.0.0.1:8300"},
+		{ServerID: "node-1", Address: "127.0.0.1:8301"},
+		{ServerID: "node-2", Address: "127.0.0.1:8302"},
 	}
 
 	fencingKey := []byte("test-fencing-key-32-bytes-long!!")

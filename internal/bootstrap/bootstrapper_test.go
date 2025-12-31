@@ -2,10 +2,11 @@ package bootstrap
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/eleven-am/graft/internal/ports"
 )
 
 type mockMetaStoreForBootstrap struct {
@@ -332,7 +333,12 @@ func TestBootstrapper_StateLoop_ContextCancel(t *testing.T) {
 
 func TestBootstrapper_HandleUninitialized(t *testing.T) {
 	metaStore := newMockMetaStoreForBootstrap()
-	config := &BootstrapConfig{ExpectedNodes: 3}
+	config := &BootstrapConfig{
+		ExpectedNodes:     3,
+		ServiceName:       "node",
+		Ordinal:           0,
+		LeaderWaitTimeout: 50 * time.Millisecond,
+	}
 
 	stateMachine, err := NewStateMachine(StateMachineDeps{
 		MetaStore: metaStore,
@@ -341,17 +347,17 @@ func TestBootstrapper_HandleUninitialized(t *testing.T) {
 		t.Fatalf("NewStateMachine() error = %v", err)
 	}
 
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{
-		{ServerID: "node-1", Address: "10.0.0.2:9000", Ordinal: 1},
-		{ServerID: "node-2", Address: "10.0.0.3:9000", Ordinal: 2},
+	seeder := NewMockSeeder()
+	seeder.SetPeers([]ports.Peer{
+		{ID: "node-1", Address: "10.0.0.2", Port: 7946},
+		{ID: "node-2", Address: "10.0.0.3", Port: 7946},
 	})
 
 	bootstrapper := NewBootstrapper(BootstrapperDeps{
 		Config:             config,
 		MetaStore:          metaStore,
 		StateMachine:       stateMachine,
-		Discovery:          discovery,
+		Seeder:             seeder,
 		StateCheckInterval: 10 * time.Millisecond,
 		ReadyTimeout:       500 * time.Millisecond,
 	})
@@ -362,87 +368,11 @@ func TestBootstrapper_HandleUninitialized(t *testing.T) {
 	}
 	defer bootstrapper.Stop()
 
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	state := bootstrapper.CurrentState()
 	if state != StateReady {
 		t.Errorf("CurrentState() = %v, want %v (no fencing manager means immediate transition to ready)", state, StateReady)
-	}
-}
-
-func TestBootstrapper_HandleUninitialized_OrdinalZeroProceedsImmediately(t *testing.T) {
-	metaStore := newMockMetaStoreForBootstrap()
-	config := &BootstrapConfig{ExpectedNodes: 3, Ordinal: 0}
-
-	stateMachine, err := NewStateMachine(StateMachineDeps{
-		MetaStore: metaStore,
-	})
-	if err != nil {
-		t.Fatalf("NewStateMachine() error = %v", err)
-	}
-
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{})
-
-	bootstrapper := NewBootstrapper(BootstrapperDeps{
-		Config:             config,
-		MetaStore:          metaStore,
-		StateMachine:       stateMachine,
-		Discovery:          discovery,
-		StateCheckInterval: 10 * time.Millisecond,
-	})
-
-	ctx := context.Background()
-	if err := bootstrapper.Start(ctx); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-	defer bootstrapper.Stop()
-
-	time.Sleep(50 * time.Millisecond)
-
-	state := bootstrapper.CurrentState()
-	if state != StateReady {
-		t.Errorf("CurrentState() = %v, want %v (ordinal-0 should proceed immediately, and without fencing manager transitions to ready)", state, StateReady)
-	}
-}
-
-func TestBootstrapper_HandleUninitialized_NonOrdinalZeroWaitsForLeader(t *testing.T) {
-	metaStore := newMockMetaStoreForBootstrap()
-	config := &BootstrapConfig{
-		ExpectedNodes:     3,
-		Ordinal:           1,
-		LeaderWaitTimeout: 100 * time.Millisecond,
-	}
-
-	stateMachine, err := NewStateMachine(StateMachineDeps{
-		MetaStore: metaStore,
-	})
-	if err != nil {
-		t.Fatalf("NewStateMachine() error = %v", err)
-	}
-
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{})
-
-	bootstrapper := NewBootstrapper(BootstrapperDeps{
-		Config:             config,
-		MetaStore:          metaStore,
-		StateMachine:       stateMachine,
-		Discovery:          discovery,
-		StateCheckInterval: 10 * time.Millisecond,
-	})
-
-	ctx := context.Background()
-	if err := bootstrapper.Start(ctx); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-	defer bootstrapper.Stop()
-
-	time.Sleep(50 * time.Millisecond)
-
-	state := bootstrapper.CurrentState()
-	if state != StateUninitialized {
-		t.Errorf("CurrentState() = %v, want %v (non-ordinal-0 should wait for leader)", state, StateUninitialized)
 	}
 }
 
@@ -522,7 +452,12 @@ func TestBootstrapper_ConcurrentStartStop(t *testing.T) {
 
 func TestBootstrapper_RegisterTransitionCallback(t *testing.T) {
 	metaStore := newMockMetaStoreForBootstrap()
-	config := &BootstrapConfig{ExpectedNodes: 3}
+	config := &BootstrapConfig{
+		ExpectedNodes:     3,
+		ServiceName:       "node",
+		Ordinal:           0,
+		LeaderWaitTimeout: 50 * time.Millisecond,
+	}
 
 	stateMachine, err := NewStateMachine(StateMachineDeps{
 		MetaStore: metaStore,
@@ -531,17 +466,17 @@ func TestBootstrapper_RegisterTransitionCallback(t *testing.T) {
 		t.Fatalf("NewStateMachine() error = %v", err)
 	}
 
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{
-		{ServerID: "node-1", Address: "10.0.0.2:9000", Ordinal: 1},
-		{ServerID: "node-2", Address: "10.0.0.3:9000", Ordinal: 2},
+	seeder := NewMockSeeder()
+	seeder.SetPeers([]ports.Peer{
+		{ID: "node-1", Address: "10.0.0.2", Port: 7946},
+		{ID: "node-2", Address: "10.0.0.3", Port: 7946},
 	})
 
 	bootstrapper := NewBootstrapper(BootstrapperDeps{
 		Config:             config,
 		MetaStore:          metaStore,
 		StateMachine:       stateMachine,
-		Discovery:          discovery,
+		Seeder:             seeder,
 		StateCheckInterval: 10 * time.Millisecond,
 	})
 
@@ -675,7 +610,12 @@ func TestBootstrapper_NeedsRecovery(t *testing.T) {
 
 func TestBootstrapper_ForceBootstrap_NoExecutor(t *testing.T) {
 	metaStore := newMockMetaStoreForBootstrap()
-	config := &BootstrapConfig{ExpectedNodes: 3, Ordinal: 0}
+	config := &BootstrapConfig{
+		ExpectedNodes:     3,
+		ServiceName:       "node",
+		Ordinal:           0,
+		LeaderWaitTimeout: 50 * time.Millisecond,
+	}
 
 	stateMachine, err := NewStateMachine(StateMachineDeps{
 		MetaStore: metaStore,
@@ -684,14 +624,17 @@ func TestBootstrapper_ForceBootstrap_NoExecutor(t *testing.T) {
 		t.Fatalf("NewStateMachine() error = %v", err)
 	}
 
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{})
+	seeder := NewMockSeeder()
+	seeder.SetPeers([]ports.Peer{
+		{ID: "node-1", Address: "10.0.0.2", Port: 7946},
+		{ID: "node-2", Address: "10.0.0.3", Port: 7946},
+	})
 
 	bootstrapper := NewBootstrapper(BootstrapperDeps{
 		Config:                 config,
 		MetaStore:              metaStore,
 		StateMachine:           stateMachine,
-		Discovery:              discovery,
+		Seeder:                 seeder,
 		ForceBootstrapExecutor: nil,
 		StateCheckInterval:     10 * time.Millisecond,
 	})
@@ -702,7 +645,7 @@ func TestBootstrapper_ForceBootstrap_NoExecutor(t *testing.T) {
 	}
 	defer bootstrapper.Stop()
 
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	state := bootstrapper.CurrentState()
 	if state != StateReady {
@@ -714,7 +657,9 @@ func TestBootstrapper_ForceBootstrap_ExecutorPresent(t *testing.T) {
 	metaStore := newMockMetaStoreForBootstrap()
 	config := &BootstrapConfig{
 		ExpectedNodes:      3,
+		ServiceName:        "node",
 		Ordinal:            0,
+		LeaderWaitTimeout:  50 * time.Millisecond,
 		ForceBootstrapFile: "",
 		DataDir:            t.TempDir(),
 	}
@@ -726,20 +671,22 @@ func TestBootstrapper_ForceBootstrap_ExecutorPresent(t *testing.T) {
 		t.Fatalf("NewStateMachine() error = %v", err)
 	}
 
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{})
+	seeder := NewMockSeeder()
+	seeder.SetPeers([]ports.Peer{
+		{ID: "node-1", Address: "10.0.0.2", Port: 7946},
+		{ID: "node-2", Address: "10.0.0.3", Port: 7946},
+	})
 
 	executor := NewForceBootstrapExecutor(ForceBootstrapExecutorDeps{
-		Config:    config,
-		Meta:      &ClusterMeta{Ordinal: 0},
-		Discovery: discovery,
+		Config: config,
+		Meta:   &ClusterMeta{},
 	})
 
 	bootstrapper := NewBootstrapper(BootstrapperDeps{
 		Config:                 config,
 		MetaStore:              metaStore,
 		StateMachine:           stateMachine,
-		Discovery:              discovery,
+		Seeder:                 seeder,
 		ForceBootstrapExecutor: executor,
 		StateCheckInterval:     10 * time.Millisecond,
 	})
@@ -750,7 +697,7 @@ func TestBootstrapper_ForceBootstrap_ExecutorPresent(t *testing.T) {
 	}
 	defer bootstrapper.Stop()
 
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
 	state := bootstrapper.CurrentState()
 	if state != StateReady {
@@ -778,9 +725,9 @@ func TestBootstrapper_HandleDegraded_ChecksStaleGuard(t *testing.T) {
 	config := &BootstrapConfig{ExpectedNodes: 3}
 
 	voters := []VoterInfo{
-		{ServerID: "node-0", Address: "127.0.0.1:8300", Ordinal: 0},
-		{ServerID: "node-1", Address: "127.0.0.1:8301", Ordinal: 1},
-		{ServerID: "node-2", Address: "127.0.0.1:8302", Ordinal: 2},
+		{ServerID: "node-0", Address: "127.0.0.1:8300"},
+		{ServerID: "node-1", Address: "127.0.0.1:8301"},
+		{ServerID: "node-2", Address: "127.0.0.1:8302"},
 	}
 
 	tokenStore := NewFileTokenStore(tempDir, nil)
@@ -813,14 +760,10 @@ func TestBootstrapper_HandleDegraded_ChecksStaleGuard(t *testing.T) {
 		t.Fatalf("NewStateMachine: %v", err)
 	}
 
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{})
-
 	bootstrapper := NewBootstrapper(BootstrapperDeps{
 		Config:             config,
 		MetaStore:          metaStore,
 		StateMachine:       stateMachine,
-		Discovery:          discovery,
 		StateCheckInterval: 10 * time.Millisecond,
 	})
 
@@ -858,9 +801,9 @@ func TestBootstrapper_HandleRecovering_ChecksStaleGuard(t *testing.T) {
 	config := &BootstrapConfig{ExpectedNodes: 3}
 
 	voters := []VoterInfo{
-		{ServerID: "node-0", Address: "127.0.0.1:8300", Ordinal: 0},
-		{ServerID: "node-1", Address: "127.0.0.1:8301", Ordinal: 1},
-		{ServerID: "node-2", Address: "127.0.0.1:8302", Ordinal: 2},
+		{ServerID: "node-0", Address: "127.0.0.1:8300"},
+		{ServerID: "node-1", Address: "127.0.0.1:8301"},
+		{ServerID: "node-2", Address: "127.0.0.1:8302"},
 	}
 
 	tokenStore := NewFileTokenStore(tempDir, nil)
@@ -893,13 +836,10 @@ func TestBootstrapper_HandleRecovering_ChecksStaleGuard(t *testing.T) {
 		t.Fatalf("NewStateMachine: %v", err)
 	}
 
-	discovery := NewMockPeerDiscovery()
-
 	bootstrapper := NewBootstrapper(BootstrapperDeps{
 		Config:             config,
 		MetaStore:          metaStore,
 		StateMachine:       stateMachine,
-		Discovery:          discovery,
 		StateCheckInterval: 10 * time.Millisecond,
 	})
 
@@ -915,117 +855,6 @@ func TestBootstrapper_HandleRecovering_ChecksStaleGuard(t *testing.T) {
 	if state == StateRecovering || state == StateReady {
 		t.Logf("State is %s (stale guard check executed)", state)
 	}
-}
-
-func TestBootstrapper_DiscoveryLifecycle_StartedAndStopped(t *testing.T) {
-	metaStore := newMockMetaStoreForBootstrap()
-	config := &BootstrapConfig{ExpectedNodes: 3, Ordinal: 0}
-
-	stateMachine, err := NewStateMachine(StateMachineDeps{
-		MetaStore: metaStore,
-	})
-	if err != nil {
-		t.Fatalf("NewStateMachine() error = %v", err)
-	}
-
-	discovery := NewMockLifecyclePeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{})
-
-	bootstrapper := NewBootstrapper(BootstrapperDeps{
-		Config:             config,
-		MetaStore:          metaStore,
-		StateMachine:       stateMachine,
-		Discovery:          discovery,
-		StateCheckInterval: 10 * time.Millisecond,
-	})
-
-	ctx := context.Background()
-	if err := bootstrapper.Start(ctx); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-
-	if !discovery.Started() {
-		t.Error("discovery should be started after bootstrapper.Start()")
-	}
-
-	time.Sleep(50 * time.Millisecond)
-
-	if err := bootstrapper.Stop(); err != nil {
-		t.Fatalf("Stop() error = %v", err)
-	}
-
-	if !discovery.Stopped() {
-		t.Error("discovery should be stopped after bootstrapper.Stop()")
-	}
-}
-
-func TestBootstrapper_DiscoveryLifecycle_StartError(t *testing.T) {
-	metaStore := newMockMetaStoreForBootstrap()
-	config := &BootstrapConfig{ExpectedNodes: 3, Ordinal: 0}
-
-	stateMachine, err := NewStateMachine(StateMachineDeps{
-		MetaStore: metaStore,
-	})
-	if err != nil {
-		t.Fatalf("NewStateMachine() error = %v", err)
-	}
-
-	discovery := NewMockLifecyclePeerDiscovery()
-	discovery.SetStartError(errors.New("discovery start failed"))
-
-	bootstrapper := NewBootstrapper(BootstrapperDeps{
-		Config:             config,
-		MetaStore:          metaStore,
-		StateMachine:       stateMachine,
-		Discovery:          discovery,
-		StateCheckInterval: 10 * time.Millisecond,
-	})
-
-	ctx := context.Background()
-	err = bootstrapper.Start(ctx)
-	if err == nil {
-		t.Fatal("Start() should return error when discovery fails to start")
-	}
-
-	if !discovery.Started() {
-		t.Log("discovery.Start() was called (returned error as expected)")
-	}
-}
-
-func TestBootstrapper_NonLifecycleDiscovery_NoError(t *testing.T) {
-	metaStore := newMockMetaStoreForBootstrap()
-	config := &BootstrapConfig{ExpectedNodes: 3, Ordinal: 0}
-
-	stateMachine, err := NewStateMachine(StateMachineDeps{
-		MetaStore: metaStore,
-	})
-	if err != nil {
-		t.Fatalf("NewStateMachine() error = %v", err)
-	}
-
-	discovery := NewMockPeerDiscovery()
-	discovery.SetHealthyPeers([]PeerInfo{})
-
-	bootstrapper := NewBootstrapper(BootstrapperDeps{
-		Config:             config,
-		MetaStore:          metaStore,
-		StateMachine:       stateMachine,
-		Discovery:          discovery,
-		StateCheckInterval: 10 * time.Millisecond,
-	})
-
-	ctx := context.Background()
-	if err := bootstrapper.Start(ctx); err != nil {
-		t.Fatalf("Start() error = %v", err)
-	}
-
-	time.Sleep(50 * time.Millisecond)
-
-	if err := bootstrapper.Stop(); err != nil {
-		t.Fatalf("Stop() error = %v", err)
-	}
-
-	t.Log("Non-lifecycle discovery works without Start/Stop calls")
 }
 
 func TestBootstrapper_HandleReady_PeriodicStaleCheck(t *testing.T) {
@@ -1048,9 +877,9 @@ func TestBootstrapper_HandleReady_PeriodicStaleCheck(t *testing.T) {
 	config := &BootstrapConfig{ExpectedNodes: 3}
 
 	voters := []VoterInfo{
-		{ServerID: "node-0", Address: "127.0.0.1:8300", Ordinal: 0},
-		{ServerID: "node-1", Address: "127.0.0.1:8301", Ordinal: 1},
-		{ServerID: "node-2", Address: "127.0.0.1:8302", Ordinal: 2},
+		{ServerID: "node-0", Address: "127.0.0.1:8300"},
+		{ServerID: "node-1", Address: "127.0.0.1:8301"},
+		{ServerID: "node-2", Address: "127.0.0.1:8302"},
 	}
 
 	tokenStore := NewFileTokenStore(tempDir, nil)
@@ -1083,14 +912,11 @@ func TestBootstrapper_HandleReady_PeriodicStaleCheck(t *testing.T) {
 		t.Fatalf("NewStateMachine: %v", err)
 	}
 
-	discovery := NewMockPeerDiscovery()
-
 	bootstrapper := NewBootstrapper(BootstrapperDeps{
 		Config:             config,
 		MetaStore:          metaStore,
 		StateMachine:       stateMachine,
 		FencingManager:     fm,
-		Discovery:          discovery,
 		StateCheckInterval: 10 * time.Millisecond,
 		StaleCheckInterval: 20 * time.Millisecond,
 	})

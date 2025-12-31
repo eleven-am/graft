@@ -26,7 +26,6 @@ type PreflightResult struct {
 }
 
 type ForceBootstrapPreflightDeps struct {
-	Discovery       PeerDiscovery
 	Transport       BootstrapTransport
 	Fencing         *FencingManager
 	MembershipStore MembershipStore
@@ -35,7 +34,6 @@ type ForceBootstrapPreflightDeps struct {
 }
 
 type ForceBootstrapPreflight struct {
-	discovery       PeerDiscovery
 	transport       BootstrapTransport
 	fencing         *FencingManager
 	membershipStore MembershipStore
@@ -50,7 +48,6 @@ func NewForceBootstrapPreflight(deps ForceBootstrapPreflightDeps) *ForceBootstra
 	}
 
 	return &ForceBootstrapPreflight{
-		discovery:       deps.Discovery,
 		transport:       deps.Transport,
 		fencing:         deps.Fencing,
 		membershipStore: deps.MembershipStore,
@@ -161,31 +158,18 @@ func (p *ForceBootstrapPreflight) handleDisasterRecovery(
 		return result, nil
 	}
 
-	if p.config == nil {
-		result.BlockReason = "config not available for disaster recovery"
+	committedConfig, err := p.membershipStore.GetLastCommittedConfiguration()
+	if err != nil || committedConfig == nil {
+		result.BlockReason = "disaster recovery requires committed membership configuration - use standard force bootstrap with voter set from prior cluster backup"
 		return result, nil
 	}
 
-	serverIDPattern := p.config.ForceBootstrap.GetServerIDPattern()
+	voters := extractVotersFromConfig(committedConfig)
+	result.CommittedVoterCount = len(voters)
 
-	expectedVoters := make([]VoterInfo, 0, p.config.ExpectedNodes)
-	for ordinal := 0; ordinal < p.config.ExpectedNodes; ordinal++ {
-		addr := p.discovery.AddressForOrdinal(ordinal)
-		if addr == "" {
-			continue
-		}
-		expectedVoters = append(expectedVoters, VoterInfo{
-			ServerID: raft.ServerID(fmt.Sprintf(serverIDPattern, ordinal)),
-			Address:  addr,
-			Ordinal:  ordinal,
-		})
-	}
-
-	result.CommittedVoterCount = len(expectedVoters)
-
-	expectedHash := HashVoterSet(expectedVoters)
-	if !bytes.Equal(expectedHash, token.VoterSetHash) {
-		result.BlockReason = fmt.Sprintf("voter set hash mismatch for expected nodes in disaster recovery (using pattern '%s')", serverIDPattern)
+	currentHash := HashVoterSet(voters)
+	if !bytes.Equal(currentHash, token.VoterSetHash) {
+		result.BlockReason = "voter set hash mismatch in disaster recovery - membership has changed"
 		return result, nil
 	}
 
@@ -193,7 +177,7 @@ func (p *ForceBootstrapPreflight) handleDisasterRecovery(
 	var healthyPeers []PeerInfo
 	var peersWithExistingUUID []string
 
-	for _, voter := range expectedVoters {
+	for _, voter := range voters {
 		lastIndex, err := p.transport.GetLastIndex(ctx, string(voter.Address))
 		if err != nil {
 			p.logger.Debug("peer unreachable in disaster recovery probe",
@@ -217,17 +201,16 @@ func (p *ForceBootstrapPreflight) handleDisasterRecovery(
 		healthyPeers = append(healthyPeers, PeerInfo{
 			ServerID: voter.ServerID,
 			Address:  voter.Address,
-			Ordinal:  voter.Ordinal,
 		})
 	}
 
 	result.ReachablePeers = reachable
 	result.HealthyPeers = healthyPeers
 
-	quorum := (len(expectedVoters) / 2) + 1
+	quorum := (len(voters) / 2) + 1
 
 	if reachable >= quorum {
-		if !p.config.ForceBootstrap.AllowDRQuorumOverride {
+		if p.config == nil || !p.config.ForceBootstrap.AllowDRQuorumOverride {
 			result.BlockReason = "DR quorum override requires AllowDRQuorumOverride=true in executor config"
 			return result, nil
 		}
@@ -290,7 +273,6 @@ func (p *ForceBootstrapPreflight) probeAllPeers(ctx context.Context, voters []Vo
 			healthyPeers = append(healthyPeers, PeerInfo{
 				ServerID: v.ServerID,
 				Address:  v.Address,
-				Ordinal:  v.Ordinal,
 			})
 			mu.Unlock()
 		}(voter)
@@ -307,7 +289,6 @@ func extractVotersFromConfig(config *raft.Configuration) []VoterInfo {
 			voters = append(voters, VoterInfo{
 				ServerID: server.ID,
 				Address:  server.Address,
-				Ordinal:  ExtractOrdinal(server.ID),
 			})
 		}
 	}
@@ -317,7 +298,6 @@ func extractVotersFromConfig(config *raft.Configuration) []VoterInfo {
 type ForceBootstrapExecutorDeps struct {
 	Config          *BootstrapConfig
 	Meta            *ClusterMeta
-	Discovery       PeerDiscovery
 	Transport       BootstrapTransport
 	Fencing         *FencingManager
 	MembershipStore MembershipStore
@@ -330,7 +310,6 @@ type ForceBootstrapExecutorDeps struct {
 type ForceBootstrapExecutor struct {
 	config          *BootstrapConfig
 	meta            *ClusterMeta
-	discovery       PeerDiscovery
 	transport       BootstrapTransport
 	fencing         *FencingManager
 	membershipStore MembershipStore
@@ -349,18 +328,17 @@ func NewForceBootstrapExecutor(deps ForceBootstrapExecutorDeps) *ForceBootstrapE
 	}
 
 	usageTracker := NewTokenUsageTracker(TokenUsageTrackerDeps{
-		DataDir:   deps.Config.DataDir,
-		Fencing:   deps.Fencing,
-		Transport: deps.Transport,
-		Discovery: deps.Discovery,
-		Meta:      deps.Meta,
-		Config:    deps.Config,
-		Secrets:   deps.Secrets,
-		Logger:    logger,
+		DataDir:         deps.Config.DataDir,
+		Fencing:         deps.Fencing,
+		Transport:       deps.Transport,
+		MembershipStore: deps.MembershipStore,
+		Meta:            deps.Meta,
+		Config:          deps.Config,
+		Secrets:         deps.Secrets,
+		Logger:          logger,
 	})
 
 	preflight := NewForceBootstrapPreflight(ForceBootstrapPreflightDeps{
-		Discovery:       deps.Discovery,
 		Transport:       deps.Transport,
 		Fencing:         deps.Fencing,
 		MembershipStore: deps.MembershipStore,
@@ -371,7 +349,6 @@ func NewForceBootstrapExecutor(deps ForceBootstrapExecutorDeps) *ForceBootstrapE
 	return &ForceBootstrapExecutor{
 		config:          deps.Config,
 		meta:            deps.Meta,
-		discovery:       deps.Discovery,
 		transport:       deps.Transport,
 		fencing:         deps.Fencing,
 		membershipStore: deps.MembershipStore,

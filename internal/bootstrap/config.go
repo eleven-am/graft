@@ -20,10 +20,11 @@ type BootstrapConfig struct {
 	ExpectedNodes int `json:"expected_nodes" yaml:"expected_nodes"`
 	MinQuorum     int `json:"min_quorum" yaml:"min_quorum"`
 
-	RaftPort      int    `json:"raft_port" yaml:"raft_port"`
-	JoinPort      int    `json:"join_port" yaml:"join_port"`
-	BindAddr      string `json:"bind_addr" yaml:"bind_addr"`
-	AdvertiseAddr string `json:"advertise_addr,omitempty" yaml:"advertise_addr,omitempty"`
+	RaftPort        int    `json:"raft_port" yaml:"raft_port"`
+	JoinPort        int    `json:"join_port" yaml:"join_port"`
+	BindAddr        string `json:"bind_addr" yaml:"bind_addr"`
+	AdvertiseAddr   string `json:"advertise_addr,omitempty" yaml:"advertise_addr,omitempty"`
+	HeadlessService string `json:"headless_service,omitempty" yaml:"headless_service,omitempty"`
 
 	BootstrapTimeout       time.Duration `json:"bootstrap_timeout" yaml:"bootstrap_timeout"`
 	JoinTimeout            time.Duration `json:"join_timeout" yaml:"join_timeout"`

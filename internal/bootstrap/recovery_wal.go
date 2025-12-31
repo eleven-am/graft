@@ -60,7 +60,7 @@ func (r *RecoveryManager) fetchMissingEntries(ctx context.Context, fromIdx, toId
 		return fmt.Errorf("no log store configured")
 	}
 
-	if r.discovery == nil || r.transport == nil {
+	if r.transport == nil {
 		return ErrNoPeersForRecovery
 	}
 
@@ -78,8 +78,8 @@ func (r *RecoveryManager) fetchMissingEntries(ctx context.Context, fromIdx, toId
 		localLastTerm = localLastLog.Term
 	}
 
-	peers := r.discovery.GetHealthyPeers(ctx)
-	if len(peers) == 0 {
+	peers, err := r.getCommittedPeers()
+	if err != nil || len(peers) == 0 {
 		return ErrNoPeersForRecovery
 	}
 
@@ -210,7 +210,7 @@ func (r *RecoveryManager) fetchMissingEntries(ctx context.Context, fromIdx, toId
 	return ErrCannotFetchMissingEntries
 }
 
-func (r *RecoveryManager) storeEntriesWithValidation(entries []raft.Log, peer PeerInfo, prevIdx, prevTerm uint64) error {
+func (r *RecoveryManager) storeEntriesWithValidation(entries []raft.Log, peer VoterInfo, prevIdx, prevTerm uint64) error {
 	for i, entry := range entries {
 		expectedIdx := prevIdx + 1
 		if entry.Index != expectedIdx {
@@ -249,7 +249,7 @@ func (r *RecoveryManager) storeEntriesWithValidation(entries []raft.Log, peer Pe
 	return nil
 }
 
-func (r *RecoveryManager) findCommonAncestor(ctx context.Context, peer PeerInfo, startIdx uint64) (uint64, error) {
+func (r *RecoveryManager) findCommonAncestor(ctx context.Context, peer VoterInfo, startIdx uint64) (uint64, error) {
 	if r.transport == nil {
 		return 0, fmt.Errorf("no transport configured")
 	}
@@ -278,7 +278,7 @@ func (r *RecoveryManager) findCommonAncestor(ctx context.Context, peer PeerInfo,
 	return 0, nil
 }
 
-func (r *RecoveryManager) detectAndHandleConflict(ctx context.Context, idx uint64, expectedTerm, localTerm uint64, peer PeerInfo) (bool, error) {
+func (r *RecoveryManager) detectAndHandleConflict(ctx context.Context, idx uint64, expectedTerm, localTerm uint64, peer VoterInfo) (bool, error) {
 	if localTerm == expectedTerm {
 		return false, nil
 	}

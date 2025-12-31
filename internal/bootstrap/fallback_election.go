@@ -16,7 +16,6 @@ import (
 
 type FallbackElectionDeps struct {
 	Config          *BootstrapConfig
-	Discovery       PeerDiscovery
 	Transport       BootstrapTransport
 	Fencing         *FencingManager
 	Meta            *ClusterMeta
@@ -35,7 +34,6 @@ type voteState struct {
 
 type FallbackElection struct {
 	config          *BootstrapConfig
-	discovery       PeerDiscovery
 	transport       BootstrapTransport
 	fencing         *FencingManager
 	meta            *ClusterMeta
@@ -53,7 +51,6 @@ type FallbackElection struct {
 }
 
 type FallbackCandidate struct {
-	Ordinal          int
 	ServerID         raft.ServerID
 	Address          raft.ServerAddress
 	StartTime        time.Time
@@ -70,7 +67,6 @@ func NewFallbackElection(deps FallbackElectionDeps) *FallbackElection {
 
 	return &FallbackElection{
 		config:          deps.Config,
-		discovery:       deps.Discovery,
 		transport:       deps.Transport,
 		fencing:         deps.Fencing,
 		meta:            deps.Meta,
@@ -130,11 +126,9 @@ func (e *FallbackElection) RunElection(ctx context.Context) (*FallbackCandidate,
 		return nil, err
 	}
 
-	for _, peer := range reachable {
-		if peer.Ordinal == 0 {
-			e.logger.Info("ordinal-0 is reachable, aborting fallback election")
-			return nil, ErrOrdinalZeroReachable
-		}
+	if e.anyPeerHasCluster(ctx, reachable) {
+		e.logger.Info("existing cluster found, aborting fallback election")
+		return nil, ErrExistingClusterFound
 	}
 
 	reachableCount := len(reachable) + 1
@@ -147,19 +141,19 @@ func (e *FallbackElection) RunElection(ctx context.Context) (*FallbackCandidate,
 		}
 	}
 
-	lowestOrdinal := e.meta.Ordinal
+	lowestServerID := e.meta.ServerID
 	for _, peer := range reachable {
-		if peer.Ordinal < lowestOrdinal {
-			lowestOrdinal = peer.Ordinal
+		if peer.ServerID < lowestServerID {
+			lowestServerID = peer.ServerID
 		}
 	}
 
-	if lowestOrdinal != e.meta.Ordinal {
-		e.logger.Info("not lowest ordinal, deferring to peer",
-			"my_ordinal", e.meta.Ordinal,
-			"lowest_ordinal", lowestOrdinal,
+	if lowestServerID != e.meta.ServerID {
+		e.logger.Info("not lowest ServerID, deferring to peer",
+			"my_id", e.meta.ServerID,
+			"lowest_id", lowestServerID,
 		)
-		return nil, ErrNotLowestOrdinal
+		return nil, ErrNotLowestServerID
 	}
 
 	votes, votedBy, err := e.requestVotesFromEligible(electionCtx, reachable, voterSet)
@@ -176,7 +170,6 @@ func (e *FallbackElection) RunElection(ctx context.Context) (*FallbackCandidate,
 	}
 
 	candidate := &FallbackCandidate{
-		Ordinal:          e.meta.Ordinal,
 		ServerID:         e.meta.ServerID,
 		Address:          e.meta.ServerAddress,
 		StartTime:        time.Now(),
@@ -214,7 +207,6 @@ func (e *FallbackElection) getCommittedVoterSet(_ context.Context) ([]VoterInfo,
 			voters = append(voters, VoterInfo{
 				ServerID: server.ID,
 				Address:  server.Address,
-				Ordinal:  ExtractOrdinal(server.ID),
 			})
 		}
 	}
@@ -242,11 +234,9 @@ func (e *FallbackElection) probeReachability(ctx context.Context, voters []Voter
 
 	for _, result := range results {
 		if result.Reachable {
-			ordinal := ExtractOrdinal(result.ServerID)
 			reachable = append(reachable, PeerInfo{
 				ServerID: result.ServerID,
 				Address:  result.Address,
-				Ordinal:  ordinal,
 			})
 		}
 	}
@@ -288,12 +278,11 @@ func (e *FallbackElection) requestVotesFromEligible(
 			defer wg.Done()
 
 			req := &VoteRequest{
-				CandidateID:      e.meta.ServerID,
-				CandidateOrdinal: e.meta.Ordinal,
-				ElectionReason:   "ordinal_0_unreachable",
-				Timestamp:        time.Now(),
-				VoterSetHash:     voterSetHash,
-				RequiredQuorum:   quorum,
+				CandidateID:    e.meta.ServerID,
+				ElectionReason: "fallback_election",
+				Timestamp:      time.Now(),
+				VoterSetHash:   voterSetHash,
+				RequiredQuorum: quorum,
 			}
 
 			if len(fencingKey) > 0 {
@@ -406,19 +395,6 @@ func (e *FallbackElection) HandleVoteRequest(
 		return &VoteResponse{VoteGranted: false, Reason: "already in cluster"}, nil
 	}
 
-	if req.CandidateOrdinal > e.meta.Ordinal {
-		return &VoteResponse{VoteGranted: false, Reason: "higher ordinal exists"}, nil
-	}
-
-	probeTimeout := 5 * time.Second
-	if e.config != nil && e.config.PeerProbeTimeout > 0 {
-		probeTimeout = e.config.PeerProbeTimeout
-	}
-	ordinal0Reachable := e.probeOrdinalZeroWithTimeout(ctx, probeTimeout)
-	if ordinal0Reachable {
-		return &VoteResponse{VoteGranted: false, Reason: "ordinal_0 reachable"}, nil
-	}
-
 	electionWindow := 30 * time.Second
 	if e.config != nil && e.config.FallbackElectionWindow > 0 {
 		electionWindow = e.config.FallbackElectionWindow
@@ -464,7 +440,6 @@ func (e *FallbackElection) HandleVoteRequest(
 
 	e.logger.Info("granted vote",
 		"candidate", req.CandidateID,
-		"candidate_ordinal", req.CandidateOrdinal,
 	)
 
 	return resp, nil
@@ -531,25 +506,25 @@ func (e *FallbackElection) validatePeerCertAgainstVoterSet(
 	return nil
 }
 
-func (e *FallbackElection) probeOrdinalZeroWithTimeout(ctx context.Context, timeout time.Duration) bool {
-	if e.prober == nil || e.discovery == nil {
+func (e *FallbackElection) anyPeerHasCluster(ctx context.Context, peers []PeerInfo) bool {
+	if e.transport == nil {
 		return false
 	}
 
-	ordinal0Addr := e.discovery.AddressForOrdinal(0)
-	if ordinal0Addr == "" {
-		return false
+	for _, peer := range peers {
+		meta, err := e.transport.GetClusterMeta(ctx, string(peer.Address))
+		if err != nil {
+			continue
+		}
+		if meta != nil && (meta.State == StateReady || meta.State == StateRecovering) {
+			e.logger.Info("peer has active cluster",
+				"peer", peer.ServerID,
+				"peer_state", meta.State,
+			)
+			return true
+		}
 	}
-
-	probeCtx, cancel := context.WithTimeout(ctx, timeout)
-	defer cancel()
-
-	result, err := e.prober.ProbePeer(probeCtx, ordinal0Addr)
-	if err != nil {
-		return false
-	}
-
-	return result.Reachable
+	return false
 }
 
 func (e *FallbackElection) IsInElection() bool {

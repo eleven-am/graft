@@ -33,8 +33,6 @@ type BootstrapServerDeps struct {
 	LocalMeta       func() *ClusterMeta
 	LocalRaft       RaftStateProvider
 	Secrets         *SecretsManager
-	Discovery       PeerDiscovery
-	Prober          PeerProber
 	TLSConfig       *tls.Config
 	Logger          *slog.Logger
 }
@@ -50,8 +48,6 @@ type BootstrapServer struct {
 	localMeta       func() *ClusterMeta
 	localRaft       RaftStateProvider
 	secrets         *SecretsManager
-	discovery       PeerDiscovery
-	prober          PeerProber
 	tlsConfig       *tls.Config
 	logger          *slog.Logger
 }
@@ -69,8 +65,6 @@ func NewBootstrapServer(deps BootstrapServerDeps) *BootstrapServer {
 		localMeta:       deps.LocalMeta,
 		localRaft:       deps.LocalRaft,
 		secrets:         deps.Secrets,
-		discovery:       deps.Discovery,
-		prober:          deps.Prober,
 		tlsConfig:       deps.TLSConfig,
 		logger:          deps.Logger,
 	}
@@ -135,8 +129,7 @@ func (s *BootstrapServer) ProposeToken(ctx context.Context, req *pb.ProposeToken
 
 func (s *BootstrapServer) RequestVote(ctx context.Context, req *pb.VoteRequestProto) (*pb.VoteResponseProto, error) {
 	s.logger.Debug("received RequestVote request",
-		slog.String("candidate_id", req.CandidateId),
-		slog.Int("candidate_ordinal", int(req.CandidateOrdinal)))
+		slog.String("candidate_id", req.CandidateId))
 
 	if err := s.checkProtocolVersion(ctx); err != nil {
 		s.logger.Warn("RequestVote rejected: protocol version check failed",
@@ -261,31 +254,8 @@ func (s *BootstrapServer) handleVoteRequest(ctx context.Context, req *VoteReques
 		}
 	}
 
-	if req.CandidateOrdinal > localMeta.Ordinal {
-		s.logger.Info("vote request rejected: higher ordinal exists",
-			slog.String("candidate_id", string(req.CandidateID)),
-			slog.Int("candidate_ordinal", req.CandidateOrdinal),
-			slog.Int("local_ordinal", localMeta.Ordinal))
-		return &VoteResponse{
-			VoteGranted: false,
-			Reason:      "higher ordinal exists",
-			VoterID:     localMeta.ServerID,
-		}
-	}
-
-	if s.isOrdinalZeroReachable(ctx) {
-		s.logger.Info("vote request rejected: ordinal-0 is reachable",
-			slog.String("candidate_id", string(req.CandidateID)))
-		return &VoteResponse{
-			VoteGranted: false,
-			Reason:      "ordinal_0 reachable",
-			VoterID:     localMeta.ServerID,
-		}
-	}
-
 	s.logger.Info("granted vote",
-		slog.String("candidate_id", string(req.CandidateID)),
-		slog.Int("candidate_ordinal", req.CandidateOrdinal))
+		slog.String("candidate_id", string(req.CandidateID)))
 
 	return &VoteResponse{
 		VoteGranted:  true,
@@ -315,7 +285,6 @@ func (s *BootstrapServer) getCommittedVoterSet() ([]VoterInfo, error) {
 			voters = append(voters, VoterInfo{
 				ServerID: server.ID,
 				Address:  server.Address,
-				Ordinal:  ExtractOrdinal(server.ID),
 			})
 		}
 	}
@@ -391,32 +360,6 @@ func (s *BootstrapServer) validatePeerCertAgainstVoterSet(
 	}
 
 	return nil
-}
-
-func (s *BootstrapServer) isOrdinalZeroReachable(ctx context.Context) bool {
-	if s.prober == nil || s.discovery == nil {
-		return false
-	}
-
-	ordinal0Addr := s.discovery.AddressForOrdinal(0)
-	if ordinal0Addr == "" {
-		return false
-	}
-
-	probeTimeout := 5 * time.Second
-	if s.config != nil && s.config.PeerProbeTimeout > 0 {
-		probeTimeout = s.config.PeerProbeTimeout
-	}
-
-	probeCtx, cancel := context.WithTimeout(ctx, probeTimeout)
-	defer cancel()
-
-	result, err := s.prober.ProbePeer(probeCtx, ordinal0Addr)
-	if err != nil {
-		return false
-	}
-
-	return result.Reachable
 }
 
 func (s *BootstrapServer) GetClusterMeta(ctx context.Context, req *pb.GetClusterMetaRequest) (*pb.ClusterMetaProto, error) {

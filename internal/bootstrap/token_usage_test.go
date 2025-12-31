@@ -154,8 +154,8 @@ func TestTokenUsageTracker_BroadcastUsage(t *testing.T) {
 	}
 
 	peers := []PeerInfo{
-		{ServerID: "node-1", Address: "10.0.0.2:7946", Ordinal: 1},
-		{ServerID: "node-2", Address: "10.0.0.3:7946", Ordinal: 2},
+		{ServerID: "node-1", Address: "10.0.0.2:7946"},
+		{ServerID: "node-2", Address: "10.0.0.3:7946"},
 	}
 
 	err := tracker.BroadcastUsage(context.Background(), token, peers)
@@ -201,11 +201,15 @@ func TestTokenUsageTracker_CheckClusterWideUsage_EpochAdvanced(t *testing.T) {
 
 func TestTokenUsageTracker_CheckClusterWideUsage_PeerReports(t *testing.T) {
 	transport := NewMockBootstrapTransport()
-	discovery := NewMockPeerDiscovery()
+	membershipStore := NewMockMembershipStore()
 
-	discovery.SetAddress(0, "10.0.0.1:7946")
-	discovery.SetAddress(1, "10.0.0.2:7946")
-	discovery.SetAddress(2, "10.0.0.3:7946")
+	membershipStore.SetConfiguration(&raft.Configuration{
+		Servers: []raft.Server{
+			{ID: "node-0", Address: "10.0.0.1:7946", Suffrage: raft.Voter},
+			{ID: "node-1", Address: "10.0.0.2:7946", Suffrage: raft.Voter},
+			{ID: "node-2", Address: "10.0.0.3:7946", Suffrage: raft.Voter},
+		},
+	})
 
 	usedTime := time.Now().Add(-time.Hour)
 	transport.SetTokenUsage("10.0.0.2:7946", &TokenUsageResponse{
@@ -216,7 +220,6 @@ func TestTokenUsageTracker_CheckClusterWideUsage_PeerReports(t *testing.T) {
 
 	meta := &ClusterMeta{
 		ServerID: "node-0",
-		Ordinal:  0,
 	}
 
 	config := &BootstrapConfig{
@@ -224,10 +227,10 @@ func TestTokenUsageTracker_CheckClusterWideUsage_PeerReports(t *testing.T) {
 	}
 
 	tracker := NewTokenUsageTracker(TokenUsageTrackerDeps{
-		Transport: transport,
-		Discovery: discovery,
-		Meta:      meta,
-		Config:    config,
+		Transport:       transport,
+		MembershipStore: membershipStore,
+		Meta:            meta,
+		Config:          config,
 	})
 
 	token := &ForceBootstrapToken{

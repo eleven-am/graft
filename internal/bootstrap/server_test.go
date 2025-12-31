@@ -217,29 +217,6 @@ func TestBootstrapServer_RequestVote_GrantVote(t *testing.T) {
 	}
 }
 
-func TestBootstrapServer_RequestVote_RejectHigherOrdinal(t *testing.T) {
-	server, _ := newTestBootstrapServerWithState(t, StateBootstrapping)
-	ctx := createTestContext(t)
-
-	req := &pb.VoteRequestProto{
-		CandidateId:      "node-1",
-		CandidateOrdinal: 1,
-		ElectionReason:   "test",
-		Timestamp:        time.Now().UnixNano(),
-		VoterSetHash:     []byte("hash"),
-		RequiredQuorum:   2,
-	}
-
-	resp, err := server.RequestVote(ctx, req)
-	if err != nil {
-		t.Fatalf("RequestVote() error = %v", err)
-	}
-
-	if resp.VoteGranted {
-		t.Errorf("VoteGranted = %v, want false (higher ordinal should be rejected)", resp.VoteGranted)
-	}
-}
-
 func TestBootstrapServer_RequestVote_RejectAlreadyInCluster(t *testing.T) {
 	server, _ := newTestBootstrapServerWithState(t, StateReady)
 	ctx := createTestContext(t)

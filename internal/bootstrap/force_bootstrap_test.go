@@ -11,7 +11,7 @@ func TestForceBootstrapToken_Signature_Valid(t *testing.T) {
 	secrets := NewMockSecretsManager()
 	secrets.SetFencingKey([]byte("test-fencing-key-32-bytes-long!!"))
 
-	generator := NewForceBootstrapTokenGenerator("", nil, nil, secrets, nil)
+	generator := NewForceBootstrapTokenGenerator("", nil, secrets, nil)
 
 	voterSetHash := []byte("test-voter-set-hash-bytes")
 	token, err := generator.Generate(
@@ -47,7 +47,7 @@ func TestForceBootstrapToken_Signature_Tampered(t *testing.T) {
 	secrets := NewMockSecretsManager()
 	secrets.SetFencingKey([]byte("test-fencing-key-32-bytes-long!!"))
 
-	generator := NewForceBootstrapTokenGenerator("", nil, nil, secrets, nil)
+	generator := NewForceBootstrapTokenGenerator("", nil, secrets, nil)
 
 	voterSetHash := []byte("test-voter-set-hash-bytes")
 	token, err := generator.Generate(
@@ -81,7 +81,7 @@ func TestForceBootstrapTokenGenerator_Generate_Basic(t *testing.T) {
 	secrets := NewMockSecretsManager()
 	secrets.SetFencingKey([]byte("test-fencing-key-32-bytes-long!!"))
 
-	generator := NewForceBootstrapTokenGenerator("", nil, nil, secrets, nil)
+	generator := NewForceBootstrapTokenGenerator("", nil, secrets, nil)
 
 	voterSetHash := []byte("test-voter-set-hash")
 	token, err := generator.Generate(
@@ -154,7 +154,7 @@ func TestForceBootstrapTokenGenerator_Generate_DisasterRecovery(t *testing.T) {
 	secrets := NewMockSecretsManager()
 	secrets.SetFencingKey([]byte("test-fencing-key-32-bytes-long!!"))
 
-	generator := NewForceBootstrapTokenGenerator("", nil, nil, secrets, nil)
+	generator := NewForceBootstrapTokenGenerator("", nil, secrets, nil)
 
 	voterSetHash := []byte("expected-nodes-hash")
 	token, err := generator.Generate(
@@ -189,7 +189,7 @@ func TestForceBootstrapTokenGenerator_Generate_MissingVoterSetHash(t *testing.T)
 	secrets := NewMockSecretsManager()
 	secrets.SetFencingKey([]byte("test-key"))
 
-	generator := NewForceBootstrapTokenGenerator("", nil, nil, secrets, nil)
+	generator := NewForceBootstrapTokenGenerator("", nil, secrets, nil)
 
 	_, err := generator.Generate(
 		context.Background(),
@@ -213,7 +213,7 @@ func TestForceBootstrapTokenGenerator_Generate_IgnoreQuorumCheck_NoConfirmation(
 	secrets := NewMockSecretsManager()
 	secrets.SetFencingKey([]byte("test-key"))
 
-	generator := NewForceBootstrapTokenGenerator("", nil, nil, secrets, nil)
+	generator := NewForceBootstrapTokenGenerator("", nil, secrets, nil)
 
 	_, err := generator.Generate(
 		context.Background(),
@@ -239,7 +239,7 @@ func TestForceBootstrapTokenGenerator_Generate_IgnoreQuorumCheck_WithConfirmatio
 	secrets := NewMockSecretsManager()
 	secrets.SetFencingKey([]byte("test-fencing-key-32-bytes-long!!"))
 
-	generator := NewForceBootstrapTokenGenerator("", nil, nil, secrets, nil)
+	generator := NewForceBootstrapTokenGenerator("", nil, secrets, nil)
 
 	token, err := generator.Generate(
 		context.Background(),
@@ -365,7 +365,7 @@ func TestVerifyForceBootstrapTokenSignature(t *testing.T) {
 	key := []byte("test-fencing-key-32-bytes-long!!")
 	secrets.SetFencingKey(key)
 
-	generator := NewForceBootstrapTokenGenerator("", nil, nil, secrets, nil)
+	generator := NewForceBootstrapTokenGenerator("", nil, secrets, nil)
 
 	token, err := generator.Generate(
 		context.Background(),
@@ -403,7 +403,7 @@ func TestForceBootstrapTokenGenerator_RequireDedicatedKey(t *testing.T) {
 		RequireDedicatedKey: true,
 	}
 
-	generator := NewForceBootstrapTokenGenerator("", nil, nil, secrets, config)
+	generator := NewForceBootstrapTokenGenerator("", nil, secrets, config)
 
 	_, err := generator.Generate(
 		context.Background(),

@@ -4,9 +4,8 @@ import "time"
 
 // RaftPeerSpec describes a peer that may participate in the cluster.
 type RaftPeerSpec struct {
-	ID       string
-	Address  string
-	Metadata map[string]string
+	ID      string
+	Address string
 }
 
 // RaftRuntimeConfig captures timing and replication parameters for the raft
