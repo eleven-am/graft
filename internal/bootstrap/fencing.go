@@ -65,7 +65,7 @@ func (m *FencingManager) Initialize(voters []VoterInfo) error {
 			return fmt.Errorf("load existing token: %w", err)
 		}
 
-		if m.secrets.HasFencingKey() {
+		if m.secrets != nil && m.secrets.HasFencingKey() {
 			if !VerifyTokenSignature(token, m.secrets.FencingKey()) {
 				return ErrTokenSignatureInvalid
 			}
@@ -139,7 +139,7 @@ func (m *FencingManager) CreateProposal(mode FencingMode, serverID raft.ServerID
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if !m.secrets.HasFencingKey() {
+	if m.secrets == nil || !m.secrets.HasFencingKey() {
 		return nil, ErrNoFencingKey
 	}
 
@@ -186,7 +186,7 @@ func (m *FencingManager) HandleProposal(proposal *FencingProposal, localServerID
 		return m.createRejectAck(proposal.ProposedEpoch, localServerID, "invalid proposal: "+err.Error())
 	}
 
-	if m.secrets.HasFencingKey() {
+	if m.secrets != nil && m.secrets.HasFencingKey() {
 		if !VerifyProposalSignature(proposal, m.secrets.FencingKey()) {
 			return m.createRejectAck(proposal.ProposedEpoch, localServerID, "invalid signature")
 		}
@@ -221,7 +221,7 @@ func (m *FencingManager) HandleProposal(proposal *FencingProposal, localServerID
 		Timestamp:     time.Now(),
 	}
 
-	if m.secrets.HasFencingKey() {
+	if m.secrets != nil && m.secrets.HasFencingKey() {
 		if err := SignAck(ack, m.secrets.FencingKey()); err != nil {
 			return nil, fmt.Errorf("sign ack: %w", err)
 		}
@@ -246,7 +246,7 @@ func (m *FencingManager) createRejectAck(proposedEpoch uint64, voterID raft.Serv
 		Timestamp:     time.Now(),
 	}
 
-	if m.secrets.HasFencingKey() {
+	if m.secrets != nil && m.secrets.HasFencingKey() {
 		if err := SignAck(ack, m.secrets.FencingKey()); err != nil {
 			return nil, fmt.Errorf("sign reject ack: %w", err)
 		}
@@ -295,7 +295,7 @@ func (m *FencingManager) CommitToken(proposal *FencingProposal, acks []*FencingA
 		}
 
 		if ack.Accepted {
-			if m.secrets.HasFencingKey() {
+			if m.secrets != nil && m.secrets.HasFencingKey() {
 				if !VerifyAckSignature(ack, m.secrets.FencingKey()) {
 					m.logger.Warn("invalid ack signature", "voter_id", ack.VoterID)
 					continue
@@ -327,7 +327,7 @@ func (m *FencingManager) CommitToken(proposal *FencingProposal, acks []*FencingA
 
 	token.UpdateChecksum()
 
-	if m.secrets.HasFencingKey() {
+	if m.secrets != nil && m.secrets.HasFencingKey() {
 		if err := SignToken(token, m.secrets.FencingKey()); err != nil {
 			return nil, fmt.Errorf("sign token: %w", err)
 		}
@@ -368,7 +368,7 @@ func (m *FencingManager) ValidateToken(token *FencingToken) error {
 		}
 	}
 
-	if m.secrets.HasFencingKey() {
+	if m.secrets != nil && m.secrets.HasFencingKey() {
 		if !VerifyTokenSignature(token, m.secrets.FencingKey()) {
 			return ErrTokenSignatureInvalid
 		}
