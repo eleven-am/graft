@@ -688,10 +688,16 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 			if headlessSvc == "" {
 				headlessSvc = m.config.Bootstrap.ServiceName
 			}
+			raftPort := m.config.Bootstrap.BasePort
+			if _, portStr, err := net.SplitHostPort(m.config.BindAddr); err == nil {
+				if p, err := strconv.Atoi(portStr); err == nil && p > 0 {
+					raftPort = p
+				}
+			}
 			leaderAddr = fmt.Sprintf("%s-0.%s:%d",
 				m.config.Bootstrap.ServiceName,
 				headlessSvc,
-				m.config.Bootstrap.BasePort)
+				raftPort)
 			leaderID = fmt.Sprintf("%s-0", m.config.Bootstrap.ServiceName)
 			grpcPort = strconv.Itoa(m.grpcPort)
 			m.logger.Debug("using K8s-style leader address (discovery fallback)",
