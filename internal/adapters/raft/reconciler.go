@@ -3,6 +3,8 @@ package raft
 import (
 	"context"
 	"errors"
+	"fmt"
+	"net"
 	"sync"
 	"time"
 
@@ -142,17 +144,21 @@ func (r *Reconciler) findLeader(ctx context.Context) (string, error) {
 		r.attempts++
 		r.mu.Unlock()
 
+		peerGRPCAddr := r.getGRPCAddress(peer)
+
 		r.logger.Debug("querying peer for leader info",
 			"peer_id", peer.ID,
-			"peer_addr", peer.Address)
+			"peer_addr", peer.Address,
+			"peer_grpc_addr", peerGRPCAddr)
 
 		queryCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
-		leaderID, leaderAddr, err := r.transport.GetLeaderInfo(queryCtx, peer.Address)
+		leaderID, leaderAddr, err := r.transport.GetLeaderInfo(queryCtx, peerGRPCAddr)
 		cancel()
 
 		if err != nil {
 			r.logger.Debug("failed to get leader info from peer",
 				"peer_id", peer.ID,
+				"peer_grpc_addr", peerGRPCAddr,
 				"error", err)
 			continue
 		}
@@ -165,14 +171,27 @@ func (r *Reconciler) findLeader(ctx context.Context) (string, error) {
 			return leaderAddr, nil
 		}
 
-		if peer.Address != "" {
+		if peerGRPCAddr != "" {
 			r.logger.Debug("peer has no leader info, trying peer directly as potential leader",
-				"peer_addr", peer.Address)
-			return peer.Address, nil
+				"peer_grpc_addr", peerGRPCAddr)
+			return peerGRPCAddr, nil
 		}
 	}
 
 	return "", ErrLeaderNotFound
+}
+
+func (r *Reconciler) getGRPCAddress(peer domain.RaftPeerSpec) string {
+	if peer.Metadata != nil {
+		if grpcPort, ok := peer.Metadata["grpc_port"]; ok && grpcPort != "" {
+			host, _, err := net.SplitHostPort(peer.Address)
+			if err != nil {
+				host = peer.Address
+			}
+			return fmt.Sprintf("%s:%s", host, grpcPort)
+		}
+	}
+	return peer.Address
 }
 
 func (r *Reconciler) requestAddVoter(ctx context.Context, leaderAddr string) error {

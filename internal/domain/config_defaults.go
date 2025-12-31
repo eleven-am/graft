@@ -23,10 +23,36 @@ func DefaultConfig() *Config {
 		Engine:         DefaultEngineConfig(),
 		Orchestrator:   DefaultOrchestratorConfig(),
 		Cluster:        DefaultClusterConfig(),
+		Bootstrap:      DefaultBootstrapConfig(),
 		Observability:  DefaultObservabilityConfig(),
 		CircuitBreaker: DefaultCircuitBreakerSettings(),
 		RateLimiter:    DefaultRateLimiterSettings(),
 		Tracing:        DefaultTracingConfig(),
+	}
+}
+
+func DefaultBootstrapConfig() BootstrapConfig {
+	return BootstrapConfig{
+		ServiceName:        "graft",
+		Ordinal:            0,
+		Replicas:           3,
+		HeadlessService:    "",
+		BasePort:           7946,
+		FencingEnabled:     true,
+		FencingKeyPath:     "",
+		FencingQuorum:      0,
+		TLSEnabled:         false,
+		TLSCertPath:        "",
+		TLSKeyPath:         "",
+		TLSCAPath:          "",
+		LeaderWaitTimeout:  30 * time.Second,
+		ReadyTimeout:       60 * time.Second,
+		StaleCheckInterval: 5 * time.Second,
+		ForceBootstrapKeyPath:  "",
+		ForceBootstrapTokenDir: "",
+		RequireDedicatedKey:    false,
+		AdminAPIEnabled:        false,
+		AdminAPIPort:           8080,
 	}
 }
 
@@ -262,6 +288,41 @@ func (c *Config) WithClusterPersistence(persistenceFile string) *Config {
 	return c
 }
 
+func (c *Config) WithBootstrap(serviceName string, ordinal, replicas int) *Config {
+	c.Bootstrap.ServiceName = serviceName
+	c.Bootstrap.Ordinal = ordinal
+	c.Bootstrap.Replicas = replicas
+	return c
+}
+
+func (c *Config) WithBootstrapFencing(keyPath string, quorum int) *Config {
+	c.Bootstrap.FencingEnabled = true
+	c.Bootstrap.FencingKeyPath = keyPath
+	c.Bootstrap.FencingQuorum = quorum
+	return c
+}
+
+func (c *Config) WithBootstrapTLS(certPath, keyPath, caPath string) *Config {
+	c.Bootstrap.TLSEnabled = true
+	c.Bootstrap.TLSCertPath = certPath
+	c.Bootstrap.TLSKeyPath = keyPath
+	c.Bootstrap.TLSCAPath = caPath
+	return c
+}
+
+func (c *Config) WithBootstrapAdmin(port int) *Config {
+	c.Bootstrap.AdminAPIEnabled = true
+	c.Bootstrap.AdminAPIPort = port
+	return c
+}
+
+func (c *Config) WithBootstrapTimeouts(leaderWait, ready, staleCheck time.Duration) *Config {
+	c.Bootstrap.LeaderWaitTimeout = leaderWait
+	c.Bootstrap.ReadyTimeout = ready
+	c.Bootstrap.StaleCheckInterval = staleCheck
+	return c
+}
+
 func (c *Config) Validate() error {
 	if c.NodeID == "" {
 		return NewConfigError("node_id", ErrInvalidInput)
@@ -301,6 +362,52 @@ func (c *Config) Validate() error {
 		return NewConfigError("engine.max_concurrent_workflows", ErrInvalidInput)
 	}
 
+	if err := validateBootstrapConfig(&c.Bootstrap); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func validateBootstrapConfig(config *BootstrapConfig) error {
+	if config.ServiceName == "" {
+		return NewConfigError("bootstrap.service_name", ErrInvalidInput)
+	}
+	if config.Ordinal < 0 {
+		return NewConfigError("bootstrap.ordinal", ErrInvalidInput)
+	}
+	if config.Replicas <= 0 {
+		return NewConfigError("bootstrap.replicas", ErrInvalidInput)
+	}
+	if config.Ordinal >= config.Replicas {
+		return NewConfigError("bootstrap.ordinal", fmt.Errorf("ordinal %d must be less than replicas %d", config.Ordinal, config.Replicas))
+	}
+	if config.BasePort <= 0 || config.BasePort > 65535 {
+		return NewConfigError("bootstrap.base_port", ErrInvalidInput)
+	}
+	if config.FencingEnabled && config.FencingQuorum < 0 {
+		return NewConfigError("bootstrap.fencing_quorum", ErrInvalidInput)
+	}
+	if config.TLSEnabled {
+		if config.TLSCertPath == "" {
+			return NewConfigError("bootstrap.tls_cert_path", ErrInvalidInput)
+		}
+		if config.TLSKeyPath == "" {
+			return NewConfigError("bootstrap.tls_key_path", ErrInvalidInput)
+		}
+	}
+	if config.LeaderWaitTimeout <= 0 {
+		return NewConfigError("bootstrap.leader_wait_timeout", ErrInvalidInput)
+	}
+	if config.ReadyTimeout <= 0 {
+		return NewConfigError("bootstrap.ready_timeout", ErrInvalidInput)
+	}
+	if config.StaleCheckInterval <= 0 {
+		return NewConfigError("bootstrap.stale_check_interval", ErrInvalidInput)
+	}
+	if config.AdminAPIEnabled && (config.AdminAPIPort <= 0 || config.AdminAPIPort > 65535) {
+		return NewConfigError("bootstrap.admin_api_port", ErrInvalidInput)
+	}
 	return nil
 }
 

@@ -77,6 +77,20 @@ func (m *Manager) GetPeers() []ports.Peer {
 	return result
 }
 
+func (m *Manager) GetSelfOrdinal() int {
+	m.mu.RLock()
+	providers := m.providers
+	m.mu.RUnlock()
+
+	for _, p := range providers {
+		if ordinal := p.GetSelfOrdinal(); ordinal >= 0 {
+			return ordinal
+		}
+	}
+
+	return -1
+}
+
 func (m *Manager) Start(ctx context.Context, address string, port int, grpcPort int, clusterID string) error {
 	m.mu.Lock()
 	m.ctx, m.cancel = context.WithCancel(ctx)

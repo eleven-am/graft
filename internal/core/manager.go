@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	bootstrapadapter "github.com/eleven-am/graft/internal/adapters/bootstrap"
 	"github.com/eleven-am/graft/internal/adapters/circuit_breaker"
 	"github.com/eleven-am/graft/internal/adapters/cluster"
 	"github.com/eleven-am/graft/internal/adapters/connector_registry"
@@ -29,7 +30,7 @@ import (
 	"github.com/eleven-am/graft/internal/adapters/storage"
 	"github.com/eleven-am/graft/internal/adapters/tracing"
 	"github.com/eleven-am/graft/internal/adapters/transport"
-	bootcoord "github.com/eleven-am/graft/internal/core/bootstrap"
+	"github.com/eleven-am/graft/internal/bootstrap"
 	"github.com/eleven-am/graft/internal/core/connectors"
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/helpers/metadata"
@@ -55,6 +56,7 @@ type Manager struct {
 	circuitBreakers   ports.CircuitBreakerProvider
 	rateLimiters      ports.RateLimiterProvider
 	tracing           ports.TracingProvider
+	bootstrapper      *bootstrap.Bootstrapper
 
 	config                 *domain.Config
 	logger                 *slog.Logger
@@ -416,61 +418,9 @@ func (m *Manager) Static(peers []ports.Peer) *Manager {
 func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	m.ctx, m.cancel = context.WithCancel(ctx)
 
-	coord := bootcoord.Coordinator{
-		NodeID:        m.nodeID,
-		BindAddr:      m.config.BindAddr,
-		HasState:      m.hasPersistedRaftState,
-		ClusterID:     m.config.Cluster.ID,
-		Discovery:     m.discovery,
-		Logger:        m.logger,
-		ExpectedPeers: m.expectedStaticPeers,
+	if err := m.startBootstrap(ctx, grpcPort); err != nil {
+		return err
 	}
-	var orchestrator bootcoord.OrchestratorAPI = &bootcoord.Orchestrator{
-		Coordinator:      &coord,
-		Raft:             m.raftAdapter,
-		Logger:           m.logger,
-		NodeID:           m.nodeID,
-		DiscoveryTimeout: m.discoveryTimeout,
-		SetReadiness:     m.readinessManager.SetState,
-		PauseIntake:      m.pauseWorkflowIntake,
-		ResumeIntake:     m.resumeWorkflowIntake,
-	}
-
-	bootstrapResult, err := orchestrator.Start(m.ctx, grpcPort)
-	if err != nil {
-		return domain.NewDomainErrorWithCategory(
-			domain.CategoryDiscovery,
-			"bootstrap orchestrator failed",
-			err,
-			domain.WithComponent("core.Manager.Start"),
-		)
-	}
-
-	bootstrapSpec := bootstrapResult.BootstrapSpec
-
-	m.logger.Info("starting raft adapter",
-		"node_id", m.nodeID,
-		"bootstrap_multi_node", bootstrapSpec.BootstrapMultiNode,
-		"peer_count", len(bootstrapSpec.Peers))
-
-	if err := m.raftAdapter.Start(ctx, bootstrapSpec.Peers, bootstrapSpec.BootstrapMultiNode); err != nil {
-		m.logger.Error("raft adapter start failed",
-			"node_id", m.nodeID,
-			"bootstrap_multi_node", bootstrapSpec.BootstrapMultiNode,
-			"peer_count", len(bootstrapSpec.Peers),
-			"error", err)
-		return domain.NewRaftError(
-			"failed to start raft node",
-			err,
-			domain.WithComponent("core.Manager.Start"),
-			domain.WithContextDetail("existing_peer_count", strconv.Itoa(len(bootstrapSpec.Peers))),
-		)
-	}
-
-	m.logger.Info("raft adapter started",
-		"node_id", m.nodeID,
-		"bootstrap_multi_node", bootstrapSpec.BootstrapMultiNode,
-		"peer_count", len(bootstrapSpec.Peers))
 
 	if err := m.loadBalancer.Start(m.ctx); err != nil {
 		return domain.NewDomainErrorWithCategory(
@@ -580,6 +530,210 @@ func (m *Manager) Stop() error {
 			m.logger.Error("failed to stop raft adapter", "error", err)
 		}
 	}
+
+	if m.bootstrapper != nil {
+		if err := m.bootstrapper.Stop(); err != nil {
+			m.logger.Error("failed to stop bootstrapper", "error", err)
+		}
+	}
+
+	return nil
+}
+
+func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
+	m.logger.Info("starting with new bootstrap system",
+		"service_name", m.config.Bootstrap.ServiceName,
+		"ordinal", m.config.Bootstrap.Ordinal,
+		"replicas", m.config.Bootstrap.Replicas)
+
+	if m.discovery != nil {
+		host, portStr, err := net.SplitHostPort(m.config.BindAddr)
+		if err != nil {
+			host = m.config.BindAddr
+			portStr = "7222"
+		}
+		port, _ := strconv.Atoi(portStr)
+
+		if err := m.discovery.Start(ctx, host, port, grpcPort, m.config.Cluster.ID); err != nil {
+			return domain.NewDomainErrorWithCategory(
+				domain.CategoryDiscovery,
+				"failed to start discovery manager",
+				err,
+				domain.WithComponent("core.Manager.Start"),
+			)
+		}
+		m.logger.Info("discovery manager started", "address", host, "port", port, "grpc_port", grpcPort)
+	}
+
+	factory, err := bootstrapadapter.NewFactory(bootstrapadapter.FactoryDeps{
+		Config:           m.config,
+		DiscoveryManager: m.discovery,
+		Logger:           m.logger,
+	})
+	if err != nil {
+		return domain.NewDomainErrorWithCategory(
+			domain.CategoryDiscovery,
+			"failed to create bootstrap factory",
+			err,
+			domain.WithComponent("core.Manager.Start"),
+		)
+	}
+
+	bootstrapper, err := factory.CreateBootstrapper()
+	if err != nil {
+		return domain.NewDomainErrorWithCategory(
+			domain.CategoryDiscovery,
+			"failed to create bootstrapper",
+			err,
+			domain.WithComponent("core.Manager.Start"),
+		)
+	}
+
+	m.bootstrapper = bootstrapper
+
+	if err := m.bootstrapper.Start(m.ctx); err != nil {
+		return domain.NewDomainErrorWithCategory(
+			domain.CategoryDiscovery,
+			"failed to start bootstrapper",
+			err,
+			domain.WithComponent("core.Manager.Start"),
+		)
+	}
+
+	readyTimeout := m.config.Bootstrap.ReadyTimeout
+	if readyTimeout <= 0 {
+		readyTimeout = 60 * time.Second
+	}
+
+	m.logger.Info("waiting for bootstrapper to become ready",
+		"timeout", readyTimeout,
+		"ordinal", m.config.Bootstrap.Ordinal)
+
+	select {
+	case <-m.bootstrapper.Ready():
+		if err := m.bootstrapper.ReadyError(); err != nil {
+			return domain.NewDomainErrorWithCategory(
+				domain.CategoryDiscovery,
+				"bootstrapper ready with error",
+				err,
+				domain.WithComponent("core.Manager.Start"),
+			)
+		}
+	case <-time.After(readyTimeout):
+		return domain.NewDomainErrorWithCategory(
+			domain.CategoryDiscovery,
+			"bootstrapper ready timeout",
+			fmt.Errorf("timed out waiting for bootstrapper after %v", readyTimeout),
+			domain.WithComponent("core.Manager.Start"),
+		)
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+
+	resolvedOrdinal := m.bootstrapper.GetOrdinal()
+	m.logger.Info("bootstrapper ready, starting raft adapter",
+		"state", m.bootstrapper.CurrentState(),
+		"resolved_ordinal", resolvedOrdinal,
+		"config_ordinal", m.config.Bootstrap.Ordinal)
+
+	isOrdinalZero := resolvedOrdinal == 0
+	var peers []domain.RaftPeerSpec
+
+	var discoveredPeers []ports.Peer
+	if m.discovery != nil {
+		discoveredPeers = m.discovery.GetPeers()
+	}
+
+	m.logger.Debug("cluster formation state",
+		"resolved_ordinal", resolvedOrdinal,
+		"config_ordinal", m.config.Bootstrap.Ordinal,
+		"is_ordinal_zero", isOrdinalZero,
+		"headless_service", m.config.Bootstrap.HeadlessService,
+		"service_name", m.config.Bootstrap.ServiceName,
+		"discovered_peers_count", len(discoveredPeers))
+
+	for i, p := range discoveredPeers {
+		m.logger.Debug("discovered peer",
+			"index", i,
+			"peer_id", p.ID,
+			"peer_address", p.Address,
+			"peer_port", p.Port,
+			"peer_metadata", p.Metadata)
+	}
+
+	if !isOrdinalZero {
+		var leaderAddr string
+		var leaderID string
+		var grpcPort string
+		var foundFromDiscovery bool
+
+		for _, p := range discoveredPeers {
+			if ordStr, ok := p.Metadata["ordinal"]; ok && ordStr == "0" {
+				leaderAddr = fmt.Sprintf("%s:%d", p.Address, p.Port)
+				leaderID = fmt.Sprintf("%s-0", m.config.Bootstrap.ServiceName)
+				grpcPort = p.Metadata["grpc_port"]
+				foundFromDiscovery = true
+				m.logger.Debug("found ordinal-0 via discovery",
+					"peer_id", p.ID,
+					"peer_address", p.Address,
+					"peer_port", p.Port,
+					"grpc_port", grpcPort,
+					"leader_addr", leaderAddr)
+				break
+			}
+		}
+
+		if !foundFromDiscovery {
+			headlessSvc := m.config.Bootstrap.HeadlessService
+			if headlessSvc == "" {
+				headlessSvc = m.config.Bootstrap.ServiceName
+			}
+			leaderAddr = fmt.Sprintf("%s-0.%s:%d",
+				m.config.Bootstrap.ServiceName,
+				headlessSvc,
+				m.config.Bootstrap.BasePort)
+			leaderID = fmt.Sprintf("%s-0", m.config.Bootstrap.ServiceName)
+			m.logger.Debug("using K8s-style leader address (discovery fallback)",
+				"leader_addr", leaderAddr)
+		}
+
+		peerMeta := make(map[string]string)
+		if grpcPort != "" {
+			peerMeta["grpc_port"] = grpcPort
+		}
+		peers = []domain.RaftPeerSpec{{
+			ID:       leaderID,
+			Address:  leaderAddr,
+			Metadata: peerMeta,
+		}}
+		m.logger.Debug("constructed peer for joining",
+			"leader_addr", leaderAddr,
+			"leader_id", leaderID,
+			"grpc_port", grpcPort,
+			"from_discovery", foundFromDiscovery)
+	}
+
+	if err := m.raftAdapter.Start(ctx, peers, isOrdinalZero); err != nil {
+		m.logger.Error("raft adapter start failed (new bootstrap)",
+			"node_id", m.nodeID,
+			"resolved_ordinal", resolvedOrdinal,
+			"is_bootstrap_leader", isOrdinalZero,
+			"error", err)
+		return domain.NewRaftError(
+			"failed to start raft node",
+			err,
+			domain.WithComponent("core.Manager.Start"),
+		)
+	}
+
+	m.logger.Info("raft adapter started (new bootstrap)",
+		"node_id", m.nodeID,
+		"resolved_ordinal", resolvedOrdinal,
+		"is_bootstrap_leader", isOrdinalZero,
+		"state", m.bootstrapper.CurrentState())
+
+	m.readinessManager.SetState(readiness.StateReady)
+	m.resumeWorkflowIntake()
 
 	return nil
 }

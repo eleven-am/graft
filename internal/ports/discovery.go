@@ -19,6 +19,7 @@ type Provider interface {
 	Snapshot() []Peer
 	Events() <-chan Event
 	Name() string
+	GetSelfOrdinal() int
 }
 
 type Event struct {

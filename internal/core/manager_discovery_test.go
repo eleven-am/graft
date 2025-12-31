@@ -54,6 +54,10 @@ func (p *testDiscoveryProvider) emit(event ports.Event) {
 	p.events <- event
 }
 
+func (p *testDiscoveryProvider) GetSelfOrdinal() int {
+	return -1
+}
+
 func newTestLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

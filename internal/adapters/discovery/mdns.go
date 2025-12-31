@@ -7,11 +7,14 @@ import (
 	"log"
 	"log/slog"
 	"net"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/eleven-am/graft/internal/domain"
+	"github.com/eleven-am/graft/internal/helpers/metadata"
 	"github.com/eleven-am/graft/internal/ports"
 	"github.com/hashicorp/mdns"
 )
@@ -33,6 +36,7 @@ type MDNSProvider struct {
 	disableIPv6 bool
 	events      chan ports.Event
 	wg          sync.WaitGroup
+	selfOrdinal int
 }
 
 type mdnsLogWriter struct {
@@ -85,6 +89,7 @@ func NewMDNSProvider(service, domain, host string, disableIPv6 bool, logger *slo
 		host:        host,
 		disableIPv6: disableIPv6,
 		events:      make(chan ports.Event, 100),
+		selfOrdinal: -1,
 	}
 }
 
@@ -340,6 +345,8 @@ func (m *MDNSProvider) performDiscovery(ctx context.Context) {
 		}
 	}
 	m.mu.Unlock()
+
+	m.computeAndAssignOrdinals()
 }
 
 func (m *MDNSProvider) processMDNSEntry(entry *mdns.ServiceEntry) (string, *ports.Peer, bool) {
@@ -405,16 +412,82 @@ func (m *MDNSProvider) extractPeerID(entry *mdns.ServiceEntry) string {
 }
 
 func (m *MDNSProvider) extractAllMetadata(entry *mdns.ServiceEntry) map[string]string {
-	metadata := make(map[string]string)
+	meta := make(map[string]string)
 
 	for _, txt := range entry.InfoFields {
 		if parts := strings.SplitN(txt, "=", 2); len(parts) == 2 {
 			key, value := parts[0], parts[1]
 			if key != "id" {
-				metadata[key] = value
+				meta[key] = value
 			}
 		}
 	}
 
-	return metadata
+	return meta
+}
+
+func (m *MDNSProvider) computeAndAssignOrdinals() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	allPeers := make([]ports.Peer, 0, len(m.peers)+1)
+
+	self := ports.Peer{
+		ID:       m.nodeInfo.ID,
+		Address:  m.nodeInfo.Address,
+		Port:     m.nodeInfo.Port,
+		Metadata: m.nodeInfo.Metadata,
+	}
+	allPeers = append(allPeers, self)
+
+	for _, p := range m.peers {
+		allPeers = append(allPeers, p)
+	}
+
+	sort.Slice(allPeers, func(i, j int) bool {
+		tsI := extractLaunchTimestamp(allPeers[i].Metadata)
+		tsJ := extractLaunchTimestamp(allPeers[j].Metadata)
+
+		if tsI != tsJ {
+			return tsI < tsJ
+		}
+
+		return allPeers[i].ID < allPeers[j].ID
+	})
+
+	for ordinal, p := range allPeers {
+		if p.ID == m.nodeInfo.ID {
+			m.selfOrdinal = ordinal
+			continue
+		}
+
+		if existing, ok := m.peers[p.ID]; ok {
+			if existing.Metadata == nil {
+				existing.Metadata = make(map[string]string)
+			}
+			existing.Metadata["ordinal"] = strconv.Itoa(ordinal)
+			m.peers[p.ID] = existing
+		}
+	}
+}
+
+func (m *MDNSProvider) GetSelfOrdinal() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.selfOrdinal
+}
+
+func extractLaunchTimestamp(meta map[string]string) int64 {
+	if meta == nil {
+		return 0
+	}
+	ts, ok := meta[metadata.LaunchTimestampKey]
+	if !ok {
+		return 0
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		return 0
+	}
+	return parsed.UnixNano()
 }

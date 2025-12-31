@@ -49,10 +49,11 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 			name: "cluster_id_only_whitespace",
 			setupConfig: func() *Config {
 				config := &Config{
-					NodeID:   "test-node",
-					BindAddr: "127.0.0.1:7000",
-					DataDir:  "/tmp/test",
-					Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+					NodeID:    "test-node",
+					BindAddr:  "127.0.0.1:7000",
+					DataDir:   "/tmp/test",
+					Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+					Bootstrap: DefaultBootstrapConfig(),
 					Resources: ResourceConfig{
 						MaxConcurrentTotal: 10,
 					},
@@ -75,11 +76,12 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 					longID[i] = 'a'
 				}
 				return &Config{
-					NodeID:   "test-node",
-					Cluster:  ClusterConfig{ID: string(longID)},
-					BindAddr: "127.0.0.1:7000",
-					DataDir:  "/tmp/test",
-					Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+					NodeID:    "test-node",
+					Cluster:   ClusterConfig{ID: string(longID)},
+					BindAddr:  "127.0.0.1:7000",
+					DataDir:   "/tmp/test",
+					Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+					Bootstrap: DefaultBootstrapConfig(),
 					Resources: ResourceConfig{
 						MaxConcurrentTotal: 10,
 					},
@@ -95,11 +97,12 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 			name: "special_characters_in_ids",
 			setupConfig: func() *Config {
 				return &Config{
-					NodeID:   "node-with-特殊字符-and-émojis",
-					Cluster:  ClusterConfig{ID: "cluster-with-newlines\n\rand-tabs\t"},
-					BindAddr: "127.0.0.1:7000",
-					DataDir:  "/tmp/test",
-					Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+					NodeID:    "node-with-特殊字符-and-émojis",
+					Cluster:   ClusterConfig{ID: "cluster-with-newlines\n\rand-tabs\t"},
+					BindAddr:  "127.0.0.1:7000",
+					DataDir:   "/tmp/test",
+					Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+					Bootstrap: DefaultBootstrapConfig(),
 					Resources: ResourceConfig{
 						MaxConcurrentTotal: 10,
 					},
@@ -115,11 +118,12 @@ func TestConfig_AdversarialValidation(t *testing.T) {
 			name: "invalid_bind_address_format",
 			setupConfig: func() *Config {
 				return &Config{
-					NodeID:   "test-node",
-					Cluster:  ClusterConfig{ID: "test-cluster"},
-					BindAddr: "not-a-valid-address:port:extra",
-					DataDir:  "/tmp/test",
-					Logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
+					NodeID:    "test-node",
+					Cluster:   ClusterConfig{ID: "test-cluster"},
+					BindAddr:  "not-a-valid-address:port:extra",
+					DataDir:   "/tmp/test",
+					Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
+					Bootstrap: DefaultBootstrapConfig(),
 					Resources: ResourceConfig{
 						MaxConcurrentTotal: 10,
 					},

@@ -166,6 +166,10 @@ func (p *provider) Name() string {
 	return "inmemory"
 }
 
+func (p *provider) GetSelfOrdinal() int {
+	return -1
+}
+
 func cloneMetadata(input map[string]string) map[string]string {
 	if input == nil {
 		return nil

@@ -197,6 +197,79 @@ func TestManagerHealth(t *testing.T) {
 	assert.Greater(t, bootstrapDetails["timestamp"], int64(0))
 }
 
+func TestManagerBootstrapConfig(t *testing.T) {
+	t.Run("config creates correct BootstrapConfig", func(t *testing.T) {
+		config := domain.DefaultConfig()
+		config.NodeID = "test-node"
+		config.BindAddr = "127.0.0.1:9090"
+		config.DataDir = t.TempDir()
+		config.Bootstrap.ServiceName = "test-service"
+		config.Bootstrap.Ordinal = 1
+		config.Bootstrap.Replicas = 3
+		config.Bootstrap.BasePort = 7222
+
+		assert.Equal(t, "test-service", config.Bootstrap.ServiceName)
+		assert.Equal(t, 1, config.Bootstrap.Ordinal)
+		assert.Equal(t, 3, config.Bootstrap.Replicas)
+		assert.Equal(t, 7222, config.Bootstrap.BasePort)
+	})
+
+	t.Run("BootstrapConfig defaults are set correctly", func(t *testing.T) {
+		config := domain.DefaultBootstrapConfig()
+
+		assert.Equal(t, "graft", config.ServiceName)
+		assert.Equal(t, 0, config.Ordinal)
+		assert.Equal(t, 3, config.Replicas)
+		assert.Equal(t, 7946, config.BasePort)
+		assert.Equal(t, 30*time.Second, config.LeaderWaitTimeout)
+		assert.Equal(t, 60*time.Second, config.ReadyTimeout)
+		assert.Equal(t, 5*time.Second, config.StaleCheckInterval)
+		assert.True(t, config.FencingEnabled)
+	})
+}
+
+func TestManagerBootstrapConfigBuilder(t *testing.T) {
+	t.Run("WithBootstrap sets basic config", func(t *testing.T) {
+		config := domain.DefaultConfig()
+		config.WithBootstrap("my-service", 2, 5)
+
+		assert.Equal(t, "my-service", config.Bootstrap.ServiceName)
+		assert.Equal(t, 2, config.Bootstrap.Ordinal)
+		assert.Equal(t, 5, config.Bootstrap.Replicas)
+	})
+
+	t.Run("WithBootstrapFencing sets fencing config", func(t *testing.T) {
+		config := domain.DefaultConfig()
+		config.WithBootstrap("my-service", 0, 3)
+		config.WithBootstrapFencing("/path/to/key", 2)
+
+		assert.True(t, config.Bootstrap.FencingEnabled)
+		assert.Equal(t, "/path/to/key", config.Bootstrap.FencingKeyPath)
+		assert.Equal(t, 2, config.Bootstrap.FencingQuorum)
+	})
+
+	t.Run("WithBootstrapTLS sets TLS config", func(t *testing.T) {
+		config := domain.DefaultConfig()
+		config.WithBootstrap("my-service", 0, 3)
+		config.WithBootstrapTLS("/path/cert.pem", "/path/key.pem", "/path/ca.pem")
+
+		assert.True(t, config.Bootstrap.TLSEnabled)
+		assert.Equal(t, "/path/cert.pem", config.Bootstrap.TLSCertPath)
+		assert.Equal(t, "/path/key.pem", config.Bootstrap.TLSKeyPath)
+		assert.Equal(t, "/path/ca.pem", config.Bootstrap.TLSCAPath)
+	})
+
+	t.Run("WithBootstrapTimeouts sets timeout config", func(t *testing.T) {
+		config := domain.DefaultConfig()
+		config.WithBootstrap("my-service", 0, 3)
+		config.WithBootstrapTimeouts(45*time.Second, 90*time.Second, 60*time.Second)
+
+		assert.Equal(t, 45*time.Second, config.Bootstrap.LeaderWaitTimeout)
+		assert.Equal(t, 90*time.Second, config.Bootstrap.ReadyTimeout)
+		assert.Equal(t, 60*time.Second, config.Bootstrap.StaleCheckInterval)
+	})
+}
+
 func createBootstrapTestManager(t *testing.T) (*Manager, *mocks.MockRaftNode, *mocks.MockEnginePort) {
 	t.Helper()
 

@@ -18,6 +18,7 @@ type Config struct {
 	Engine         EngineConfig         `json:"engine" yaml:"engine"`
 	Orchestrator   OrchestratorConfig   `json:"orchestrator" yaml:"orchestrator"`
 	Cluster        ClusterConfig        `json:"cluster" yaml:"cluster"`
+	Bootstrap      BootstrapConfig      `json:"bootstrap" yaml:"bootstrap"`
 	Observability  ObservabilityConfig  `json:"observability" yaml:"observability"`
 	CircuitBreaker CircuitBreakerConfig `json:"circuit_breaker" yaml:"circuit_breaker"`
 	RateLimiter    RateLimiterConfig    `json:"rate_limiter" yaml:"rate_limiter"`
@@ -169,4 +170,33 @@ type TracingConfig struct {
 	Environment      string            `json:"environment" yaml:"environment"`
 	ResourceTags     map[string]string `json:"resource_tags,omitempty" yaml:"resource_tags,omitempty"`
 	MaxSpansPerTrace int               `json:"max_spans_per_trace" yaml:"max_spans_per_trace"`
+}
+
+type BootstrapConfig struct {
+	ServiceName string `json:"service_name" yaml:"service_name"`
+	Ordinal     int    `json:"ordinal" yaml:"ordinal"`
+	Replicas    int    `json:"replicas" yaml:"replicas"`
+
+	HeadlessService string `json:"headless_service,omitempty" yaml:"headless_service,omitempty"`
+	BasePort        int    `json:"base_port" yaml:"base_port"`
+
+	FencingEnabled  bool   `json:"fencing_enabled" yaml:"fencing_enabled"`
+	FencingKeyPath  string `json:"fencing_key_path,omitempty" yaml:"fencing_key_path,omitempty"`
+	FencingQuorum   int    `json:"fencing_quorum,omitempty" yaml:"fencing_quorum,omitempty"`
+
+	TLSEnabled  bool   `json:"tls_enabled" yaml:"tls_enabled"`
+	TLSCertPath string `json:"tls_cert_path,omitempty" yaml:"tls_cert_path,omitempty"`
+	TLSKeyPath  string `json:"tls_key_path,omitempty" yaml:"tls_key_path,omitempty"`
+	TLSCAPath   string `json:"tls_ca_path,omitempty" yaml:"tls_ca_path,omitempty"`
+
+	LeaderWaitTimeout  time.Duration `json:"leader_wait_timeout" yaml:"leader_wait_timeout"`
+	ReadyTimeout       time.Duration `json:"ready_timeout" yaml:"ready_timeout"`
+	StaleCheckInterval time.Duration `json:"stale_check_interval" yaml:"stale_check_interval"`
+
+	ForceBootstrapKeyPath  string `json:"force_bootstrap_key_path,omitempty" yaml:"force_bootstrap_key_path,omitempty"`
+	ForceBootstrapTokenDir string `json:"force_bootstrap_token_dir,omitempty" yaml:"force_bootstrap_token_dir,omitempty"`
+	RequireDedicatedKey    bool   `json:"require_dedicated_key" yaml:"require_dedicated_key"`
+
+	AdminAPIEnabled bool `json:"admin_api_enabled" yaml:"admin_api_enabled"`
+	AdminAPIPort    int  `json:"admin_api_port" yaml:"admin_api_port"`
 }

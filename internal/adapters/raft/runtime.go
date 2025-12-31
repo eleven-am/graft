@@ -105,6 +105,7 @@ type Runtime struct {
 	persistedMemberCount  int
 	expectedMemberCount   int
 	reconciliationState   string
+	needsJoin             bool
 }
 
 // NewRuntime constructs a runtime with the supplied dependencies.
@@ -206,10 +207,6 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 	if hasState {
 		r.deps.Logger.Info("existing raft state detected", "node_id", opts.NodeID)
 	} else {
-		if len(opts.Peers) > 0 {
-			opts.BootstrapMultiNode = true
-		}
-
 		if opts.BootstrapMultiNode {
 			servers := []raft.Server{{
 				ID:      raft.ServerID(opts.NodeID),
@@ -242,6 +239,14 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 					domain.WithContextDetail("peer_count", strconv.Itoa(len(opts.Peers))),
 				)
 			}
+		} else {
+			r.deps.Logger.Info("starting without bootstrap, will join existing cluster",
+				"node_id", opts.NodeID,
+				"peer_count", len(opts.Peers))
+			r.mu.Lock()
+			r.needsJoin = true
+			r.reconciliationState = "pending"
+			r.mu.Unlock()
 		}
 	}
 
@@ -513,6 +518,17 @@ func (r *Runtime) detectStaleConfig(instance *raft.Raft, opts domain.RaftControl
 			"expected_members", expectedCount,
 			"node_id", opts.NodeID,
 			"action", "reconciliation required")
+	} else if persistedCount > expectedCount {
+		r.mu.Lock()
+		r.needsJoin = true
+		r.reconciliationState = "pending"
+		r.mu.Unlock()
+
+		r.deps.Logger.Warn("node may have been removed from cluster while down",
+			"persisted_members", persistedCount,
+			"expected_members", expectedCount,
+			"node_id", opts.NodeID,
+			"action", "will attempt to rejoin cluster")
 	} else if persistedCount > 0 && persistedCount != expectedCount {
 		r.deps.Logger.Info("configuration member count mismatch",
 			"persisted_members", persistedCount,
@@ -524,7 +540,7 @@ func (r *Runtime) detectStaleConfig(instance *raft.Raft, opts domain.RaftControl
 func (r *Runtime) IsStaleReconciliationMode() bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return r.staleConfigDetected && r.reconciliationState == "pending"
+	return (r.staleConfigDetected || r.needsJoin) && r.reconciliationState == "pending"
 }
 
 func (r *Runtime) SetReconciliationState(state string) {
