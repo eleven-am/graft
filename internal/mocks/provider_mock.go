@@ -69,6 +69,51 @@ func (_c *MockProvider_Events_Call) RunAndReturn(run func() <-chan ports.Event) 
 	return _c
 }
 
+// GetSelfOrdinal provides a mock function with no fields
+func (_m *MockProvider) GetSelfOrdinal() int {
+	ret := _m.Called()
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetSelfOrdinal")
+	}
+
+	var r0 int
+	if rf, ok := ret.Get(0).(func() int); ok {
+		r0 = rf()
+	} else {
+		r0 = ret.Get(0).(int)
+	}
+
+	return r0
+}
+
+// MockProvider_GetSelfOrdinal_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetSelfOrdinal'
+type MockProvider_GetSelfOrdinal_Call struct {
+	*mock.Call
+}
+
+// GetSelfOrdinal is a helper method to define mock.On call
+func (_e *MockProvider_Expecter) GetSelfOrdinal() *MockProvider_GetSelfOrdinal_Call {
+	return &MockProvider_GetSelfOrdinal_Call{Call: _e.mock.On("GetSelfOrdinal")}
+}
+
+func (_c *MockProvider_GetSelfOrdinal_Call) Run(run func()) *MockProvider_GetSelfOrdinal_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run()
+	})
+	return _c
+}
+
+func (_c *MockProvider_GetSelfOrdinal_Call) Return(_a0 int) *MockProvider_GetSelfOrdinal_Call {
+	_c.Call.Return(_a0)
+	return _c
+}
+
+func (_c *MockProvider_GetSelfOrdinal_Call) RunAndReturn(run func() int) *MockProvider_GetSelfOrdinal_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // Name provides a mock function with no fields
 func (_m *MockProvider) Name() string {
 	ret := _m.Called()

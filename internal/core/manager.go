@@ -693,8 +693,10 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 				headlessSvc,
 				m.config.Bootstrap.BasePort)
 			leaderID = fmt.Sprintf("%s-0", m.config.Bootstrap.ServiceName)
+			grpcPort = strconv.Itoa(m.grpcPort)
 			m.logger.Debug("using K8s-style leader address (discovery fallback)",
-				"leader_addr", leaderAddr)
+				"leader_addr", leaderAddr,
+				"grpc_port", grpcPort)
 		}
 
 		peerMeta := make(map[string]string)
