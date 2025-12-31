@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -289,6 +290,29 @@ func (c *Config) WithClusterPersistence(persistenceFile string) *Config {
 }
 
 func (c *Config) WithBootstrap(serviceName string, ordinal, replicas int) *Config {
+	c.Bootstrap.ServiceName = serviceName
+	c.Bootstrap.Ordinal = ordinal
+	c.Bootstrap.Replicas = replicas
+	return c
+}
+
+func (c *Config) WithK8sBootstrap(replicas int) *Config {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return c
+	}
+
+	lastDash := strings.LastIndex(hostname, "-")
+	if lastDash == -1 || lastDash == len(hostname)-1 {
+		return c
+	}
+
+	serviceName := hostname[:lastDash]
+	ordinal, err := strconv.Atoi(hostname[lastDash+1:])
+	if err != nil {
+		return c
+	}
+
 	c.Bootstrap.ServiceName = serviceName
 	c.Bootstrap.Ordinal = ordinal
 	c.Bootstrap.Replicas = replicas

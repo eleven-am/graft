@@ -233,6 +233,11 @@ func (cb *ConfigBuilder) WithBootstrapInsecure() *ConfigBuilder {
 	return cb
 }
 
+func (cb *ConfigBuilder) WithK8sBootstrap(replicas int) *ConfigBuilder {
+	cb.config.WithK8sBootstrap(replicas)
+	return cb
+}
+
 // Build returns the constructed configuration.
 // This finalizes the configuration and returns it ready for use with NewWithConfig().
 func (cb *ConfigBuilder) Build() *Config {
