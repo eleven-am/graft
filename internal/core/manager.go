@@ -664,20 +664,20 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 	if !isOrdinalZero {
 		var leaderAddr string
 		var leaderID string
-		var grpcPort string
+		var grpcPortStr string
 		var foundFromDiscovery bool
 
 		for _, p := range discoveredPeers {
 			if ordStr, ok := p.Metadata["ordinal"]; ok && ordStr == "0" {
 				leaderAddr = fmt.Sprintf("%s:%d", p.Address, p.Port)
 				leaderID = fmt.Sprintf("%s-0", m.config.Bootstrap.ServiceName)
-				grpcPort = p.Metadata["grpc_port"]
+				grpcPortStr = p.Metadata["grpc_port"]
 				foundFromDiscovery = true
 				m.logger.Debug("found ordinal-0 via discovery",
 					"peer_id", p.ID,
 					"peer_address", p.Address,
 					"peer_port", p.Port,
-					"grpc_port", grpcPort,
+					"grpc_port", grpcPortStr,
 					"leader_addr", leaderAddr)
 				break
 			}
@@ -699,15 +699,15 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 				headlessSvc,
 				raftPort)
 			leaderID = fmt.Sprintf("%s-0", m.config.Bootstrap.ServiceName)
-			grpcPort = strconv.Itoa(m.grpcPort)
+			grpcPortStr = strconv.Itoa(grpcPort)
 			m.logger.Debug("using K8s-style leader address (discovery fallback)",
 				"leader_addr", leaderAddr,
-				"grpc_port", grpcPort)
+				"grpc_port", grpcPortStr)
 		}
 
 		peerMeta := make(map[string]string)
-		if grpcPort != "" {
-			peerMeta["grpc_port"] = grpcPort
+		if grpcPortStr != "" {
+			peerMeta["grpc_port"] = grpcPortStr
 		}
 		peers = []domain.RaftPeerSpec{{
 			ID:       leaderID,
@@ -717,7 +717,7 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 		m.logger.Debug("constructed peer for joining",
 			"leader_addr", leaderAddr,
 			"leader_id", leaderID,
-			"grpc_port", grpcPort,
+			"grpc_port", grpcPortStr,
 			"from_discovery", foundFromDiscovery)
 	}
 
