@@ -30,12 +30,19 @@ type DiscoveryType string
 const (
 	DiscoveryMDNS   DiscoveryType = "mdns"
 	DiscoveryStatic DiscoveryType = "static"
+	DiscoveryDNS    DiscoveryType = "dns"
 )
 
 type DiscoveryConfig struct {
 	Type   DiscoveryType `json:"type" yaml:"type"`
 	MDNS   *MDNSConfig   `json:"mdns,omitempty" yaml:"mdns,omitempty"`
 	Static []StaticPeer  `json:"static,omitempty" yaml:"static,omitempty"`
+	DNS    *DNSConfig    `json:"dns,omitempty" yaml:"dns,omitempty"`
+}
+
+type DNSConfig struct {
+	Hostname string `json:"hostname" yaml:"hostname"`
+	Port     int    `json:"port" yaml:"port"`
 }
 
 type MDNSConfig struct {

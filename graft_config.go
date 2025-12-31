@@ -21,6 +21,9 @@ type DiscoveryConfig = domain.DiscoveryConfig
 // MDNSConfig configures multicast DNS-based service discovery for local network environments.
 type MDNSConfig = domain.MDNSConfig
 
+// DNSConfig configures DNS-based service discovery using hostname lookups.
+type DNSConfig = domain.DNSConfig
+
 // StaticPeer represents a statically configured peer in the cluster.
 type StaticPeer = domain.StaticPeer
 
@@ -59,6 +62,9 @@ const (
 
 	// Static uses a predefined list of peers for service discovery.
 	Static = domain.DiscoveryStatic
+
+	// DNS enables DNS-based service discovery using hostname lookups.
+	DNS = domain.DiscoveryDNS
 )
 
 type ClusterPolicy = domain.ClusterPolicy
@@ -166,6 +172,18 @@ func (cb *ConfigBuilder) WithMDNS(service, domain, host string, disableIPv6 bool
 // Use this when you have a fixed set of known cluster members.
 func (cb *ConfigBuilder) WithStaticPeers(peers ...StaticPeer) *ConfigBuilder {
 	cb.config.WithStaticPeers(peers...)
+	return cb
+}
+
+// WithDNS configures DNS-based service discovery using hostname lookups.
+//
+// Parameters:
+//   - hostname: DNS hostname to resolve for peer discovery (e.g., "flow-headless.flow.svc.cluster.local")
+//   - port: Port number where peers listen for Raft communication
+//
+// Use this for Kubernetes headless services or any DNS-based service discovery.
+func (cb *ConfigBuilder) WithDNS(hostname string, port int) *ConfigBuilder {
+	cb.config.WithDNS(hostname, port)
 	return cb
 }
 

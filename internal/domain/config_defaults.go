@@ -242,6 +242,17 @@ func (c *Config) WithStaticPeers(peers ...StaticPeer) *Config {
 	return c
 }
 
+func (c *Config) WithDNS(hostname string, port int) *Config {
+	c.Discovery = append(c.Discovery, DiscoveryConfig{
+		Type: DiscoveryDNS,
+		DNS: &DNSConfig{
+			Hostname: hostname,
+			Port:     port,
+		},
+	})
+	return c
+}
+
 func (c *Config) WithTLS(certFile, keyFile, caFile string) *Config {
 	c.Transport.EnableTLS = true
 	c.Transport.TLSCertFile = certFile
