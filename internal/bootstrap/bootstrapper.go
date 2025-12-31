@@ -379,6 +379,12 @@ func (b *Bootstrapper) runStateLoop(ctx context.Context) {
 			}
 		case <-readyTimer.C:
 			if !readySignaled {
+				b.mu.RLock()
+				isWaitingForLeader := !b.leaderWaitStartTime.IsZero()
+				b.mu.RUnlock()
+				if isWaitingForLeader {
+					continue
+				}
 				b.signalReady(fmt.Errorf("ready timeout exceeded"))
 				readySignaled = true
 			}
@@ -509,9 +515,9 @@ func (b *Bootstrapper) handleUninitialized(ctx context.Context) {
 		b.logger.Warn("leader wait timeout, triggering fallback election")
 		b.triggerFallbackElection(ctx)
 	} else {
-		b.logger.Warn("leader wait timeout, no fallback election - proceeding with bootstrap")
-		if err := b.transitionState(StateBootstrapping, "leader wait timeout - insecure mode"); err != nil {
-			b.logger.Error("failed to transition to bootstrapping", slog.Any("error", err))
+		b.logger.Info("leader wait timeout, proceeding as follower (will join existing cluster)")
+		if err := b.transitionState(StateReady, "leader wait timeout - ready as follower"); err != nil {
+			b.logger.Error("failed to transition to ready", slog.Any("error", err))
 		}
 	}
 }
@@ -554,6 +560,9 @@ func (b *Bootstrapper) checkAndExecuteForceBootstrap(ctx context.Context) bool {
 }
 
 func (b *Bootstrapper) getOwnServerID() raft.ServerID {
+	if b.config.ServerID != "" {
+		return raft.ServerID(b.config.ServerID)
+	}
 	return raft.ServerID(fmt.Sprintf("%s-%d", b.config.ServiceName, b.config.Ordinal))
 }
 

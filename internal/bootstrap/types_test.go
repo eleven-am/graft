@@ -57,7 +57,7 @@ func TestNodeState_IsTerminal(t *testing.T) {
 
 func TestNodeState_CanTransitionTo(t *testing.T) {
 	validTransitions := map[NodeState][]NodeState{
-		StateUninitialized: {StateBootstrapping, StateJoining},
+		StateUninitialized: {StateBootstrapping, StateJoining, StateReady},
 		StateBootstrapping: {StateReady, StateFenced},
 		StateJoining:       {StateReady, StateFenced},
 		StateReady:         {StateRecovering, StateDegraded, StateFenced},
@@ -153,12 +153,12 @@ func TestClusterMeta_Validate(t *testing.T) {
 		}
 	})
 
-	t.Run("missing cluster_uuid in ready state", func(t *testing.T) {
+	t.Run("empty cluster_uuid allowed in ready state for followers", func(t *testing.T) {
 		meta := validMeta()
 		meta.ClusterUUID = ""
 		meta.State = StateReady
-		if err := meta.Validate(); err == nil {
-			t.Error("Validate() should fail for missing cluster_uuid in ready state")
+		if err := meta.Validate(); err != nil {
+			t.Errorf("Validate() = %v, want nil for empty cluster_uuid in ready state (followers)", err)
 		}
 	})
 

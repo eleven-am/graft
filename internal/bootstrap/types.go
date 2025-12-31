@@ -35,7 +35,7 @@ func (s NodeState) IsTerminal() bool {
 func (s NodeState) CanTransitionTo(target NodeState) bool {
 	switch s {
 	case StateUninitialized:
-		return target == StateBootstrapping || target == StateJoining
+		return target == StateBootstrapping || target == StateJoining || target == StateReady
 	case StateBootstrapping:
 		return target == StateReady || target == StateFenced
 	case StateJoining:
@@ -105,8 +105,8 @@ func (m *ClusterMeta) Validate() error {
 	if m.Version > CurrentMetaVersion {
 		return fmt.Errorf("unsupported meta version %d (max supported: %d)", m.Version, CurrentMetaVersion)
 	}
-	if m.ClusterUUID == "" && m.State != StateUninitialized {
-		return fmt.Errorf("cluster_uuid is required except in uninitialized state")
+	if m.ClusterUUID == "" && m.State != StateUninitialized && m.State != StateReady {
+		return fmt.Errorf("cluster_uuid is required except in uninitialized or ready state")
 	}
 	if m.ServerID == "" {
 		return fmt.Errorf("server_id is required")

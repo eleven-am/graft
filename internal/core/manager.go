@@ -632,7 +632,18 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 			"peer_port", p.Port)
 	}
 
-	if !isClusterInitiator {
+	if isClusterInitiator {
+		for _, p := range discoveredPeers {
+			peerAddr := fmt.Sprintf("%s:%d", p.Address, p.Port)
+			peers = append(peers, domain.RaftPeerSpec{
+				ID:      p.ID,
+				Address: peerAddr,
+			})
+			m.logger.Debug("adding discovered peer to initial cluster",
+				"peer_id", p.ID,
+				"peer_address", peerAddr)
+		}
+	} else {
 		lowestPeer := findLowestServerIDPeer(discoveredPeers, string(serverID))
 		if lowestPeer != nil {
 			peerAddr := fmt.Sprintf("%s:%d", lowestPeer.Address, lowestPeer.Port)
@@ -1636,6 +1647,7 @@ func (m *Manager) buildBootstrapConfig(grpcPort int) *bootstrap.BootstrapConfig 
 		ServiceName:       m.config.Bootstrap.ServiceName,
 		DataDir:           m.config.DataDir,
 		Ordinal:           m.config.Bootstrap.Ordinal,
+		ServerID:          m.nodeID,
 		ExpectedNodes:     m.config.Bootstrap.Replicas,
 		MinQuorum:         (m.config.Bootstrap.Replicas / 2) + 1,
 		RaftPort:          raftPort,

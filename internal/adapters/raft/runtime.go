@@ -212,6 +212,15 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 				ID:      raft.ServerID(opts.NodeID),
 				Address: advertise,
 			}}
+			for _, peer := range opts.Peers {
+				servers = append(servers, raft.Server{
+					ID:      raft.ServerID(peer.ID),
+					Address: raft.ServerAddress(peer.Address),
+				})
+			}
+			r.deps.Logger.Info("bootstrapping multi-node cluster",
+				"node_id", opts.NodeID,
+				"total_servers", len(servers))
 			if err := raft.BootstrapCluster(config, storage.LogStore, storage.StableStore, storage.SnapshotStore, transport, raft.Configuration{Servers: servers}); err != nil && !errors.Is(err, raft.ErrCantBootstrap) {
 				cancel()
 				r.closeTransport(transport)
@@ -441,7 +450,12 @@ func (r *Runtime) buildExpectedAddresses(expectedPeers []domain.RaftPeerSpec, ra
 
 	expectedAddrs := make(map[raft.ServerID]raft.ServerAddress)
 	for _, peer := range expectedPeers {
-		expectedAddrs[raft.ServerID(peer.ID)] = normalizeRaftAddress(peer.Address, raftPort)
+		_, portStr, err := net.SplitHostPort(peer.Address)
+		if err == nil && portStr != "" {
+			expectedAddrs[raft.ServerID(peer.ID)] = raft.ServerAddress(peer.Address)
+		} else {
+			expectedAddrs[raft.ServerID(peer.ID)] = normalizeRaftAddress(peer.Address, raftPort)
+		}
 	}
 	if _, hasSelf := expectedAddrs[raft.ServerID(selfID)]; !hasSelf {
 		host, _, err := net.SplitHostPort(string(advertise))

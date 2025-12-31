@@ -135,7 +135,6 @@ func TestStateMachine_TransitionTo_Invalid(t *testing.T) {
 		to   NodeState
 	}{
 		{"ready to bootstrapping", StateReady, StateBootstrapping},
-		{"uninitialized to ready", StateUninitialized, StateReady},
 		{"recovering to uninitialized", StateRecovering, StateUninitialized},
 		{"fenced to recovering", StateFenced, StateRecovering},
 	}

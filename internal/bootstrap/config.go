@@ -16,6 +16,7 @@ type BootstrapConfig struct {
 	PodName     string `json:"pod_name" yaml:"pod_name"`
 	DataDir     string `json:"data_dir" yaml:"data_dir"`
 	Ordinal     int    `json:"ordinal" yaml:"ordinal"`
+	ServerID    string `json:"server_id,omitempty" yaml:"server_id,omitempty"`
 
 	ExpectedNodes int `json:"expected_nodes" yaml:"expected_nodes"`
 	MinQuorum     int `json:"min_quorum" yaml:"min_quorum"`
