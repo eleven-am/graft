@@ -233,8 +233,8 @@ func (cb *ConfigBuilder) WithBootstrapInsecure() *ConfigBuilder {
 	return cb
 }
 
-func (cb *ConfigBuilder) WithK8sBootstrap(replicas int) *ConfigBuilder {
-	cb.config.WithK8sBootstrap(replicas)
+func (cb *ConfigBuilder) WithK8sBootstrap(replicas int, headlessService string) *ConfigBuilder {
+	cb.config.WithK8sBootstrap(replicas, headlessService)
 	return cb
 }
 

@@ -296,7 +296,7 @@ func (c *Config) WithBootstrap(serviceName string, ordinal, replicas int) *Confi
 	return c
 }
 
-func (c *Config) WithK8sBootstrap(replicas int) *Config {
+func (c *Config) WithK8sBootstrap(replicas int, headlessService string) *Config {
 	hostname, err := os.Hostname()
 	if err != nil {
 		return c
@@ -314,6 +314,7 @@ func (c *Config) WithK8sBootstrap(replicas int) *Config {
 	}
 
 	c.Bootstrap.ServiceName = serviceName
+	c.Bootstrap.HeadlessService = headlessService
 	c.Bootstrap.Ordinal = ordinal
 	c.Bootstrap.Replicas = replicas
 	return c
