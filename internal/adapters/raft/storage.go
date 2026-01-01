@@ -56,16 +56,7 @@ func NewStorage(cfg StorageConfig, logger *slog.Logger) (*Storage, error) {
 	}
 
 	logPath := filepath.Join(cfg.DataDir, "raft-log")
-	snapshotPath := filepath.Join(cfg.DataDir, "snapshots")
 	statePath := filepath.Join(cfg.DataDir, "state")
-
-	if err := os.MkdirAll(snapshotPath, 0o755); err != nil {
-		return nil, newRaftStorageError(
-			"failed to create snapshot directory",
-			err,
-			domain.WithContextDetail("snapshot_dir", snapshotPath),
-		)
-	}
 
 	logOpts := badger.DefaultOptions(logPath)
 	logOpts.Logger = &badgerAdapter{logger: logger.With("component", "raft.badger-log")}
@@ -86,13 +77,13 @@ func NewStorage(cfg StorageConfig, logger *slog.Logger) (*Storage, error) {
 		)
 	}
 
-	snapshotStore, err := raft.NewFileSnapshotStore(snapshotPath, 2, os.Stderr)
+	snapshotStore, err := raft.NewFileSnapshotStore(cfg.DataDir, 2, os.Stderr)
 	if err != nil {
 		_ = store.Close()
 		return nil, newRaftStorageError(
 			"failed to open snapshot store",
 			err,
-			domain.WithContextDetail("snapshot_dir", snapshotPath),
+			domain.WithContextDetail("snapshot_dir", cfg.DataDir),
 		)
 	}
 
