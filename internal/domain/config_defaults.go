@@ -326,14 +326,24 @@ func (c *Config) WithK8sBootstrap(replicas int, headlessService string) *Config 
 		return c
 	}
 
+	_, portStr, err := net.SplitHostPort(c.BindAddr)
+	if err != nil {
+		return c
+	}
+
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		return c
+	}
+
 	c.Bootstrap.ServiceName = serviceName
 	c.Bootstrap.HeadlessService = headlessService
 	c.Bootstrap.Ordinal = ordinal
 	c.Bootstrap.Replicas = replicas
 
-	c.AdvertiseAddr = fmt.Sprintf("%s.%s:%d", hostname, headlessService, c.Bootstrap.BasePort)
+	c.AdvertiseAddr = fmt.Sprintf("%s.%s:%d", hostname, headlessService, port)
 
-	c.WithDNS(headlessService, c.Bootstrap.BasePort, "raft")
+	c.WithDNS(headlessService, port, "raft")
 
 	return c
 }
