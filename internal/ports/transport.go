@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"github.com/eleven-am/graft/internal/domain"
+	"google.golang.org/grpc"
 )
 
 type TransportPort interface {
@@ -13,6 +14,7 @@ type TransportPort interface {
 	RegisterEngine(engine EnginePort)
 	RegisterRaft(raft RaftNode)
 	RegisterLoadSink(sink LoadSink)
+	RegisterService(registrar func(*grpc.Server))
 
 	SendTrigger(ctx context.Context, nodeAddr string, trigger domain.WorkflowTrigger) error
 	SendJoinRequest(ctx context.Context, nodeAddr string, request *JoinRequest) (*JoinResponse, error)

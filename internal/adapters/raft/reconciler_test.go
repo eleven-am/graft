@@ -9,6 +9,7 @@ import (
 
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/ports"
+	"google.golang.org/grpc"
 )
 
 type mockTransportForReconciler struct {
@@ -71,6 +72,7 @@ func (m *mockTransportForReconciler) SendPublishLoad(ctx context.Context, nodeAd
 func (m *mockTransportForReconciler) SendTrigger(ctx context.Context, nodeAddr string, trigger domain.WorkflowTrigger) error {
 	return nil
 }
+func (m *mockTransportForReconciler) RegisterService(registrar func(*grpc.Server)) {}
 
 func TestReconciler_State_InitialPending(t *testing.T) {
 	t.Parallel()

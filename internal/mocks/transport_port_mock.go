@@ -6,6 +6,8 @@ import (
 	context "context"
 
 	domain "github.com/eleven-am/graft/internal/domain"
+	grpc "google.golang.org/grpc"
+
 	mock "github.com/stretchr/testify/mock"
 
 	ports "github.com/eleven-am/graft/internal/ports"
@@ -183,6 +185,39 @@ func (_c *MockTransportPort_RegisterRaft_Call) Return() *MockTransportPort_Regis
 }
 
 func (_c *MockTransportPort_RegisterRaft_Call) RunAndReturn(run func(ports.RaftNode)) *MockTransportPort_RegisterRaft_Call {
+	_c.Run(run)
+	return _c
+}
+
+// RegisterService provides a mock function with given fields: registrar
+func (_m *MockTransportPort) RegisterService(registrar func(*grpc.Server)) {
+	_m.Called(registrar)
+}
+
+// MockTransportPort_RegisterService_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RegisterService'
+type MockTransportPort_RegisterService_Call struct {
+	*mock.Call
+}
+
+// RegisterService is a helper method to define mock.On call
+//   - registrar func(*grpc.Server)
+func (_e *MockTransportPort_Expecter) RegisterService(registrar interface{}) *MockTransportPort_RegisterService_Call {
+	return &MockTransportPort_RegisterService_Call{Call: _e.mock.On("RegisterService", registrar)}
+}
+
+func (_c *MockTransportPort_RegisterService_Call) Run(run func(registrar func(*grpc.Server))) *MockTransportPort_RegisterService_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(func(*grpc.Server)))
+	})
+	return _c
+}
+
+func (_c *MockTransportPort_RegisterService_Call) Return() *MockTransportPort_RegisterService_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockTransportPort_RegisterService_Call) RunAndReturn(run func(func(*grpc.Server))) *MockTransportPort_RegisterService_Call {
 	_c.Run(run)
 	return _c
 }

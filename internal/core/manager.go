@@ -34,9 +34,11 @@ import (
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/helpers/metadata"
 	"github.com/eleven-am/graft/internal/ports"
+	pb "github.com/eleven-am/graft/internal/proto"
 	"github.com/eleven-am/graft/internal/readiness"
 
 	"github.com/dgraph-io/badger/v3"
+	"google.golang.org/grpc"
 )
 
 type Manager struct {
@@ -457,11 +459,6 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	if sink, ok := m.loadBalancer.(ports.LoadSink); ok {
 		m.transport.RegisterLoadSink(sink)
 	}
-	m.grpcPort = grpcPort
-
-	if err := m.transport.Start(m.ctx, m.config.BindAddr, grpcPort); err != nil {
-		return err
-	}
 
 	if m.watchers != nil {
 		wctx, wcancel := context.WithCancel(m.ctx)
@@ -552,6 +549,7 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 	}
 
 	bootstrapConfig := m.buildBootstrapConfig(grpcPort)
+	bootstrapConfig.TLS.AllowInsecure = true
 	metaStore := bootstrap.NewFileMetaStore(m.config.DataDir, m.logger)
 	stateMachine, err := bootstrap.NewStateMachine(bootstrap.StateMachineDeps{
 		MetaStore: metaStore,
@@ -566,11 +564,52 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 		)
 	}
 
+	bootstrapServer := bootstrap.NewBootstrapServer(bootstrap.BootstrapServerDeps{
+		Config:    bootstrapConfig,
+		MetaStore: metaStore,
+		LocalMeta: func() *bootstrap.ClusterMeta {
+			if m.bootstrapper != nil {
+				return m.bootstrapper.GetMeta()
+			}
+			return nil
+		},
+		Logger: m.logger,
+	})
+
+	m.transport.RegisterService(func(s *grpc.Server) {
+		pb.RegisterBootstrapServiceServer(s, bootstrapServer)
+	})
+
+	m.grpcPort = grpcPort
+	if err := m.transport.Start(m.ctx, m.config.BindAddr, grpcPort); err != nil {
+		return domain.NewDomainErrorWithCategory(
+			domain.CategoryNetwork,
+			"failed to start transport for bootstrap",
+			err,
+			domain.WithComponent("core.Manager.startBootstrap"),
+		)
+	}
+
+	secureTransport, err := bootstrap.NewSecureTransport(bootstrap.SecureTransportDeps{
+		Config:    bootstrapConfig,
+		MetaStore: metaStore,
+		Logger:    m.logger,
+	})
+	if err != nil {
+		return domain.NewDomainErrorWithCategory(
+			domain.CategoryNetwork,
+			"failed to create bootstrap transport",
+			err,
+			domain.WithComponent("core.Manager.startBootstrap"),
+		)
+	}
+
 	m.bootstrapper = bootstrap.NewBootstrapper(bootstrap.BootstrapperDeps{
 		Config:       bootstrapConfig,
 		MetaStore:    metaStore,
 		StateMachine: stateMachine,
 		Seeder:       m.seeder,
+		Transport:    secureTransport,
 		Logger:       m.logger,
 	})
 

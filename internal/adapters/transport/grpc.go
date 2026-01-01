@@ -29,8 +29,9 @@ type GRPCTransport struct {
 	raft     ports.RaftNode
 	loadSink ports.LoadSink
 
-	address string
-	port    int
+	address    string
+	port       int
+	registrars []func(*grpc.Server)
 
 	cfg domain.TransportConfig
 }
@@ -108,6 +109,10 @@ func (t *GRPCTransport) Start(ctx context.Context, bindAddr string, port int) er
 	t.server = grpc.NewServer(serverOpts...)
 	pb.RegisterGraftNodeServer(t.server, t)
 
+	for _, registrar := range t.registrars {
+		registrar(t.server)
+	}
+
 	actualAddr := listener.Addr().String()
 	t.logger.Info("starting gRPC transport", "address", actualAddr)
 
@@ -141,6 +146,10 @@ func (t *GRPCTransport) RegisterRaft(raft ports.RaftNode) {
 
 func (t *GRPCTransport) RegisterLoadSink(sink ports.LoadSink) {
 	t.loadSink = sink
+}
+
+func (t *GRPCTransport) RegisterService(registrar func(*grpc.Server)) {
+	t.registrars = append(t.registrars, registrar)
 }
 
 func (t *GRPCTransport) ProcessTrigger(ctx context.Context, req *pb.TriggerRequest) (*pb.TriggerResponse, error) {
