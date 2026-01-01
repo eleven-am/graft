@@ -1365,8 +1365,8 @@ func (r *Runtime) WaitForConfiguration(ctx context.Context, minMembers int) erro
 func (r *Runtime) clearExistingState(dataDir string) error {
 	raftDir := filepath.Join(dataDir, "raft")
 	if _, err := os.Stat(raftDir); err == nil {
-		if err := os.RemoveAll(raftDir); err != nil {
-			return fmt.Errorf("remove raft dir: %w", err)
+		if err := removeContents(raftDir); err != nil {
+			return fmt.Errorf("clear raft dir contents: %w", err)
 		}
 	}
 
@@ -1377,5 +1377,30 @@ func (r *Runtime) clearExistingState(dataDir string) error {
 		}
 	}
 
+	return nil
+}
+
+func removeContents(dir string) error {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
+		if entry.IsDir() {
+			if err := os.RemoveAll(path); err != nil {
+				if err := removeContents(path); err != nil {
+					return err
+				}
+				if err := os.Remove(path); err != nil {
+					return err
+				}
+			}
+		} else {
+			if err := os.Remove(path); err != nil {
+				return err
+			}
+		}
+	}
 	return nil
 }
