@@ -481,6 +481,16 @@ func validateDiscoveryConfig(config *DiscoveryConfig) error {
 				return NewConfigError("static.port", ErrInvalidInput)
 			}
 		}
+	case DiscoveryDNS:
+		if config.DNS == nil {
+			return NewConfigError("dns", ErrInvalidInput)
+		}
+		if config.DNS.Hostname == "" {
+			return NewConfigError("dns.hostname", ErrInvalidInput)
+		}
+		if config.DNS.Port <= 0 || config.DNS.Port > 65535 {
+			return NewConfigError("dns.port", ErrInvalidInput)
+		}
 	default:
 		return NewConfigError("discovery.type", ErrInvalidInput)
 	}
