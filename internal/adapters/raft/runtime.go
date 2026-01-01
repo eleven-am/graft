@@ -1403,17 +1403,27 @@ func removeContents(dir string, logger *slog.Logger) error {
 				if err := removeContents(path, logger); err != nil {
 					return err
 				}
-				if err := os.Remove(path); err != nil && !strings.Contains(err.Error(), "device or resource busy") {
-					logger.Warn("failed to remove directory", "path", path, "error", err)
-					return err
+				if err := os.Remove(path); err != nil {
+					if !isIgnorableRemoveError(err) {
+						logger.Warn("failed to remove directory", "path", path, "error", err)
+						return err
+					}
 				}
 			}
 		} else {
-			if err := os.Remove(path); err != nil && !strings.Contains(err.Error(), "device or resource busy") {
-				logger.Warn("failed to remove file", "path", path, "error", err)
-				return err
+			if err := os.Remove(path); err != nil {
+				if !isIgnorableRemoveError(err) {
+					logger.Warn("failed to remove file", "path", path, "error", err)
+					return err
+				}
 			}
 		}
 	}
 	return nil
+}
+
+func isIgnorableRemoveError(err error) bool {
+	msg := err.Error()
+	return strings.Contains(msg, "device or resource busy") ||
+		strings.Contains(msg, "directory not empty")
 }
