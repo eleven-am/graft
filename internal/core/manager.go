@@ -640,6 +640,9 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 
 	if isClusterInitiator {
 		for _, p := range discoveredPeers {
+			if p.ID == string(serverID) {
+				continue
+			}
 			peerAddr := fmt.Sprintf("%s:%d", p.Address, p.Port)
 			peers = append(peers, domain.RaftPeerSpec{
 				ID:      p.ID,

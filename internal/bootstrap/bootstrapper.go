@@ -475,18 +475,20 @@ func (b *Bootstrapper) handleUninitialized(ctx context.Context) {
 	quorum := b.config.CalculateQuorum()
 	peersNeeded := quorum - 1
 
-	if len(b.discoveredPeers) < peersNeeded {
+	myServerID := b.getOwnServerID()
+	otherPeers := b.countOtherPeers(myServerID)
+
+	if otherPeers < peersNeeded {
 		b.logger.Debug("waiting for quorum peers before bootstrap decision",
-			slog.Int("discovered", len(b.discoveredPeers)),
+			slog.Int("discovered", otherPeers),
 			slog.Int("needed", peersNeeded))
 		return
 	}
 
-	myServerID := b.getOwnServerID()
 	if b.isLowestServerID(myServerID) {
 		b.logger.Info("initiating bootstrap (lowest ServerID)",
 			slog.String("server_id", string(myServerID)),
-			slog.Int("discovered_peers", len(b.discoveredPeers)),
+			slog.Int("discovered_peers", otherPeers),
 			slog.Int("quorum_size", quorum))
 
 		if err := b.transitionState(StateBootstrapping, "lowest ServerID initiating bootstrap"); err != nil {
@@ -575,12 +577,26 @@ func (b *Bootstrapper) isLowestServerID(myID raft.ServerID) bool {
 	return true
 }
 
+func (b *Bootstrapper) countOtherPeers(myID raft.ServerID) int {
+	count := 0
+	for _, peer := range b.discoveredPeers {
+		if peer.ID != "" && peer.ID != string(myID) {
+			count++
+		}
+	}
+	return count
+}
+
 func (b *Bootstrapper) findExistingCluster(ctx context.Context) *ClusterMeta {
 	if b.transport == nil {
 		return nil
 	}
 
+	myID := string(b.getOwnServerID())
 	for _, peer := range b.discoveredPeers {
+		if peer.ID == myID {
+			continue
+		}
 		addr := fmt.Sprintf("%s:%d", peer.Address, peer.Port)
 		probeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		meta, err := b.transport.GetClusterMeta(probeCtx, addr)
@@ -890,8 +906,12 @@ func (b *Bootstrapper) countReachablePeers(ctx context.Context) int {
 		return 0
 	}
 
+	myID := string(b.getOwnServerID())
 	count := 0
 	for _, peer := range b.discoveredPeers {
+		if peer.ID == myID {
+			continue
+		}
 		addr := fmt.Sprintf("%s:%d", peer.Address, peer.Port)
 		probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		_, err := b.transport.GetFencingEpoch(probeCtx, addr)
