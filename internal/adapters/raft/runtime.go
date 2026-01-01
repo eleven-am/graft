@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -1386,18 +1387,22 @@ func removeContents(dir string) error {
 		return err
 	}
 	for _, entry := range entries {
-		path := filepath.Join(dir, entry.Name())
+		name := entry.Name()
+		if strings.HasPrefix(name, ".nfs") {
+			continue
+		}
+		path := filepath.Join(dir, name)
 		if entry.IsDir() {
 			if err := os.RemoveAll(path); err != nil {
 				if err := removeContents(path); err != nil {
 					return err
 				}
-				if err := os.Remove(path); err != nil {
+				if err := os.Remove(path); err != nil && !strings.Contains(err.Error(), "device or resource busy") {
 					return err
 				}
 			}
 		} else {
-			if err := os.Remove(path); err != nil {
+			if err := os.Remove(path); err != nil && !strings.Contains(err.Error(), "device or resource busy") {
 				return err
 			}
 		}
