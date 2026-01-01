@@ -485,19 +485,29 @@ func (b *Bootstrapper) handleUninitialized(ctx context.Context) {
 	peersNeeded := quorum - 1
 
 	myServerID := b.getOwnServerID()
-	otherPeers := b.countOtherPeers(myServerID)
+	discoveredPeers := b.countOtherPeers(myServerID)
+	reachablePeers := b.countPeersWithRaftAddr(myServerID)
 
-	if otherPeers < peersNeeded {
+	if discoveredPeers < peersNeeded {
 		b.logger.Debug("waiting for quorum peers before bootstrap decision",
-			slog.Int("discovered", otherPeers),
+			slog.Int("discovered", discoveredPeers),
 			slog.Int("needed", peersNeeded))
 		return
 	}
 
 	if b.isLowestServerID(myServerID) {
+		if b.transport != nil && reachablePeers < peersNeeded {
+			b.logger.Debug("waiting for reachable peers before bootstrap",
+				slog.Int("discovered", discoveredPeers),
+				slog.Int("reachable", reachablePeers),
+				slog.Int("needed", peersNeeded))
+			return
+		}
+
 		b.logger.Info("initiating bootstrap (lowest ServerID)",
 			slog.String("server_id", string(myServerID)),
-			slog.Int("discovered_peers", otherPeers),
+			slog.Int("discovered_peers", discoveredPeers),
+			slog.Int("reachable_peers", reachablePeers),
 			slog.Int("quorum_size", quorum))
 
 		if err := b.transitionState(StateBootstrapping, "lowest ServerID initiating bootstrap"); err != nil {
@@ -591,6 +601,20 @@ func (b *Bootstrapper) countOtherPeers(myID raft.ServerID) int {
 	for _, peer := range b.discoveredPeers {
 		if peer.ID != "" && peer.ID != string(myID) {
 			count++
+		}
+	}
+	return count
+}
+
+func (b *Bootstrapper) countPeersWithRaftAddr(myID raft.ServerID) int {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	count := 0
+	for _, peer := range b.discoveredPeers {
+		if peer.ID != "" && peer.ID != string(myID) {
+			if _, ok := b.peerRaftAddresses[peer.ID]; ok {
+				count++
+			}
 		}
 	}
 	return count
