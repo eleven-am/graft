@@ -159,6 +159,7 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 
 	if opts.IgnoreExistingState {
 		if err := r.clearExistingState(opts.DataDir); err != nil {
+			r.deps.Logger.Error("clearExistingState failed", "error", err, "data_dir", opts.DataDir)
 			cancel()
 			return r.raftError("failed to clear existing state", err)
 		}
@@ -1366,13 +1367,15 @@ func (r *Runtime) WaitForConfiguration(ctx context.Context, minMembers int) erro
 func (r *Runtime) clearExistingState(dataDir string) error {
 	raftDir := filepath.Join(dataDir, "raft")
 	if _, err := os.Stat(raftDir); err == nil {
-		if err := removeContents(raftDir); err != nil {
+		r.deps.Logger.Debug("clearing raft directory", "path", raftDir)
+		if err := removeContents(raftDir, r.deps.Logger); err != nil {
 			return fmt.Errorf("clear raft dir contents: %w", err)
 		}
 	}
 
 	clusterMeta := filepath.Join(dataDir, "cluster_meta.json")
 	if _, err := os.Stat(clusterMeta); err == nil {
+		r.deps.Logger.Debug("removing cluster meta", "path", clusterMeta)
 		if err := os.Remove(clusterMeta); err != nil {
 			return fmt.Errorf("remove cluster meta: %w", err)
 		}
@@ -1381,28 +1384,33 @@ func (r *Runtime) clearExistingState(dataDir string) error {
 	return nil
 }
 
-func removeContents(dir string) error {
+func removeContents(dir string, logger *slog.Logger) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
+		logger.Warn("failed to read directory", "path", dir, "error", err)
 		return err
 	}
 	for _, entry := range entries {
 		name := entry.Name()
 		if strings.HasPrefix(name, ".nfs") {
+			logger.Debug("skipping nfs file", "name", name)
 			continue
 		}
 		path := filepath.Join(dir, name)
 		if entry.IsDir() {
 			if err := os.RemoveAll(path); err != nil {
-				if err := removeContents(path); err != nil {
+				logger.Debug("RemoveAll failed, trying recursive", "path", path, "error", err)
+				if err := removeContents(path, logger); err != nil {
 					return err
 				}
 				if err := os.Remove(path); err != nil && !strings.Contains(err.Error(), "device or resource busy") {
+					logger.Warn("failed to remove directory", "path", path, "error", err)
 					return err
 				}
 			}
 		} else {
 			if err := os.Remove(path); err != nil && !strings.Contains(err.Error(), "device or resource busy") {
+				logger.Warn("failed to remove file", "path", path, "error", err)
 				return err
 			}
 		}
