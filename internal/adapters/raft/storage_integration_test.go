@@ -86,3 +86,53 @@ func TestStorage_HasExistingStateWorks(t *testing.T) {
 		t.Error("expected no existing state on fresh storage")
 	}
 }
+
+func TestStorage_InMemoryStorageWorks(t *testing.T) {
+	logger := slog.Default()
+
+	storage, err := NewInMemoryStorage(logger)
+	if err != nil {
+		t.Fatalf("NewInMemoryStorage failed: %v", err)
+	}
+	defer storage.Close()
+
+	if !storage.inMemory {
+		t.Error("expected inMemory flag to be true")
+	}
+
+	resources := storage.resources()
+	if resources.LogStore == nil {
+		t.Error("expected LogStore to be non-nil")
+	}
+	if resources.StableStore == nil {
+		t.Error("expected StableStore to be non-nil")
+	}
+	if resources.SnapshotStore == nil {
+		t.Error("expected SnapshotStore to be non-nil")
+	}
+	if resources.StateDB == nil {
+		t.Error("expected StateDB to be non-nil")
+	}
+
+	hasState, err := raft.HasExistingState(storage.logStore, storage.stableStore, storage.snapshotStore)
+	if err != nil {
+		t.Fatalf("HasExistingState failed: %v", err)
+	}
+	if hasState {
+		t.Error("expected no existing state on fresh in-memory storage")
+	}
+}
+
+func TestStorage_InMemoryViaConfigFlag(t *testing.T) {
+	logger := slog.Default()
+
+	storage, err := NewStorage(StorageConfig{InMemory: true}, logger)
+	if err != nil {
+		t.Fatalf("NewStorage with InMemory=true failed: %v", err)
+	}
+	defer storage.Close()
+
+	if !storage.inMemory {
+		t.Error("expected inMemory flag to be true when using config flag")
+	}
+}

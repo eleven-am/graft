@@ -27,6 +27,7 @@ type Config struct {
 	TrailingLogs        uint64
 	LeaderLeaseTimeout  time.Duration
 	IgnoreExistingState bool
+	InMemoryStorage     bool
 }
 
 // DefaultRaftConfig reproduces the old helper so existing callers continue to

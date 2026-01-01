@@ -22,6 +22,14 @@ func (p *BadgerStorageProvider) Create(_ context.Context, opts domain.RaftContro
 		logger = slog.Default()
 	}
 
+	if opts.InMemoryStorage {
+		storage, err := NewInMemoryStorage(logger)
+		if err != nil {
+			return nil, fmt.Errorf("raft: in-memory storage init failed: %w", err)
+		}
+		return storage.resources(), nil
+	}
+
 	dataDir := opts.DataDir
 	if dataDir == "" {
 		return nil, fmt.Errorf("raft: data directory not provided")

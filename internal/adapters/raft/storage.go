@@ -15,12 +15,13 @@ import (
 	raftbadger "github.com/rfyiamcool/raft-badger"
 )
 
-// Storage encapsulates the on-disk resources backing a raft node.
+// Storage encapsulates the resources backing a raft node.
 type Storage struct {
 	logStore      raft.LogStore
 	stableStore   raft.StableStore
 	snapshotStore raft.SnapshotStore
 	stateDB       *badger.DB
+	inMemory      bool
 }
 
 const storageComponent = "adapters.raft.Storage"
@@ -35,10 +36,40 @@ func newRaftStorageError(message string, cause error, opts ...domain.ErrorOption
 
 // StorageConfig captures the directories used by the storage implementation.
 type StorageConfig struct {
-	DataDir string
+	DataDir  string
+	InMemory bool
+}
+
+func NewInMemoryStorage(logger *slog.Logger) (*Storage, error) {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	inmemStore := raft.NewInmemStore()
+	snapshotStore := raft.NewInmemSnapshotStore()
+
+	stateOpts := badger.DefaultOptions("")
+	stateOpts.InMemory = true
+	stateOpts.Logger = &badgerAdapter{logger: logger.With("component", "raft.badger-state")}
+
+	stateDB, err := badger.Open(stateOpts)
+	if err != nil {
+		return nil, newRaftStorageError("failed to open in-memory state database", err)
+	}
+
+	return &Storage{
+		logStore:      wrapLogStore(inmemStore),
+		stableStore:   wrapStableStore(inmemStore),
+		snapshotStore: snapshotStore,
+		stateDB:       stateDB,
+		inMemory:      true,
+	}, nil
 }
 
 func NewStorage(cfg StorageConfig, logger *slog.Logger) (*Storage, error) {
+	if cfg.InMemory {
+		return NewInMemoryStorage(logger)
+	}
 	if logger == nil {
 		logger = slog.Default()
 	}

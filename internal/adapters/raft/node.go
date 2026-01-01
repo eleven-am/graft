@@ -106,6 +106,7 @@ func (n *Node) Start(ctx context.Context, existingPeers []domain.RaftPeerSpec, b
 		BootstrapMetadata:   metadata.ExtendMetadata(nil, n.metadata),
 		BootstrapMultiNode:  bootstrapMultiNode,
 		IgnoreExistingState: n.config.IgnoreExistingState,
+		InMemoryStorage:     n.config.InMemoryStorage,
 		Peers:               existingPeers,
 		ExpectedConfig:      prependSelf(n.config.NodeID, n.config.BindAddr, existingPeers),
 		RuntimeConfig: domain.RaftRuntimeConfig{

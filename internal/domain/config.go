@@ -209,4 +209,5 @@ type BootstrapConfig struct {
 	AdminAPIPort    int  `json:"admin_api_port" yaml:"admin_api_port"`
 
 	IgnoreExistingState bool `json:"ignore_existing_state" yaml:"ignore_existing_state"`
+	InMemoryStorage     bool `json:"in_memory_storage" yaml:"in_memory_storage"`
 }

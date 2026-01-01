@@ -86,7 +86,7 @@ type Manager struct {
 
 type managerProviders struct {
 	newEventManager      func(ports.StoragePort, string, *slog.Logger) ports.EventManager
-	newRaftStorage       func(dataDir string, logger *slog.Logger) (*raft.Storage, error)
+	newRaftStorage       func(dataDir string, inMemory bool, logger *slog.Logger) (*raft.Storage, error)
 	newRaftNode          func(cfg *raft.Config, storage *raft.Storage, events ports.EventManager, appTransport ports.TransportPort, logger *slog.Logger) (ports.RaftNode, error)
 	newAppStorage        func(raft ports.RaftNode, db *badger.DB, logger *slog.Logger) ports.StoragePort
 	newNodeRegistry      func(*slog.Logger) ports.NodeRegistryPort
@@ -104,8 +104,8 @@ func defaultProviders() managerProviders {
 		newEventManager: func(storage ports.StoragePort, nodeID string, l *slog.Logger) ports.EventManager {
 			return events.NewManager(storage, nodeID, l)
 		},
-		newRaftStorage: func(dataDir string, l *slog.Logger) (*raft.Storage, error) {
-			return raft.NewStorage(raft.StorageConfig{DataDir: filepath.Join(dataDir, "raft")}, l)
+		newRaftStorage: func(dataDir string, inMemory bool, l *slog.Logger) (*raft.Storage, error) {
+			return raft.NewStorage(raft.StorageConfig{DataDir: filepath.Join(dataDir, "raft"), InMemory: inMemory}, l)
 		},
 		newRaftNode: func(cfg *raft.Config, st *raft.Storage, ev ports.EventManager, t ports.TransportPort, l *slog.Logger) (ports.RaftNode, error) {
 			return raft.NewNode(cfg, st, ev, t, l)
@@ -198,10 +198,11 @@ func NewWithConfig(config *domain.Config) *Manager {
 
 	raftConfig := raft.DefaultRaftConfig(config.NodeID, config.Cluster.ID, config.BindAddr, config.DataDir, config.Cluster.Policy)
 	raftConfig.IgnoreExistingState = config.Bootstrap.IgnoreExistingState
+	raftConfig.InMemoryStorage = config.Bootstrap.InMemoryStorage
 
 	prov := defaultProviders()
 
-	raftStorage, err := prov.newRaftStorage(config.DataDir, logger)
+	raftStorage, err := prov.newRaftStorage(config.DataDir, config.Bootstrap.InMemoryStorage, logger)
 	if err != nil {
 		logger.Error("failed to create raft storage", "error", err)
 		return nil
