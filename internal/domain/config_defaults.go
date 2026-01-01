@@ -330,7 +330,7 @@ func (c *Config) WithK8sBootstrap(replicas int, headlessService string) *Config 
 	c.Bootstrap.Ordinal = ordinal
 	c.Bootstrap.Replicas = replicas
 
-	c.WithDNS(headlessService, c.Bootstrap.BasePort, "grpc")
+	c.WithDNS(headlessService, c.Bootstrap.BasePort, "raft")
 
 	return c
 }
