@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/eleven-am/graft/internal/ports"
@@ -12,13 +13,15 @@ import (
 type DNSSeeder struct {
 	hostname string
 	port     int
+	service  string
 	timeout  time.Duration
 }
 
-func NewDNSSeeder(hostname string, port int) *DNSSeeder {
+func NewDNSSeeder(hostname string, port int, service string) *DNSSeeder {
 	return &DNSSeeder{
 		hostname: hostname,
 		port:     port,
+		service:  service,
 		timeout:  5 * time.Second,
 	}
 }
@@ -29,21 +32,32 @@ func (d *DNSSeeder) Discover(ctx context.Context) ([]ports.Peer, error) {
 	ctx, cancel := context.WithTimeout(ctx, d.timeout)
 	defer cancel()
 
-	addrs, err := resolver.LookupHost(ctx, d.hostname)
+	_, targets, err := resolver.LookupSRV(ctx, d.service, "tcp", d.hostname)
 	if err != nil {
-		return nil, fmt.Errorf("dns lookup failed: %w", err)
+		return nil, fmt.Errorf("srv lookup failed: %w", err)
 	}
 
-	peers := make([]ports.Peer, 0, len(addrs))
-	for _, addr := range addrs {
+	peers := make([]ports.Peer, 0, len(targets))
+	for _, target := range targets {
+		hostname := strings.TrimSuffix(target.Target, ".")
+		podName := extractPodName(hostname)
+
 		peers = append(peers, ports.Peer{
-			ID:      addr,
-			Address: addr,
-			Port:    d.port,
+			ID:      podName,
+			Address: hostname,
+			Port:    int(target.Port),
 		})
 	}
 
 	return peers, nil
+}
+
+func extractPodName(fqdn string) string {
+	parts := strings.Split(fqdn, ".")
+	if len(parts) > 0 {
+		return parts[0]
+	}
+	return fqdn
 }
 
 func (d *DNSSeeder) Name() string {

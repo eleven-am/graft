@@ -242,12 +242,13 @@ func (c *Config) WithStaticPeers(peers ...StaticPeer) *Config {
 	return c
 }
 
-func (c *Config) WithDNS(hostname string, port int) *Config {
+func (c *Config) WithDNS(hostname string, port int, service string) *Config {
 	c.Discovery = append(c.Discovery, DiscoveryConfig{
 		Type: DiscoveryDNS,
 		DNS: &DNSConfig{
 			Hostname: hostname,
 			Port:     port,
+			Service:  service,
 		},
 	})
 	return c
@@ -329,7 +330,7 @@ func (c *Config) WithK8sBootstrap(replicas int, headlessService string) *Config 
 	c.Bootstrap.Ordinal = ordinal
 	c.Bootstrap.Replicas = replicas
 
-	c.WithDNS(headlessService, c.Bootstrap.BasePort)
+	c.WithDNS(headlessService, c.Bootstrap.BasePort, "grpc")
 
 	return c
 }

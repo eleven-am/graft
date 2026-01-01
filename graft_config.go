@@ -175,15 +175,16 @@ func (cb *ConfigBuilder) WithStaticPeers(peers ...StaticPeer) *ConfigBuilder {
 	return cb
 }
 
-// WithDNS configures DNS-based service discovery using hostname lookups.
+// WithDNS configures DNS-based service discovery using SRV record lookups.
 //
 // Parameters:
 //   - hostname: DNS hostname to resolve for peer discovery (e.g., "flow-headless.flow.svc.cluster.local")
-//   - port: Port number where peers listen for Raft communication
+//   - port: Fallback port number if SRV lookup fails
+//   - service: SRV service name (e.g., "grpc" for _grpc._tcp.hostname)
 //
 // Use this for Kubernetes headless services or any DNS-based service discovery.
-func (cb *ConfigBuilder) WithDNS(hostname string, port int) *ConfigBuilder {
-	cb.config.WithDNS(hostname, port)
+func (cb *ConfigBuilder) WithDNS(hostname string, port int, service string) *ConfigBuilder {
+	cb.config.WithDNS(hostname, port, service)
 	return cb
 }
 

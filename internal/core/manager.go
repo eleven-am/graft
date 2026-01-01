@@ -392,7 +392,7 @@ func createSeeder(config *domain.Config, logger *slog.Logger) ports.Seeder {
 			}
 		case domain.DiscoveryDNS:
 			if discoveryConfig.DNS != nil && discoveryConfig.DNS.Hostname != "" {
-				seederList = append(seederList, discovery.NewDNSSeeder(discoveryConfig.DNS.Hostname, discoveryConfig.DNS.Port))
+				seederList = append(seederList, discovery.NewDNSSeeder(discoveryConfig.DNS.Hostname, discoveryConfig.DNS.Port, discoveryConfig.DNS.Service))
 			}
 		}
 	}
