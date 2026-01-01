@@ -372,6 +372,11 @@ func (c *Config) WithIgnoreExistingState() *Config {
 	return c
 }
 
+func (c *Config) WithInMemoryStorage() *Config {
+	c.Bootstrap.InMemoryStorage = true
+	return c
+}
+
 func (c *Config) Validate() error {
 	if c.NodeID == "" {
 		return NewConfigError("node_id", ErrInvalidInput)
