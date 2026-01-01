@@ -328,6 +328,9 @@ func (c *Config) WithK8sBootstrap(replicas int, headlessService string) *Config 
 	c.Bootstrap.HeadlessService = headlessService
 	c.Bootstrap.Ordinal = ordinal
 	c.Bootstrap.Replicas = replicas
+
+	c.WithDNS(headlessService, c.Bootstrap.BasePort)
+
 	return c
 }
 
