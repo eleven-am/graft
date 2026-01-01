@@ -109,7 +109,7 @@ func (n *Node) Start(ctx context.Context, existingPeers []domain.RaftPeerSpec, b
 		IgnoreExistingState: n.config.IgnoreExistingState,
 		InMemoryStorage:     n.config.InMemoryStorage,
 		Peers:               existingPeers,
-		ExpectedConfig:      prependSelf(n.config.NodeID, n.config.BindAddr, existingPeers),
+		ExpectedConfig:      prependSelf(n.config.NodeID, n.config.AdvertiseAddr, existingPeers),
 		RuntimeConfig: domain.RaftRuntimeConfig{
 			ClusterID:          n.config.ClusterID,
 			ClusterPolicy:      n.config.ClusterPolicy,
