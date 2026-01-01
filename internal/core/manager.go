@@ -605,12 +605,14 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 	}
 
 	m.bootstrapper = bootstrap.NewBootstrapper(bootstrap.BootstrapperDeps{
-		Config:       bootstrapConfig,
-		MetaStore:    metaStore,
-		StateMachine: stateMachine,
-		Seeder:       m.seeder,
-		Transport:    secureTransport,
-		Logger:       m.logger,
+		Config:             bootstrapConfig,
+		MetaStore:          metaStore,
+		StateMachine:       stateMachine,
+		Seeder:             m.seeder,
+		Transport:          secureTransport,
+		Logger:             m.logger,
+		ReadyTimeout:       m.config.Bootstrap.ReadyTimeout,
+		StaleCheckInterval: m.config.Bootstrap.StaleCheckInterval,
 	})
 
 	if err := m.bootstrapper.Start(m.ctx); err != nil {

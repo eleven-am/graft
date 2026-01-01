@@ -447,13 +447,20 @@ func (b *Bootstrapper) handleUninitialized(ctx context.Context) {
 		return
 	}
 
-	if len(b.discoveredPeers) == 0 && b.seeder != nil {
-		peers, err := b.seeder.Discover(ctx)
-		if err != nil {
-			b.logger.Warn("peer discovery failed", slog.Any("error", err))
-			return
+	if b.seeder != nil {
+		quorum := b.config.CalculateQuorum()
+		myServerID := b.getOwnServerID()
+		currentOtherPeers := b.countOtherPeers(myServerID)
+		peersNeeded := quorum - 1
+
+		if currentOtherPeers < peersNeeded {
+			peers, err := b.seeder.Discover(ctx)
+			if err != nil {
+				b.logger.Warn("peer discovery failed", slog.Any("error", err))
+			} else {
+				b.discoveredPeers = peers
+			}
 		}
-		b.discoveredPeers = peers
 	}
 
 	existingCluster := b.findExistingCluster(ctx)
