@@ -550,7 +550,7 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 	}
 
 	bootstrapConfig := m.buildBootstrapConfig(grpcPort)
-	metaStore := bootstrap.NewFileMetaStore(filepath.Join(m.config.DataDir, "cluster_meta.json"), m.logger)
+	metaStore := bootstrap.NewFileMetaStore(m.config.DataDir, m.logger)
 	stateMachine, err := bootstrap.NewStateMachine(bootstrap.StateMachineDeps{
 		MetaStore: metaStore,
 		Logger:    m.logger,
