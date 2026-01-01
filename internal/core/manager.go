@@ -196,7 +196,7 @@ func NewWithConfig(config *domain.Config) *Manager {
 
 	seeder := createSeeder(config, logger)
 
-	raftConfig := raft.DefaultRaftConfig(config.NodeID, config.Cluster.ID, config.BindAddr, config.DataDir, config.Cluster.Policy)
+	raftConfig := raft.DefaultRaftConfig(config.NodeID, config.Cluster.ID, config.BindAddr, config.AdvertiseAddr, config.DataDir, config.Cluster.Policy)
 	raftConfig.IgnoreExistingState = config.Bootstrap.IgnoreExistingState
 	raftConfig.InMemoryStorage = config.Bootstrap.InMemoryStorage
 

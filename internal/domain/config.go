@@ -6,10 +6,11 @@ import (
 )
 
 type Config struct {
-	NodeID   string       `json:"node_id" yaml:"node_id"`
-	BindAddr string       `json:"bind_addr" yaml:"bind_addr"`
-	DataDir  string       `json:"data_dir" yaml:"data_dir"`
-	Logger   *slog.Logger `json:"-" yaml:"-"`
+	NodeID        string       `json:"node_id" yaml:"node_id"`
+	BindAddr      string       `json:"bind_addr" yaml:"bind_addr"`
+	AdvertiseAddr string       `json:"advertise_addr" yaml:"advertise_addr"`
+	DataDir       string       `json:"data_dir" yaml:"data_dir"`
+	Logger        *slog.Logger `json:"-" yaml:"-"`
 
 	Discovery      []DiscoveryConfig    `json:"discovery" yaml:"discovery"`
 	Transport      TransportConfig      `json:"transport" yaml:"transport"`

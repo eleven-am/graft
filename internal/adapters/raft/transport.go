@@ -40,7 +40,10 @@ func (p *TCPTransportProvider) Create(_ context.Context, opts domain.RaftControl
 		}
 	}
 
-	advertiseHost := host
+	advertiseHost, _, _ := net.SplitHostPort(opts.AdvertiseAddress)
+	if advertiseHost == "" {
+		advertiseHost = opts.AdvertiseAddress
+	}
 
 	listener, actualPort, err := netutil.ListenTCP(host, port)
 	if err != nil {

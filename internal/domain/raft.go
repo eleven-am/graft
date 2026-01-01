@@ -33,6 +33,7 @@ type RaftRuntimeConfig struct {
 type RaftControllerOptions struct {
 	NodeID              string
 	BindAddress         string
+	AdvertiseAddress    string
 	DataDir             string
 	BootstrapMetadata   map[string]string
 	BootstrapMultiNode  bool

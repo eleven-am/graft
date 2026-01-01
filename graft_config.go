@@ -147,6 +147,7 @@ func NewConfigBuilder(nodeID, bindAddr, dataDir string) *ConfigBuilder {
 	config := DefaultConfig()
 	config.NodeID = nodeID
 	config.BindAddr = bindAddr
+	config.AdvertiseAddr = bindAddr
 	config.DataDir = dataDir
 	return &ConfigBuilder{config: config}
 }

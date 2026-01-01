@@ -102,6 +102,7 @@ func (n *Node) Start(ctx context.Context, existingPeers []domain.RaftPeerSpec, b
 	options := domain.RaftControllerOptions{
 		NodeID:              n.config.NodeID,
 		BindAddress:         n.config.BindAddr,
+		AdvertiseAddress:    n.config.AdvertiseAddr,
 		DataDir:             n.config.DataDir,
 		BootstrapMetadata:   metadata.ExtendMetadata(nil, n.metadata),
 		BootstrapMultiNode:  bootstrapMultiNode,

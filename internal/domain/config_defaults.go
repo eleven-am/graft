@@ -198,6 +198,7 @@ func NewConfigFromSimple(nodeID, bindAddr, dataDir string, logger *slog.Logger) 
 	config := DefaultConfig()
 	config.NodeID = nodeID
 	config.BindAddr = bindAddr
+	config.AdvertiseAddr = bindAddr
 	config.DataDir = dataDir
 	config.Logger = logger
 
@@ -329,6 +330,8 @@ func (c *Config) WithK8sBootstrap(replicas int, headlessService string) *Config 
 	c.Bootstrap.HeadlessService = headlessService
 	c.Bootstrap.Ordinal = ordinal
 	c.Bootstrap.Replicas = replicas
+
+	c.AdvertiseAddr = fmt.Sprintf("%s.%s:%d", hostname, headlessService, c.Bootstrap.BasePort)
 
 	c.WithDNS(headlessService, c.Bootstrap.BasePort, "raft")
 

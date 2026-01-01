@@ -13,6 +13,7 @@ type Config struct {
 	NodeID              string
 	ClusterID           string
 	BindAddr            string
+	AdvertiseAddr       string
 	DataDir             string
 	ClusterPolicy       domain.ClusterPolicy
 	SnapshotInterval    time.Duration
@@ -32,11 +33,12 @@ type Config struct {
 
 // DefaultRaftConfig reproduces the old helper so existing callers continue to
 // compile. Values feed into raft runtime configuration internally.
-func DefaultRaftConfig(nodeID, clusterID, bindAddr, dataDir string, clusterPolicy domain.ClusterPolicy) *Config {
+func DefaultRaftConfig(nodeID, clusterID, bindAddr, advertiseAddr, dataDir string, clusterPolicy domain.ClusterPolicy) *Config {
 	return &Config{
 		NodeID:             nodeID,
 		ClusterID:          clusterID,
 		BindAddr:           bindAddr,
+		AdvertiseAddr:      advertiseAddr,
 		DataDir:            dataDir,
 		ClusterPolicy:      clusterPolicy,
 		SnapshotInterval:   120 * time.Second,
