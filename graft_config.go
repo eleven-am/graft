@@ -180,12 +180,11 @@ func (cb *ConfigBuilder) WithStaticPeers(peers ...StaticPeer) *ConfigBuilder {
 //
 // Parameters:
 //   - hostname: DNS hostname to resolve for peer discovery (e.g., "flow-headless.flow.svc.cluster.local")
-//   - port: Fallback port number if SRV lookup fails
 //   - service: SRV service name (e.g., "grpc" for _grpc._tcp.hostname)
 //
 // Use this for Kubernetes headless services or any DNS-based service discovery.
-func (cb *ConfigBuilder) WithDNS(hostname string, port int, service string) *ConfigBuilder {
-	cb.config.WithDNS(hostname, port, service)
+func (cb *ConfigBuilder) WithDNS(hostname, service string) *ConfigBuilder {
+	cb.config.WithDNS(hostname, service)
 	return cb
 }
 

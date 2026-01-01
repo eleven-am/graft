@@ -12,15 +12,13 @@ import (
 
 type DNSSeeder struct {
 	hostname string
-	port     int
 	service  string
 	timeout  time.Duration
 }
 
-func NewDNSSeeder(hostname string, port int, service string) *DNSSeeder {
+func NewDNSSeeder(hostname, service string) *DNSSeeder {
 	return &DNSSeeder{
 		hostname: hostname,
-		port:     port,
 		service:  service,
 		timeout:  5 * time.Second,
 	}

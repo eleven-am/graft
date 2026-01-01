@@ -60,6 +60,7 @@ type Bootstrapper struct {
 	leaderWaitStartTime time.Time
 	lastStaleCheck      time.Time
 	discoveredPeers     []ports.Peer
+	peerRaftAddresses   map[string]string
 
 	mu       sync.RWMutex
 	started  bool
@@ -114,6 +115,7 @@ func NewBootstrapper(deps BootstrapperDeps) *Bootstrapper {
 		shutdownTimeout:        shutdownTimeout,
 		staleCheckInterval:     staleCheckInterval,
 		readyCh:                make(chan struct{}),
+		peerRaftAddresses:      make(map[string]string),
 	}
 }
 
@@ -592,7 +594,9 @@ func (b *Bootstrapper) findExistingCluster(ctx context.Context) *ClusterMeta {
 		return nil
 	}
 
+	var existingCluster *ClusterMeta
 	myID := string(b.getOwnServerID())
+
 	for _, peer := range b.discoveredPeers {
 		if peer.ID == myID {
 			continue
@@ -606,12 +610,23 @@ func (b *Bootstrapper) findExistingCluster(ctx context.Context) *ClusterMeta {
 			continue
 		}
 
-		if meta != nil && meta.ClusterUUID != "" && meta.State == StateReady {
-			return meta
+		if meta != nil {
+			if meta.ServerAddress != "" {
+				b.mu.Lock()
+				b.peerRaftAddresses[peer.ID] = string(meta.ServerAddress)
+				b.mu.Unlock()
+				b.logger.Debug("stored peer raft address",
+					"peer_id", peer.ID,
+					"raft_address", meta.ServerAddress)
+			}
+
+			if existingCluster == nil && meta.ClusterUUID != "" && meta.State == StateReady {
+				existingCluster = meta
+			}
 		}
 	}
 
-	return nil
+	return existingCluster
 }
 
 func (b *Bootstrapper) triggerFallbackElection(ctx context.Context) {
@@ -873,6 +888,12 @@ func (b *Bootstrapper) GetDiscoveredPeers() []ports.Peer {
 	result := make([]ports.Peer, len(b.discoveredPeers))
 	copy(result, b.discoveredPeers)
 	return result
+}
+
+func (b *Bootstrapper) GetPeerRaftAddress(peerID string) string {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return b.peerRaftAddresses[peerID]
 }
 
 func (b *Bootstrapper) RegisterTransitionCallback(callback func(from, to NodeState)) {

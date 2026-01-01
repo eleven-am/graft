@@ -392,7 +392,7 @@ func createSeeder(config *domain.Config, logger *slog.Logger) ports.Seeder {
 			}
 		case domain.DiscoveryDNS:
 			if discoveryConfig.DNS != nil && discoveryConfig.DNS.Hostname != "" {
-				seederList = append(seederList, discovery.NewDNSSeeder(discoveryConfig.DNS.Hostname, discoveryConfig.DNS.Port, discoveryConfig.DNS.Service))
+				seederList = append(seederList, discovery.NewDNSSeeder(discoveryConfig.DNS.Hostname, discoveryConfig.DNS.Service))
 			}
 		}
 	}
@@ -643,28 +643,37 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 			if p.ID == string(serverID) {
 				continue
 			}
-			peerAddr := fmt.Sprintf("%s:%d", p.Address, p.Port)
+			raftAddr := m.bootstrapper.GetPeerRaftAddress(p.ID)
+			if raftAddr == "" {
+				m.logger.Warn("no raft address for peer, skipping",
+					"peer_id", p.ID)
+				continue
+			}
 			peers = append(peers, domain.RaftPeerSpec{
 				ID:      p.ID,
-				Address: peerAddr,
+				Address: raftAddr,
 			})
 			m.logger.Debug("adding discovered peer to initial cluster",
 				"peer_id", p.ID,
-				"peer_address", peerAddr)
+				"peer_raft_address", raftAddr)
 		}
 	} else {
 		lowestPeer := findLowestServerIDPeer(discoveredPeers, string(serverID))
 		if lowestPeer != nil {
-			peerAddr := fmt.Sprintf("%s:%d", lowestPeer.Address, lowestPeer.Port)
+			raftAddr := m.bootstrapper.GetPeerRaftAddress(lowestPeer.ID)
+			if raftAddr == "" {
+				m.logger.Warn("no raft address for lowest peer",
+					"peer_id", lowestPeer.ID)
+			} else {
+				m.logger.Debug("found lowest ServerID peer to join",
+					"peer_id", lowestPeer.ID,
+					"peer_raft_address", raftAddr)
 
-			m.logger.Debug("found lowest ServerID peer to join",
-				"peer_id", lowestPeer.ID,
-				"peer_address", peerAddr)
-
-			peers = []domain.RaftPeerSpec{{
-				ID:      lowestPeer.ID,
-				Address: peerAddr,
-			}}
+				peers = []domain.RaftPeerSpec{{
+					ID:      lowestPeer.ID,
+					Address: raftAddr,
+				}}
+			}
 		} else {
 			m.logger.Warn("no peers found to join, will wait for cluster initiator")
 		}

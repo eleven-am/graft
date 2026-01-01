@@ -43,7 +43,6 @@ type DiscoveryConfig struct {
 
 type DNSConfig struct {
 	Hostname string `json:"hostname" yaml:"hostname"`
-	Port     int    `json:"port" yaml:"port"`
 	Service  string `json:"service" yaml:"service"`
 }
 

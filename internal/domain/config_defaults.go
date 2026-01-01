@@ -243,12 +243,11 @@ func (c *Config) WithStaticPeers(peers ...StaticPeer) *Config {
 	return c
 }
 
-func (c *Config) WithDNS(hostname string, port int, service string) *Config {
+func (c *Config) WithDNS(hostname, service string) *Config {
 	c.Discovery = append(c.Discovery, DiscoveryConfig{
 		Type: DiscoveryDNS,
 		DNS: &DNSConfig{
 			Hostname: hostname,
-			Port:     port,
 			Service:  service,
 		},
 	})
@@ -331,7 +330,7 @@ func (c *Config) WithK8sBootstrap(replicas int, headlessService string) *Config 
 		return c
 	}
 
-	port, err := strconv.Atoi(portStr)
+	raftPort, err := strconv.Atoi(portStr)
 	if err != nil {
 		return c
 	}
@@ -341,9 +340,9 @@ func (c *Config) WithK8sBootstrap(replicas int, headlessService string) *Config 
 	c.Bootstrap.Ordinal = ordinal
 	c.Bootstrap.Replicas = replicas
 
-	c.AdvertiseAddr = fmt.Sprintf("%s.%s:%d", hostname, headlessService, port)
+	c.AdvertiseAddr = fmt.Sprintf("%s.%s:%d", hostname, headlessService, raftPort)
 
-	c.WithDNS(headlessService, port, "raft")
+	c.WithDNS(headlessService, "grpc")
 
 	return c
 }
@@ -506,9 +505,6 @@ func validateDiscoveryConfig(config *DiscoveryConfig) error {
 		}
 		if config.DNS.Hostname == "" {
 			return NewConfigError("dns.hostname", ErrInvalidInput)
-		}
-		if config.DNS.Port <= 0 || config.DNS.Port > 65535 {
-			return NewConfigError("dns.port", ErrInvalidInput)
 		}
 	default:
 		return NewConfigError("discovery.type", ErrInvalidInput)
