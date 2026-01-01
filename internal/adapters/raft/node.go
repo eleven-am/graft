@@ -100,13 +100,14 @@ func (n *Node) Start(ctx context.Context, existingPeers []domain.RaftPeerSpec, b
 	n.setProvisional(len(existingPeers) == 0 || bootstrapMultiNode)
 
 	options := domain.RaftControllerOptions{
-		NodeID:             n.config.NodeID,
-		BindAddress:        n.config.BindAddr,
-		DataDir:            n.config.DataDir,
-		BootstrapMetadata:  metadata.ExtendMetadata(nil, n.metadata),
-		BootstrapMultiNode: bootstrapMultiNode,
-		Peers:              existingPeers,
-		ExpectedConfig:     prependSelf(n.config.NodeID, n.config.BindAddr, existingPeers),
+		NodeID:              n.config.NodeID,
+		BindAddress:         n.config.BindAddr,
+		DataDir:             n.config.DataDir,
+		BootstrapMetadata:   metadata.ExtendMetadata(nil, n.metadata),
+		BootstrapMultiNode:  bootstrapMultiNode,
+		IgnoreExistingState: n.config.IgnoreExistingState,
+		Peers:               existingPeers,
+		ExpectedConfig:      prependSelf(n.config.NodeID, n.config.BindAddr, existingPeers),
 		RuntimeConfig: domain.RaftRuntimeConfig{
 			ClusterID:          n.config.ClusterID,
 			ClusterPolicy:      n.config.ClusterPolicy,

@@ -45,6 +45,7 @@ type BootstrapConfig struct {
 
 	ForceBootstrapFile     string `json:"force_bootstrap_file,omitempty" yaml:"force_bootstrap_file,omitempty"`
 	RequireProtocolVersion bool   `json:"require_protocol_version" yaml:"require_protocol_version"`
+	IgnoreExistingState    bool   `json:"ignore_existing_state" yaml:"ignore_existing_state"`
 }
 
 func (c *BootstrapConfig) Validate() error {

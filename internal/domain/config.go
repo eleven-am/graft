@@ -207,4 +207,6 @@ type BootstrapConfig struct {
 
 	AdminAPIEnabled bool `json:"admin_api_enabled" yaml:"admin_api_enabled"`
 	AdminAPIPort    int  `json:"admin_api_port" yaml:"admin_api_port"`
+
+	IgnoreExistingState bool `json:"ignore_existing_state" yaml:"ignore_existing_state"`
 }

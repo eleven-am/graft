@@ -256,6 +256,11 @@ func (cb *ConfigBuilder) WithK8sBootstrap(replicas int, headlessService string) 
 	return cb
 }
 
+func (cb *ConfigBuilder) WithIgnoreExistingState() *ConfigBuilder {
+	cb.config.Bootstrap.IgnoreExistingState = true
+	return cb
+}
+
 // Build returns the constructed configuration.
 // This finalizes the configuration and returns it ready for use with NewWithConfig().
 func (cb *ConfigBuilder) Build() *Config {

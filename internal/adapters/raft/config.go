@@ -10,22 +10,23 @@ import (
 // continue to construct nodes without large refactors while the underlying
 // implementation is replaced by raft components.
 type Config struct {
-	NodeID             string
-	ClusterID          string
-	BindAddr           string
-	DataDir            string
-	ClusterPolicy      domain.ClusterPolicy
-	SnapshotInterval   time.Duration
-	SnapshotThreshold  uint64
-	MaxSnapshots       int
-	MaxJoinAttempts    int
-	HeartbeatTimeout   time.Duration
-	ElectionTimeout    time.Duration
-	CommitTimeout      time.Duration
-	MaxAppendEntries   int
-	ShutdownOnRemove   bool
-	TrailingLogs       uint64
-	LeaderLeaseTimeout time.Duration
+	NodeID              string
+	ClusterID           string
+	BindAddr            string
+	DataDir             string
+	ClusterPolicy       domain.ClusterPolicy
+	SnapshotInterval    time.Duration
+	SnapshotThreshold   uint64
+	MaxSnapshots        int
+	MaxJoinAttempts     int
+	HeartbeatTimeout    time.Duration
+	ElectionTimeout     time.Duration
+	CommitTimeout       time.Duration
+	MaxAppendEntries    int
+	ShutdownOnRemove    bool
+	TrailingLogs        uint64
+	LeaderLeaseTimeout  time.Duration
+	IgnoreExistingState bool
 }
 
 // DefaultRaftConfig reproduces the old helper so existing callers continue to

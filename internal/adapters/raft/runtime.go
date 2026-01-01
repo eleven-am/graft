@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -153,6 +155,14 @@ func (r *Runtime) Start(ctx context.Context, opts domain.RaftControllerOptions) 
 	r.cancel = cancel
 	r.runDone = make(chan struct{})
 	r.options = opts
+
+	if opts.IgnoreExistingState {
+		if err := r.clearExistingState(opts.DataDir); err != nil {
+			cancel()
+			return r.raftError("failed to clear existing state", err)
+		}
+		r.deps.Logger.Info("cleared existing raft state for fresh bootstrap", "data_dir", opts.DataDir)
+	}
 
 	storage, err := r.deps.StorageProvider.Create(runtimeCtx, opts)
 	if err != nil {
@@ -1350,4 +1360,22 @@ func (r *Runtime) WaitForConfiguration(ctx context.Context, minMembers int) erro
 			}
 		}
 	}
+}
+
+func (r *Runtime) clearExistingState(dataDir string) error {
+	raftDir := filepath.Join(dataDir, "raft")
+	if _, err := os.Stat(raftDir); err == nil {
+		if err := os.RemoveAll(raftDir); err != nil {
+			return fmt.Errorf("remove raft dir: %w", err)
+		}
+	}
+
+	clusterMeta := filepath.Join(dataDir, "cluster_meta.json")
+	if _, err := os.Stat(clusterMeta); err == nil {
+		if err := os.Remove(clusterMeta); err != nil {
+			return fmt.Errorf("remove cluster meta: %w", err)
+		}
+	}
+
+	return nil
 }
