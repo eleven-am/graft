@@ -364,6 +364,11 @@ func (c *Config) WithBootstrapInsecure() *Config {
 	return c
 }
 
+func (c *Config) WithIgnoreExistingState() *Config {
+	c.Bootstrap.IgnoreExistingState = true
+	return c
+}
+
 func (c *Config) Validate() error {
 	if c.NodeID == "" {
 		return NewConfigError("node_id", ErrInvalidInput)
