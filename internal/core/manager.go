@@ -310,11 +310,20 @@ func NewWithConfig(config *domain.Config) *Manager {
 
 	raftCallbacks := consensusAdapter.NewRaftCallbacksAdapter(context.Background(), raftAdapter, logger)
 
+	gossipBindAddr := config.GossipBindAddr
+	if gossipBindAddr == "" {
+		gossipBindAddr = config.BindAddr
+	}
+	gossipAdvertiseAddr := config.GossipAdvertiseAddr
+	if gossipAdvertiseAddr == "" {
+		gossipAdvertiseAddr = config.AdvertiseAddr
+	}
+
 	consensusNode, err := consensus.New(&consensus.Config{
 		Bootstrap: &bootstrap.Config{
 			NodeID:              config.NodeID,
-			GossipAddr:          config.BindAddr,
-			GossipAdvertiseAddr: config.AdvertiseAddr,
+			GossipAddr:          gossipBindAddr,
+			GossipAdvertiseAddr: gossipAdvertiseAddr,
 			RaftAdvertiseAddr:   config.AdvertiseAddr,
 			SecretKey:           []byte(config.Cluster.ID),
 			CanBootstrap:        true,

@@ -225,6 +225,17 @@ func (c *Config) WithClusterPersistence(persistenceFile string) *Config {
 	return c
 }
 
+func (c *Config) WithGossipAddr(bindAddr, advertiseAddr string) *Config {
+	c.GossipBindAddr = bindAddr
+	c.GossipAdvertiseAddr = advertiseAddr
+	return c
+}
+
+func (c *Config) WithAdvertiseAddr(advertiseAddr string) *Config {
+	c.AdvertiseAddr = advertiseAddr
+	return c
+}
+
 func (c *Config) Validate() error {
 	if c.NodeID == "" {
 		return NewConfigError("node_id", ErrInvalidInput)

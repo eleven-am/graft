@@ -145,6 +145,11 @@ func (cb *ConfigBuilder) WithDiscoverers(discoverers ...Discoverer) *ConfigBuild
 	return cb
 }
 
+func (cb *ConfigBuilder) WithGossipAddr(bindAddr, advertiseAddr string) *ConfigBuilder {
+	cb.config.WithGossipAddr(bindAddr, advertiseAddr)
+	return cb
+}
+
 func (cb *ConfigBuilder) Build() *Config {
 	return cb.config
 }
