@@ -133,6 +133,11 @@ func (cb *ConfigBuilder) WithClusterPersistence(persistenceFile string) *ConfigB
 	return cb
 }
 
+func (cb *ConfigBuilder) WithAdvertiseAddr(advertiseAddr string) *ConfigBuilder {
+	cb.config.AdvertiseAddr = advertiseAddr
+	return cb
+}
+
 func (cb *ConfigBuilder) WithDiscoverers(discoverers ...Discoverer) *ConfigBuilder {
 	for _, d := range discoverers {
 		cb.config.Discoverers = append(cb.config.Discoverers, d)
