@@ -1,9 +1,14 @@
 package domain
 
 import (
+	"context"
 	"log/slog"
 	"time"
 )
+
+type Discoverer interface {
+	Discover(ctx context.Context) ([]string, error)
+}
 
 type Config struct {
 	NodeID        string       `json:"node_id" yaml:"node_id"`
@@ -11,53 +16,18 @@ type Config struct {
 	AdvertiseAddr string       `json:"advertise_addr" yaml:"advertise_addr"`
 	DataDir       string       `json:"data_dir" yaml:"data_dir"`
 	Logger        *slog.Logger `json:"-" yaml:"-"`
+	Discoverers   []Discoverer `json:"-" yaml:"-"`
 
-	Discovery      []DiscoveryConfig    `json:"discovery" yaml:"discovery"`
 	Transport      TransportConfig      `json:"transport" yaml:"transport"`
 	Raft           RaftConfig           `json:"raft" yaml:"raft"`
 	Resources      ResourceConfig       `json:"resources" yaml:"resources"`
 	Engine         EngineConfig         `json:"engine" yaml:"engine"`
 	Orchestrator   OrchestratorConfig   `json:"orchestrator" yaml:"orchestrator"`
 	Cluster        ClusterConfig        `json:"cluster" yaml:"cluster"`
-	Bootstrap      BootstrapConfig      `json:"bootstrap" yaml:"bootstrap"`
 	Observability  ObservabilityConfig  `json:"observability" yaml:"observability"`
 	CircuitBreaker CircuitBreakerConfig `json:"circuit_breaker" yaml:"circuit_breaker"`
 	RateLimiter    RateLimiterConfig    `json:"rate_limiter" yaml:"rate_limiter"`
 	Tracing        TracingConfig        `json:"tracing" yaml:"tracing"`
-}
-
-type DiscoveryType string
-
-const (
-	DiscoveryMDNS   DiscoveryType = "mdns"
-	DiscoveryStatic DiscoveryType = "static"
-	DiscoveryDNS    DiscoveryType = "dns"
-)
-
-type DiscoveryConfig struct {
-	Type   DiscoveryType `json:"type" yaml:"type"`
-	MDNS   *MDNSConfig   `json:"mdns,omitempty" yaml:"mdns,omitempty"`
-	Static []StaticPeer  `json:"static,omitempty" yaml:"static,omitempty"`
-	DNS    *DNSConfig    `json:"dns,omitempty" yaml:"dns,omitempty"`
-}
-
-type DNSConfig struct {
-	Hostname string `json:"hostname" yaml:"hostname"`
-	Service  string `json:"service" yaml:"service"`
-}
-
-type MDNSConfig struct {
-	Service     string `json:"service" yaml:"service"`
-	Domain      string `json:"domain" yaml:"domain"`
-	Host        string `json:"host" yaml:"host"`
-	DisableIPv6 bool   `json:"disable_ipv6" yaml:"disable_ipv6"`
-}
-
-type StaticPeer struct {
-	ID       string            `json:"id" yaml:"id"`
-	Address  string            `json:"address" yaml:"address"`
-	Port     int               `json:"port" yaml:"port"`
-	Metadata map[string]string `json:"metadata,omitempty" yaml:"metadata,omitempty"`
 }
 
 type TransportConfig struct {
@@ -180,35 +150,3 @@ type TracingConfig struct {
 	MaxSpansPerTrace int               `json:"max_spans_per_trace" yaml:"max_spans_per_trace"`
 }
 
-type BootstrapConfig struct {
-	ServiceName string `json:"service_name" yaml:"service_name"`
-	Ordinal     int    `json:"ordinal" yaml:"ordinal"`
-	Replicas    int    `json:"replicas" yaml:"replicas"`
-
-	HeadlessService string `json:"headless_service,omitempty" yaml:"headless_service,omitempty"`
-	BasePort        int    `json:"base_port" yaml:"base_port"`
-
-	FencingEnabled bool   `json:"fencing_enabled" yaml:"fencing_enabled"`
-	FencingKeyPath string `json:"fencing_key_path,omitempty" yaml:"fencing_key_path,omitempty"`
-	FencingQuorum  int    `json:"fencing_quorum,omitempty" yaml:"fencing_quorum,omitempty"`
-
-	TLSEnabled       bool   `json:"tls_enabled" yaml:"tls_enabled"`
-	TLSCertPath      string `json:"tls_cert_path,omitempty" yaml:"tls_cert_path,omitempty"`
-	TLSKeyPath       string `json:"tls_key_path,omitempty" yaml:"tls_key_path,omitempty"`
-	TLSCAPath        string `json:"tls_ca_path,omitempty" yaml:"tls_ca_path,omitempty"`
-	TLSAllowInsecure bool   `json:"tls_allow_insecure" yaml:"tls_allow_insecure"`
-
-	LeaderWaitTimeout  time.Duration `json:"leader_wait_timeout" yaml:"leader_wait_timeout"`
-	ReadyTimeout       time.Duration `json:"ready_timeout" yaml:"ready_timeout"`
-	StaleCheckInterval time.Duration `json:"stale_check_interval" yaml:"stale_check_interval"`
-
-	ForceBootstrapKeyPath  string `json:"force_bootstrap_key_path,omitempty" yaml:"force_bootstrap_key_path,omitempty"`
-	ForceBootstrapTokenDir string `json:"force_bootstrap_token_dir,omitempty" yaml:"force_bootstrap_token_dir,omitempty"`
-	RequireDedicatedKey    bool   `json:"require_dedicated_key" yaml:"require_dedicated_key"`
-
-	AdminAPIEnabled bool `json:"admin_api_enabled" yaml:"admin_api_enabled"`
-	AdminAPIPort    int  `json:"admin_api_port" yaml:"admin_api_port"`
-
-	IgnoreExistingState bool `json:"ignore_existing_state" yaml:"ignore_existing_state"`
-	InMemoryStorage     bool `json:"in_memory_storage" yaml:"in_memory_storage"`
-}

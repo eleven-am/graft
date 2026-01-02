@@ -14,10 +14,13 @@ import (
 	"sync"
 	"time"
 
+	"github.com/dgraph-io/badger/v3"
+	"github.com/eleven-am/auto-consensus/bootstrap"
+	"github.com/eleven-am/auto-consensus/consensus"
+	"github.com/eleven-am/auto-consensus/discovery"
 	"github.com/eleven-am/graft/internal/adapters/circuit_breaker"
-	"github.com/eleven-am/graft/internal/adapters/cluster"
 	"github.com/eleven-am/graft/internal/adapters/connector_registry"
-	"github.com/eleven-am/graft/internal/adapters/discovery"
+	consensusAdapter "github.com/eleven-am/graft/internal/adapters/consensus"
 	"github.com/eleven-am/graft/internal/adapters/engine"
 	"github.com/eleven-am/graft/internal/adapters/events"
 	"github.com/eleven-am/graft/internal/adapters/load_balancer"
@@ -29,16 +32,10 @@ import (
 	"github.com/eleven-am/graft/internal/adapters/storage"
 	"github.com/eleven-am/graft/internal/adapters/tracing"
 	"github.com/eleven-am/graft/internal/adapters/transport"
-	"github.com/eleven-am/graft/internal/bootstrap"
 	"github.com/eleven-am/graft/internal/core/connectors"
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/helpers/metadata"
 	"github.com/eleven-am/graft/internal/ports"
-	pb "github.com/eleven-am/graft/internal/proto"
-	"github.com/eleven-am/graft/internal/readiness"
-
-	"github.com/dgraph-io/badger/v3"
-	"google.golang.org/grpc"
 )
 
 type Manager struct {
@@ -48,24 +45,19 @@ type Manager struct {
 	nodeRegistry      ports.NodeRegistryPort
 	connectorRegistry ports.ConnectorRegistryPort
 	transport         ports.TransportPort
-	seeder            ports.Seeder
 	raftAdapter       ports.RaftNode
 	eventManager      ports.EventManager
 	loadBalancer      ports.LoadBalancer
-	clusterManager    ports.ClusterManager
+	consensusNode     *consensus.Node
 	observability     *observability.Server
 	circuitBreakers   ports.CircuitBreakerProvider
 	rateLimiters      ports.RateLimiterProvider
 	tracing           ports.TracingProvider
-	bootstrapper      *bootstrap.Bootstrapper
 
 	config                 *domain.Config
 	logger                 *slog.Logger
 	nodeID                 string
 	grpcPort               int
-	expectedStaticPeers    int
-	hasPersistedRaftState  bool
-	readinessManager       *readiness.Manager
 	connectorFSM           connectors.FSMAPI
 	workflowIntakeMu       sync.RWMutex
 	workflowIntakeOk       bool
@@ -93,7 +85,6 @@ type managerProviders struct {
 	newAppStorage        func(raft ports.RaftNode, db *badger.DB, logger *slog.Logger) ports.StoragePort
 	newNodeRegistry      func(*slog.Logger) ports.NodeRegistryPort
 	newConnectorRegistry func(*slog.Logger) ports.ConnectorRegistryPort
-	newClusterManager    func(ports.RaftNode, int, *slog.Logger) ports.ClusterManager
 	newLoadBalancer      func(ports.EventManager, string, ports.ClusterManager, *load_balancer.Config, *slog.Logger) ports.LoadBalancer
 	newQueue             func(name string, storage ports.StoragePort, events ports.EventManager, leaseManager ports.LeaseManagerPort, nodeID string, claimTTL time.Duration, logger *slog.Logger) ports.QueuePort
 	newEngine            func(domain.EngineConfig, string, ports.NodeRegistryPort, ports.QueuePort, ports.StoragePort, ports.EventManager, ports.LoadBalancer, *slog.Logger) ports.EnginePort
@@ -117,9 +108,6 @@ func defaultProviders() managerProviders {
 		},
 		newNodeRegistry:      func(l *slog.Logger) ports.NodeRegistryPort { return node_registry.NewManager(l) },
 		newConnectorRegistry: func(l *slog.Logger) ports.ConnectorRegistryPort { return connector_registry.NewManager(l) },
-		newClusterManager: func(r ports.RaftNode, min int, l *slog.Logger) ports.ClusterManager {
-			return cluster.NewRaftClusterManager(r, min, l)
-		},
 		newLoadBalancer: func(ev ports.EventManager, nodeID string, cm ports.ClusterManager, cfg *load_balancer.Config, l *slog.Logger) ports.LoadBalancer {
 			return load_balancer.NewManager(ev, nodeID, cm, cfg, l)
 		},
@@ -196,22 +184,17 @@ func NewWithConfig(config *domain.Config) *Manager {
 		}
 	}()
 
-	seeder := createSeeder(config, logger)
-
 	raftConfig := raft.DefaultRaftConfig(config.NodeID, config.Cluster.ID, config.BindAddr, config.AdvertiseAddr, config.DataDir, config.Cluster.Policy)
-	raftConfig.IgnoreExistingState = config.Bootstrap.IgnoreExistingState
-	raftConfig.InMemoryStorage = config.Bootstrap.InMemoryStorage
 
 	prov := defaultProviders()
 
-	raftStorage, err := prov.newRaftStorage(config.DataDir, config.Bootstrap.InMemoryStorage, logger)
+	raftStorage, err := prov.newRaftStorage(config.DataDir, false, logger)
 	if err != nil {
 		logger.Error("failed to create raft storage", "error", err)
 		return nil
 	}
 	cleanup = append(cleanup, raftStorage.Close)
-	persistedState := raftStorage.HasExistingState()
-	if persistedState {
+	if raftStorage.HasExistingState() {
 		logger.Info("detected persisted raft state", "data_dir", config.DataDir)
 	}
 
@@ -247,9 +230,7 @@ func NewWithConfig(config *domain.Config) *Manager {
 	nodeRegistryManager := prov.newNodeRegistry(logger)
 	connectorRegistryManager := prov.newConnectorRegistry(logger)
 
-	clusterManager := prov.newClusterManager(raftAdapter, 1, logger)
-
-	loadBalancerManager := prov.newLoadBalancer(eventManager, config.NodeID, clusterManager, nil, logger)
+	loadBalancerManager := prov.newLoadBalancer(eventManager, config.NodeID, nil, nil, logger)
 
 	if lb, ok := loadBalancerManager.(interface {
 		SetTransport(ports.TransportPort)
@@ -312,44 +293,65 @@ func NewWithConfig(config *domain.Config) *Manager {
 		})
 	}
 
-	manager := &Manager{
-		config:                config,
-		logger:                logger,
-		nodeID:                config.NodeID,
-		connectorFSM:          connectors.NewFSM(),
-		watchers:              connectors.NewWatcherGroup(),
-		seeder:                seeder,
-		raftAdapter:           raftAdapter,
-		storage:               appStorage,
-		eventManager:          eventManager,
-		nodeRegistry:          nodeRegistryManager,
-		connectorRegistry:     connectorRegistryManager,
-		queue:                 queueAdapter,
-		engine:                engineAdapter,
-		loadBalancer:          loadBalancerManager,
-		clusterManager:        clusterManager,
-		circuitBreakers:       circuitBreakerProvider,
-		rateLimiters:          rateLimiterProvider,
-		tracing:               tracingProvider,
-		transport:             appTransport,
-		readinessManager:      readiness.NewManager(),
-		workflowIntakeOk:      true,
-		connectors:            make(map[string]*connectorHandle),
-		leaseManager:          leaseManager,
-		hasPersistedRaftState: persistedState,
+	var discoverer discovery.Discoverer
+	if len(config.Discoverers) == 0 {
+		discoverer = discovery.NewMDNS(discovery.MDNSConfig{
+			SecretKey: []byte(config.Cluster.ID),
+		})
+	} else if len(config.Discoverers) == 1 {
+		discoverer = config.Discoverers[0]
+	} else {
+		discs := make([]discovery.Discoverer, len(config.Discoverers))
+		for i, d := range config.Discoverers {
+			discs[i] = d
+		}
+		discoverer = discovery.NewCascade(discs...)
 	}
 
-	expectedStaticPeers := 0
-	for _, discoveryConfig := range config.Discovery {
-		if discoveryConfig.Type == domain.DiscoveryStatic {
-			for _, peer := range discoveryConfig.Static {
-				if peer.ID != config.NodeID {
-					expectedStaticPeers++
-				}
-			}
-		}
+	raftCallbacks := consensusAdapter.NewRaftCallbacksAdapter(context.Background(), raftAdapter, logger)
+
+	consensusNode, err := consensus.New(&consensus.Config{
+		Bootstrap: &bootstrap.Config{
+			NodeID:              config.NodeID,
+			GossipAddr:          config.BindAddr,
+			GossipAdvertiseAddr: config.AdvertiseAddr,
+			RaftAdvertiseAddr:   config.AdvertiseAddr,
+			SecretKey:           []byte(config.Cluster.ID),
+			CanBootstrap:        true,
+			DiscoveryTimeout:    config.Raft.DiscoveryTimeout,
+			Logger:              logger,
+		},
+		Callbacks: raftCallbacks,
+	}, discoverer)
+	if err != nil {
+		logger.Error("failed to create consensus node", "error", err)
+		return nil
 	}
-	manager.expectedStaticPeers = expectedStaticPeers
+	cleanup = append(cleanup, consensusNode.Stop)
+
+	manager := &Manager{
+		config:            config,
+		logger:            logger,
+		nodeID:            config.NodeID,
+		connectorFSM:      connectors.NewFSM(),
+		watchers:          connectors.NewWatcherGroup(),
+		raftAdapter:       raftAdapter,
+		storage:           appStorage,
+		eventManager:      eventManager,
+		nodeRegistry:      nodeRegistryManager,
+		connectorRegistry: connectorRegistryManager,
+		queue:             queueAdapter,
+		engine:            engineAdapter,
+		loadBalancer:      loadBalancerManager,
+		consensusNode:     consensusNode,
+		circuitBreakers:   circuitBreakerProvider,
+		rateLimiters:      rateLimiterProvider,
+		tracing:           tracingProvider,
+		transport:         appTransport,
+		workflowIntakeOk:  true,
+		connectors:        make(map[string]*connectorHandle),
+		leaseManager:      leaseManager,
+	}
 
 	if manager.raftAdapter != nil {
 		manager.raftAdapter.SetConnectorLeaseCleaner(manager)
@@ -361,55 +363,6 @@ func NewWithConfig(config *domain.Config) *Manager {
 
 	cleanup = nil
 	return manager
-}
-
-func createSeeder(config *domain.Config, logger *slog.Logger) ports.Seeder {
-	var seederList []ports.Seeder
-
-	for _, discoveryConfig := range config.Discovery {
-		switch discoveryConfig.Type {
-		case domain.DiscoveryMDNS:
-			service := "_graft._tcp"
-			domainStr := "local."
-			if discoveryConfig.MDNS != nil {
-				if discoveryConfig.MDNS.Service != "" {
-					service = discoveryConfig.MDNS.Service
-				}
-				if discoveryConfig.MDNS.Domain != "" {
-					domainStr = discoveryConfig.MDNS.Domain
-				}
-			}
-			seederList = append(seederList, discovery.NewMDNSSeeder(service, domainStr))
-		case domain.DiscoveryStatic:
-			if len(discoveryConfig.Static) > 0 {
-				peers := make([]ports.Peer, len(discoveryConfig.Static))
-				for i, staticPeer := range discoveryConfig.Static {
-					peers[i] = ports.Peer{
-						ID:      staticPeer.ID,
-						Address: staticPeer.Address,
-						Port:    staticPeer.Port,
-					}
-				}
-				seederList = append(seederList, discovery.NewStaticSeeder(peers))
-			}
-		case domain.DiscoveryDNS:
-			if discoveryConfig.DNS != nil && discoveryConfig.DNS.Hostname != "" {
-				seederList = append(seederList, discovery.NewDNSSeeder(discoveryConfig.DNS.Hostname, discoveryConfig.DNS.Service))
-			}
-		}
-	}
-
-	if len(seederList) == 0 {
-		return discovery.NewStaticSeeder(nil)
-	}
-	if len(seederList) == 1 {
-		return seederList[0]
-	}
-	return discovery.NewCompositeSeeder(seederList)
-}
-
-func (m *Manager) Seeder() ports.Seeder {
-	return m.seeder
 }
 
 func (m *Manager) Start(ctx context.Context, grpcPort int) error {
@@ -508,261 +461,44 @@ func (m *Manager) Stop() error {
 		m.transport.Stop()
 	}
 
+	if m.consensusNode != nil {
+		if err := m.consensusNode.Stop(); err != nil {
+			m.logger.Error("failed to stop consensus node", "error", err)
+		}
+	}
+
 	if m.raftAdapter != nil {
 		if err := m.raftAdapter.Stop(); err != nil {
 			m.logger.Error("failed to stop raft adapter", "error", err)
 		}
 	}
 
-	if m.bootstrapper != nil {
-		if err := m.bootstrapper.Stop(); err != nil {
-			m.logger.Error("failed to stop bootstrapper", "error", err)
-		}
-	}
-
-	if advertiser, ok := m.seeder.(ports.AdvertisableSeeder); ok {
-		advertiser.StopAdvertising()
-	}
-
 	return nil
 }
 
 func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
-	m.logger.Info("starting with new bootstrap system",
-		"service_name", m.config.Bootstrap.ServiceName,
-		"ordinal", m.config.Bootstrap.Ordinal,
-		"replicas", m.config.Bootstrap.Replicas)
-
-	if advertiser, ok := m.seeder.(ports.AdvertisableSeeder); ok {
-		raftPort := m.config.Bootstrap.BasePort
-		if _, portStr, err := net.SplitHostPort(m.config.BindAddr); err == nil {
-			if p, _ := strconv.Atoi(portStr); p > 0 {
-				raftPort = p
-			}
-		}
-
-		if err := advertiser.StartAdvertising(m.nodeID, m.config.BindAddr, raftPort); err != nil {
-			m.logger.Warn("failed to start seeder advertising", "error", err)
-		} else {
-			m.logger.Info("started seeder advertising", "node_id", m.nodeID, "port", raftPort)
-		}
-	}
-
-	bootstrapConfig := m.buildBootstrapConfig(grpcPort)
-	bootstrapConfig.TLS.AllowInsecure = true
-	metaStore := bootstrap.NewFileMetaStore(m.config.DataDir, m.logger)
-	stateMachine, err := bootstrap.NewStateMachine(bootstrap.StateMachineDeps{
-		MetaStore: metaStore,
-		Logger:    m.logger,
-	})
-	if err != nil {
-		return domain.NewDomainErrorWithCategory(
-			domain.CategoryDiscovery,
-			"failed to create state machine",
-			err,
-			domain.WithComponent("core.Manager.startBootstrap"),
-		)
-	}
-
-	bootstrapServer := bootstrap.NewBootstrapServer(bootstrap.BootstrapServerDeps{
-		Config:    bootstrapConfig,
-		MetaStore: metaStore,
-		LocalMeta: func() *bootstrap.ClusterMeta {
-			if m.bootstrapper != nil {
-				return m.bootstrapper.GetMeta()
-			}
-			return nil
-		},
-		Logger: m.logger,
-	})
-
-	m.transport.RegisterService(func(s *grpc.Server) {
-		pb.RegisterBootstrapServiceServer(s, bootstrapServer)
-	})
-
 	m.grpcPort = grpcPort
 	if err := m.transport.Start(m.ctx, m.config.BindAddr, grpcPort); err != nil {
 		return domain.NewDomainErrorWithCategory(
 			domain.CategoryNetwork,
-			"failed to start transport for bootstrap",
+			"failed to start transport",
 			err,
 			domain.WithComponent("core.Manager.startBootstrap"),
 		)
 	}
 
-	secureTransport, err := bootstrap.NewSecureTransport(bootstrap.SecureTransportDeps{
-		Config:    bootstrapConfig,
-		MetaStore: metaStore,
-		Logger:    m.logger,
-	})
-	if err != nil {
-		return domain.NewDomainErrorWithCategory(
-			domain.CategoryNetwork,
-			"failed to create bootstrap transport",
-			err,
-			domain.WithComponent("core.Manager.startBootstrap"),
-		)
-	}
-
-	m.bootstrapper = bootstrap.NewBootstrapper(bootstrap.BootstrapperDeps{
-		Config:             bootstrapConfig,
-		MetaStore:          metaStore,
-		StateMachine:       stateMachine,
-		Seeder:             m.seeder,
-		Transport:          secureTransport,
-		Logger:             m.logger,
-		ReadyTimeout:       m.config.Bootstrap.ReadyTimeout,
-		StaleCheckInterval: m.config.Bootstrap.StaleCheckInterval,
-	})
-
-	if err := m.bootstrapper.Start(m.ctx); err != nil {
-		return domain.NewDomainErrorWithCategory(
-			domain.CategoryDiscovery,
-			"failed to start bootstrapper",
-			err,
-			domain.WithComponent("core.Manager.Start"),
-		)
-	}
-
-	readyTimeout := m.config.Bootstrap.ReadyTimeout
-	if readyTimeout <= 0 {
-		readyTimeout = 60 * time.Second
-	}
-
-	m.logger.Info("waiting for bootstrapper to become ready",
-		"timeout", readyTimeout,
-		"ordinal", m.config.Bootstrap.Ordinal)
-
-	select {
-	case <-m.bootstrapper.Ready():
-		if err := m.bootstrapper.ReadyError(); err != nil {
+	if m.consensusNode != nil {
+		if err := m.consensusNode.Start(ctx); err != nil {
 			return domain.NewDomainErrorWithCategory(
-				domain.CategoryDiscovery,
-				"bootstrapper ready with error",
+				domain.CategoryNetwork,
+				"failed to start consensus node",
 				err,
-				domain.WithComponent("core.Manager.Start"),
+				domain.WithComponent("core.Manager.startBootstrap"),
 			)
 		}
-	case <-time.After(readyTimeout):
-		return domain.NewDomainErrorWithCategory(
-			domain.CategoryDiscovery,
-			"bootstrapper ready timeout",
-			fmt.Errorf("timed out waiting for bootstrapper after %v", readyTimeout),
-			domain.WithComponent("core.Manager.Start"),
-		)
-	case <-ctx.Done():
-		return ctx.Err()
 	}
-
-	isClusterInitiator := m.bootstrapper.IsClusterInitiator()
-	serverID := m.bootstrapper.GetServerID()
-	m.logger.Info("bootstrapper ready, starting raft adapter",
-		"state", m.bootstrapper.CurrentState(),
-		"server_id", serverID,
-		"is_cluster_initiator", isClusterInitiator)
-
-	var peers []domain.RaftPeerSpec
-	discoveredPeers := m.bootstrapper.GetDiscoveredPeers()
-
-	m.logger.Debug("cluster formation state",
-		"server_id", serverID,
-		"is_cluster_initiator", isClusterInitiator,
-		"headless_service", m.config.Bootstrap.HeadlessService,
-		"service_name", m.config.Bootstrap.ServiceName,
-		"discovered_peers_count", len(discoveredPeers))
-
-	for i, p := range discoveredPeers {
-		m.logger.Debug("discovered peer",
-			"index", i,
-			"peer_id", p.ID,
-			"peer_address", p.Address,
-			"peer_port", p.Port)
-	}
-
-	if isClusterInitiator {
-		for _, p := range discoveredPeers {
-			if p.ID == string(serverID) {
-				continue
-			}
-			raftAddr := m.bootstrapper.GetPeerRaftAddress(p.ID)
-			if raftAddr == "" {
-				m.logger.Warn("no raft address for peer, skipping",
-					"peer_id", p.ID)
-				continue
-			}
-			peers = append(peers, domain.RaftPeerSpec{
-				ID:      p.ID,
-				Address: raftAddr,
-			})
-			m.logger.Debug("adding discovered peer to initial cluster",
-				"peer_id", p.ID,
-				"peer_raft_address", raftAddr)
-		}
-	} else {
-		lowestPeer := findLowestServerIDPeer(discoveredPeers, string(serverID))
-		if lowestPeer != nil {
-			raftAddr := m.bootstrapper.GetPeerRaftAddress(lowestPeer.ID)
-			if raftAddr == "" {
-				m.logger.Warn("no raft address for lowest peer",
-					"peer_id", lowestPeer.ID)
-			} else {
-				m.logger.Debug("found lowest ServerID peer to join",
-					"peer_id", lowestPeer.ID,
-					"peer_raft_address", raftAddr)
-
-				peers = []domain.RaftPeerSpec{{
-					ID:      lowestPeer.ID,
-					Address: raftAddr,
-				}}
-			}
-		} else {
-			m.logger.Warn("no peers found to join, will wait for cluster initiator")
-		}
-	}
-
-	if err := m.raftAdapter.Start(ctx, peers, isClusterInitiator); err != nil {
-		m.logger.Error("raft adapter start failed (new bootstrap)",
-			"node_id", m.nodeID,
-			"server_id", serverID,
-			"is_cluster_initiator", isClusterInitiator,
-			"error", err)
-		return domain.NewRaftError(
-			"failed to start raft node",
-			err,
-			domain.WithComponent("core.Manager.Start"),
-		)
-	}
-
-	m.logger.Info("raft adapter started (new bootstrap)",
-		"node_id", m.nodeID,
-		"server_id", serverID,
-		"is_cluster_initiator", isClusterInitiator,
-		"state", m.bootstrapper.CurrentState())
-
-	m.readinessManager.SetState(readiness.StateReady)
-	m.resumeWorkflowIntake()
 
 	return nil
-}
-
-func convertPeersToPorts(peers []domain.RaftPeerSpec) []ports.Peer {
-	if len(peers) == 0 {
-		return nil
-	}
-	out := make([]ports.Peer, 0, len(peers))
-	for _, p := range peers {
-		host, portStr, err := net.SplitHostPort(p.Address)
-		if err != nil {
-			out = append(out, ports.Peer{ID: p.ID, Address: p.Address, Port: 0})
-			continue
-		}
-		port, err := strconv.Atoi(portStr)
-		if err != nil {
-			port = 0
-		}
-		out = append(out, ports.Peer{ID: p.ID, Address: host, Port: port})
-	}
-	return out
 }
 
 func (m *Manager) RegisterNode(node interface{}) error {
@@ -890,8 +626,6 @@ func (m *Manager) OnNodeError(handler func(*NodeErrorEvent)) error {
 	return m.eventManager.OnNodeError(handler)
 }
 
-// Subscribe wraps SubscribeToChannel by deriving a prefix from the pattern and invoking the handler
-// for matching keys. Prefer SubscribeToChannel for lifecycle control.
 func (m *Manager) Subscribe(pattern string, handler func(string, interface{})) error {
 	prefix := pattern
 	if strings.HasSuffix(pattern, "*") {
@@ -911,7 +645,6 @@ func (m *Manager) Subscribe(pattern string, handler func(string, interface{})) e
 	return nil
 }
 
-// Unsubscribe is not supported via pattern; use SubscribeToChannel and the returned unsubscribe function.
 func (m *Manager) Unsubscribe(pattern string) error { return nil }
 
 func (m *Manager) BroadcastCommand(ctx context.Context, devCmd *DevCommand) error {
@@ -1268,8 +1001,7 @@ func (m *Manager) GetHealth() ports.HealthStatus {
 	}
 
 	health.Details["readiness"] = map[string]interface{}{
-		"state":  m.readinessManager.GetState().String(),
-		"ready":  m.readinessManager.IsReady(),
+		"ready":  m.isWorkflowIntakeAllowed(),
 		"intake": m.isWorkflowIntakeAllowed(),
 	}
 
@@ -1293,13 +1025,6 @@ func (m *Manager) GetHealth() ports.HealthStatus {
 
 	if m.raftAdapter != nil {
 		leadership := m.raftAdapter.GetLeadershipInfo()
-
-		if m.expectedStaticPeers > 1 && len(info.Peers) == 0 {
-			health.Healthy = false
-			if health.Error == "" {
-				health.Error = "stale single-node raft state detected"
-			}
-		}
 
 		if leadership.LeaderID == "" && (health.Error == "" && health.Healthy) {
 			health.Healthy = false
@@ -1382,15 +1107,30 @@ func (m *Manager) GetRateLimiterProvider() ports.RateLimiterProvider {
 }
 
 func (m *Manager) WaitUntilReady(ctx context.Context) error {
-	return m.readinessManager.WaitUntilReady(ctx)
+	ticker := time.NewTicker(100 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-ticker.C:
+			if m.isWorkflowIntakeAllowed() {
+				return nil
+			}
+		}
+	}
 }
 
 func (m *Manager) IsReady() bool {
-	return m.readinessManager.IsReady()
+	return m.isWorkflowIntakeAllowed()
 }
 
 func (m *Manager) GetReadinessState() string {
-	return m.readinessManager.GetState().String()
+	if m.isWorkflowIntakeAllowed() {
+		return "ready"
+	}
+	return "pending"
 }
 
 func (m *Manager) pauseWorkflowIntake() {
@@ -1424,7 +1164,6 @@ func (m *Manager) initiateDemotion(seniorPeer ports.Peer) {
 		"senior_address", seniorPeer.Address,
 		"senior_port", seniorPeer.Port)
 
-	m.readinessManager.SetState(readiness.StateDetecting)
 	m.pauseWorkflowIntake()
 
 	demotionCtx, cancel := context.WithTimeout(m.ctx, 30*time.Second)
@@ -1445,7 +1184,6 @@ func (m *Manager) initiateDemotion(seniorPeer ports.Peer) {
 	} else {
 		m.logger.Warn("join request after demotion not accepted", "senior_peer", seniorPeer.ID)
 	}
-	m.readinessManager.SetState(readiness.StateReady)
 	m.resumeWorkflowIntake()
 }
 
@@ -1662,59 +1400,5 @@ func (m *Manager) awaitLeadership(timeout time.Duration, role string) {
 		"role", role,
 		"node_id", m.nodeID,
 		"leader_addr", m.raftAdapter.LeaderAddr())
-	m.readinessManager.SetState(readiness.StateReady)
 	m.resumeWorkflowIntake()
-}
-
-func filterPeers(peers []ports.Peer, selfID string) []ports.Peer {
-	if len(peers) == 0 {
-		return nil
-	}
-	result := make([]ports.Peer, 0, len(peers))
-	for _, p := range peers {
-		if p.ID == selfID {
-			continue
-		}
-		result = append(result, p)
-	}
-	return result
-}
-
-func findLowestServerIDPeer(peers []ports.Peer, selfID string) *ports.Peer {
-	var lowest *ports.Peer
-	for i := range peers {
-		p := &peers[i]
-		if p.ID == selfID {
-			continue
-		}
-		if lowest == nil || p.ID < lowest.ID {
-			lowest = p
-		}
-	}
-	return lowest
-}
-
-func (m *Manager) buildBootstrapConfig(grpcPort int) *bootstrap.BootstrapConfig {
-	raftPort := m.config.Bootstrap.BasePort
-	if _, portStr, err := net.SplitHostPort(m.config.BindAddr); err == nil {
-		if p, _ := strconv.Atoi(portStr); p > 0 {
-			raftPort = p
-		}
-	}
-
-	return &bootstrap.BootstrapConfig{
-		ServiceName:       m.config.Bootstrap.ServiceName,
-		DataDir:           m.config.DataDir,
-		Ordinal:           m.config.Bootstrap.Ordinal,
-		ServerID:          m.nodeID,
-		ExpectedNodes:     m.config.Bootstrap.Replicas,
-		MinQuorum:         (m.config.Bootstrap.Replicas / 2) + 1,
-		RaftPort:          raftPort,
-		JoinPort:          grpcPort,
-		BindAddr:          m.config.BindAddr,
-		HeadlessService:   m.config.Bootstrap.HeadlessService,
-		BootstrapTimeout:  60 * time.Second,
-		JoinTimeout:       30 * time.Second,
-		LeaderWaitTimeout: 30 * time.Second,
-	}
 }

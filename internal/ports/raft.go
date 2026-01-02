@@ -16,6 +16,12 @@ const (
 	NodeLeader
 )
 
+type Peer struct {
+	ID      string
+	Address string
+	Port    int
+}
+
 type RaftNodeInfo struct {
 	ID      string
 	Address string

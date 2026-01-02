@@ -9,7 +9,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -17,52 +16,16 @@ import (
 
 func DefaultConfig() *Config {
 	return &Config{
-		Discovery:      []DiscoveryConfig{},
 		Transport:      DefaultTransportConfig(),
 		Raft:           DefaultRaftConfig(),
 		Resources:      DefaultResourceConfig(),
 		Engine:         DefaultEngineConfig(),
 		Orchestrator:   DefaultOrchestratorConfig(),
 		Cluster:        DefaultClusterConfig(),
-		Bootstrap:      DefaultBootstrapConfig(),
 		Observability:  DefaultObservabilityConfig(),
 		CircuitBreaker: DefaultCircuitBreakerSettings(),
 		RateLimiter:    DefaultRateLimiterSettings(),
 		Tracing:        DefaultTracingConfig(),
-	}
-}
-
-func DefaultBootstrapConfig() BootstrapConfig {
-	return BootstrapConfig{
-		ServiceName:            "graft",
-		Ordinal:                0,
-		Replicas:               3,
-		HeadlessService:        "",
-		BasePort:               7946,
-		FencingEnabled:         true,
-		FencingKeyPath:         "",
-		FencingQuorum:          0,
-		TLSEnabled:             false,
-		TLSCertPath:            "",
-		TLSKeyPath:             "",
-		TLSCAPath:              "",
-		LeaderWaitTimeout:      30 * time.Second,
-		ReadyTimeout:           60 * time.Second,
-		StaleCheckInterval:     5 * time.Second,
-		ForceBootstrapKeyPath:  "",
-		ForceBootstrapTokenDir: "",
-		RequireDedicatedKey:    false,
-		AdminAPIEnabled:        false,
-		AdminAPIPort:           8080,
-	}
-}
-
-func DefaultMDNSConfig() *MDNSConfig {
-	return &MDNSConfig{
-		Service:     "_graft._tcp",
-		Domain:      "local.",
-		Host:        "",
-		DisableIPv6: true,
 	}
 }
 
@@ -215,45 +178,6 @@ func NewConfigFromSimple(nodeID, bindAddr, dataDir string, logger *slog.Logger) 
 	return config
 }
 
-func (c *Config) WithMDNS(service, domain, host string, disableIPv6 bool) *Config {
-	mdnsConfig := DefaultMDNSConfig()
-	if service != "" {
-		mdnsConfig.Service = service
-	}
-	if domain != "" {
-		mdnsConfig.Domain = domain
-	}
-	if host != "" {
-		mdnsConfig.Host = host
-	}
-	mdnsConfig.DisableIPv6 = disableIPv6
-
-	c.Discovery = append(c.Discovery, DiscoveryConfig{
-		Type: DiscoveryMDNS,
-		MDNS: mdnsConfig,
-	})
-	return c
-}
-
-func (c *Config) WithStaticPeers(peers ...StaticPeer) *Config {
-	c.Discovery = append(c.Discovery, DiscoveryConfig{
-		Type:   DiscoveryStatic,
-		Static: peers,
-	})
-	return c
-}
-
-func (c *Config) WithDNS(hostname, service string) *Config {
-	c.Discovery = append(c.Discovery, DiscoveryConfig{
-		Type: DiscoveryDNS,
-		DNS: &DNSConfig{
-			Hostname: hostname,
-			Service:  service,
-		},
-	})
-	return c
-}
-
 func (c *Config) WithTLS(certFile, keyFile, caFile string) *Config {
 	c.Transport.EnableTLS = true
 	c.Transport.TLSCertFile = certFile
@@ -301,95 +225,6 @@ func (c *Config) WithClusterPersistence(persistenceFile string) *Config {
 	return c
 }
 
-func (c *Config) WithBootstrap(serviceName string, ordinal, replicas int) *Config {
-	c.Bootstrap.ServiceName = serviceName
-	c.Bootstrap.Ordinal = ordinal
-	c.Bootstrap.Replicas = replicas
-	return c
-}
-
-func (c *Config) WithK8sBootstrap(replicas int, headlessService string) *Config {
-	hostname, err := os.Hostname()
-	if err != nil {
-		return c
-	}
-
-	lastDash := strings.LastIndex(hostname, "-")
-	if lastDash == -1 || lastDash == len(hostname)-1 {
-		return c
-	}
-
-	serviceName := hostname[:lastDash]
-	ordinal, err := strconv.Atoi(hostname[lastDash+1:])
-	if err != nil {
-		return c
-	}
-
-	_, portStr, err := net.SplitHostPort(c.BindAddr)
-	if err != nil {
-		return c
-	}
-
-	raftPort, err := strconv.Atoi(portStr)
-	if err != nil {
-		return c
-	}
-
-	c.Bootstrap.ServiceName = serviceName
-	c.Bootstrap.HeadlessService = headlessService
-	c.Bootstrap.Ordinal = ordinal
-	c.Bootstrap.Replicas = replicas
-
-	c.AdvertiseAddr = fmt.Sprintf("%s.%s:%d", hostname, headlessService, raftPort)
-
-	c.WithDNS(headlessService, "grpc")
-
-	return c
-}
-
-func (c *Config) WithBootstrapFencing(keyPath string, quorum int) *Config {
-	c.Bootstrap.FencingEnabled = true
-	c.Bootstrap.FencingKeyPath = keyPath
-	c.Bootstrap.FencingQuorum = quorum
-	return c
-}
-
-func (c *Config) WithBootstrapTLS(certPath, keyPath, caPath string) *Config {
-	c.Bootstrap.TLSEnabled = true
-	c.Bootstrap.TLSCertPath = certPath
-	c.Bootstrap.TLSKeyPath = keyPath
-	c.Bootstrap.TLSCAPath = caPath
-	return c
-}
-
-func (c *Config) WithBootstrapAdmin(port int) *Config {
-	c.Bootstrap.AdminAPIEnabled = true
-	c.Bootstrap.AdminAPIPort = port
-	return c
-}
-
-func (c *Config) WithBootstrapTimeouts(leaderWait, ready, staleCheck time.Duration) *Config {
-	c.Bootstrap.LeaderWaitTimeout = leaderWait
-	c.Bootstrap.ReadyTimeout = ready
-	c.Bootstrap.StaleCheckInterval = staleCheck
-	return c
-}
-
-func (c *Config) WithBootstrapInsecure() *Config {
-	c.Bootstrap.TLSAllowInsecure = true
-	return c
-}
-
-func (c *Config) WithIgnoreExistingState() *Config {
-	c.Bootstrap.IgnoreExistingState = true
-	return c
-}
-
-func (c *Config) WithInMemoryStorage() *Config {
-	c.Bootstrap.InMemoryStorage = true
-	return c
-}
-
 func (c *Config) Validate() error {
 	if c.NodeID == "" {
 		return NewConfigError("node_id", ErrInvalidInput)
@@ -414,13 +249,6 @@ func (c *Config) Validate() error {
 		return NewConfigError("logger", ErrInvalidInput)
 	}
 
-	for i, discovery := range c.Discovery {
-		if err := validateDiscoveryConfig(&discovery); err != nil {
-			return NewConfigError("discovery", err)
-		}
-		_ = i
-	}
-
 	if c.Resources.MaxConcurrentTotal <= 0 {
 		return NewConfigError("resources.max_concurrent_total", ErrInvalidInput)
 	}
@@ -429,86 +257,6 @@ func (c *Config) Validate() error {
 		return NewConfigError("engine.max_concurrent_workflows", ErrInvalidInput)
 	}
 
-	if err := validateBootstrapConfig(&c.Bootstrap); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func validateBootstrapConfig(config *BootstrapConfig) error {
-	if config.ServiceName == "" {
-		return NewConfigError("bootstrap.service_name", ErrInvalidInput)
-	}
-	if config.Ordinal < 0 {
-		return NewConfigError("bootstrap.ordinal", ErrInvalidInput)
-	}
-	if config.Replicas <= 0 {
-		return NewConfigError("bootstrap.replicas", ErrInvalidInput)
-	}
-	if config.Ordinal >= config.Replicas {
-		return NewConfigError("bootstrap.ordinal", fmt.Errorf("ordinal %d must be less than replicas %d", config.Ordinal, config.Replicas))
-	}
-	if config.BasePort <= 0 || config.BasePort > 65535 {
-		return NewConfigError("bootstrap.base_port", ErrInvalidInput)
-	}
-	if config.FencingEnabled && config.FencingQuorum < 0 {
-		return NewConfigError("bootstrap.fencing_quorum", ErrInvalidInput)
-	}
-	if config.TLSEnabled {
-		if config.TLSCertPath == "" {
-			return NewConfigError("bootstrap.tls_cert_path", ErrInvalidInput)
-		}
-		if config.TLSKeyPath == "" {
-			return NewConfigError("bootstrap.tls_key_path", ErrInvalidInput)
-		}
-	}
-	if config.LeaderWaitTimeout <= 0 {
-		return NewConfigError("bootstrap.leader_wait_timeout", ErrInvalidInput)
-	}
-	if config.ReadyTimeout <= 0 {
-		return NewConfigError("bootstrap.ready_timeout", ErrInvalidInput)
-	}
-	if config.StaleCheckInterval <= 0 {
-		return NewConfigError("bootstrap.stale_check_interval", ErrInvalidInput)
-	}
-	if config.AdminAPIEnabled && (config.AdminAPIPort <= 0 || config.AdminAPIPort > 65535) {
-		return NewConfigError("bootstrap.admin_api_port", ErrInvalidInput)
-	}
-	return nil
-}
-
-func validateDiscoveryConfig(config *DiscoveryConfig) error {
-	switch config.Type {
-	case DiscoveryMDNS:
-		if config.MDNS == nil {
-			return NewConfigError("mdns", ErrInvalidInput)
-		}
-		if config.MDNS.Service == "" {
-			return NewConfigError("mdns.service", ErrInvalidInput)
-		}
-	case DiscoveryStatic:
-		if len(config.Static) == 0 {
-			return NewConfigError("static", ErrInvalidInput)
-		}
-		for _, peer := range config.Static {
-			if peer.Address == "" {
-				return NewConfigError("static.address", ErrInvalidInput)
-			}
-			if peer.Port <= 0 {
-				return NewConfigError("static.port", ErrInvalidInput)
-			}
-		}
-	case DiscoveryDNS:
-		if config.DNS == nil {
-			return NewConfigError("dns", ErrInvalidInput)
-		}
-		if config.DNS.Hostname == "" {
-			return NewConfigError("dns.hostname", ErrInvalidInput)
-		}
-	default:
-		return NewConfigError("discovery.type", ErrInvalidInput)
-	}
 	return nil
 }
 

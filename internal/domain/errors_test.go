@@ -36,30 +36,6 @@ func TestDomainErrorBasics(t *testing.T) {
 	}
 }
 
-func TestErrorWithContext(t *testing.T) {
-	err := NewNetworkError("connection failed", nil).
-		WithNodeID("node-123").
-		WithWorkflowID("workflow-456").
-		WithOperation("connect_to_peer").
-		WithContext("peer_addr", "192.168.1.100")
-
-	if err.Context.NodeID != "node-123" {
-		t.Errorf("Expected node ID node-123, got %s", err.Context.NodeID)
-	}
-
-	if err.Context.WorkflowID != "workflow-456" {
-		t.Errorf("Expected workflow ID workflow-456, got %s", err.Context.WorkflowID)
-	}
-
-	if err.Context.Operation != "connect_to_peer" {
-		t.Errorf("Expected operation connect_to_peer, got %s", err.Context.Operation)
-	}
-
-	if err.Context.Details["peer_addr"] != "192.168.1.100" {
-		t.Error("Expected peer_addr in context details")
-	}
-}
-
 func TestErrorCategorization(t *testing.T) {
 	testCases := []struct {
 		name               string

@@ -1286,21 +1286,6 @@ func (r *Runtime) SetEventManager(manager ports.EventManager) {
 	r.mu.Unlock()
 }
 
-func mapRaftState(state raft.RaftState) ports.RaftLeadershipState {
-	switch state {
-	case raft.Candidate:
-		return ports.RaftLeadershipProvisional
-	case raft.Leader:
-		return ports.RaftLeadershipLeader
-	case raft.Follower:
-		return ports.RaftLeadershipFollower
-	case raft.Shutdown:
-		return ports.RaftLeadershipDemoted
-	default:
-		return ports.RaftLeadershipUnknown
-	}
-}
-
 func mapLeadershipStateToNodeState(state ports.RaftLeadershipState) ports.NodeState {
 	switch state {
 	case ports.RaftLeadershipLeader:

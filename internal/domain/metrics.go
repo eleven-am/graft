@@ -129,30 +129,6 @@ func (m *ExecutionMetrics) AddExecutionTime(duration time.Duration) {
 	atomic.StoreInt64(&m.LastUpdated, time.Now().Unix())
 }
 
-func (m *ExecutionMetrics) IncrementWorkflowsActive() {
-	atomic.AddInt64(&m.WorkflowsActive, 1)
-}
-
-func (m *ExecutionMetrics) DecrementWorkflowsActive() {
-	atomic.AddInt64(&m.WorkflowsActive, -1)
-}
-
-func (m *ExecutionMetrics) IncrementNodesActive() {
-	atomic.AddInt64(&m.NodesActive, 1)
-}
-
-func (m *ExecutionMetrics) DecrementNodesActive() {
-	atomic.AddInt64(&m.NodesActive, -1)
-}
-
-func (m *ExecutionMetrics) SetItemsPending(count int64) {
-	atomic.StoreInt64(&m.ItemsPending, count)
-}
-
-func (m *ExecutionMetrics) SetItemsClaimed(count int64) {
-	atomic.StoreInt64(&m.ItemsClaimed, count)
-}
-
 func (m *ExecutionMetrics) GetSnapshot() ExecutionMetrics {
 	snapshot := ExecutionMetrics{
 		WorkflowsStarted:           atomic.LoadInt64(&m.WorkflowsStarted),

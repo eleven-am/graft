@@ -203,34 +203,6 @@ func (e *DomainError) Is(target error) bool {
 	return false
 }
 
-func (e *DomainError) WithContext(key, value string) *DomainError {
-	if e.Context.Details == nil {
-		e.Context.Details = make(map[string]string)
-	}
-	e.Context.Details[key] = value
-	return e
-}
-
-func (e *DomainError) WithNodeID(nodeID string) *DomainError {
-	e.Context.NodeID = nodeID
-	return e
-}
-
-func (e *DomainError) WithWorkflowID(workflowID string) *DomainError {
-	e.Context.WorkflowID = workflowID
-	return e
-}
-
-func (e *DomainError) WithRequestID(requestID string) *DomainError {
-	e.Context.RequestID = requestID
-	return e
-}
-
-func (e *DomainError) WithOperation(operation string) *DomainError {
-	e.Context.Operation = operation
-	return e
-}
-
 func NewDomainError(message string, cause error, opts ...ErrorOption) *DomainError {
 	return NewDomainErrorWithCategory(CategoryUnknown, message, cause, opts...)
 }
