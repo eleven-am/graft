@@ -48,15 +48,21 @@ func (a *RaftCallbacksAdapter) OnJoin(self consensus.NodeInfo, peers []consensus
 }
 
 func (a *RaftCallbacksAdapter) OnPeerJoin(peer consensus.NodeInfo) {
-	a.logger.Info("peer joining cluster", "peer_id", peer.ID, "peer_addr", peer.RaftAddr)
 	if err := a.raft.AddVoter(peer.ID, peer.RaftAddr); err != nil {
+		if err.Error() == "raft: controller not started" {
+			a.logger.Debug("ignoring peer join, raft not started yet", "peer_id", peer.ID)
+			return
+		}
 		a.logger.Error("failed to add voter", "peer_id", peer.ID, "error", err)
 	}
 }
 
 func (a *RaftCallbacksAdapter) OnPeerLeave(peer consensus.NodeInfo) {
-	a.logger.Info("peer leaving cluster", "peer_id", peer.ID)
 	if err := a.raft.RemoveServer(peer.ID); err != nil {
+		if err.Error() == "raft: controller not started" {
+			a.logger.Debug("ignoring peer leave, raft not started yet", "peer_id", peer.ID)
+			return
+		}
 		a.logger.Error("failed to remove server", "peer_id", peer.ID, "error", err)
 	}
 }
