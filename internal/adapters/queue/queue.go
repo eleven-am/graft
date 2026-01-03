@@ -1086,8 +1086,18 @@ func (q *Queue) cleanupExpiredClaimLeasesLocked() error {
 			return err
 		}
 
-		expired := !exists
-		if exists {
+		claimedItem, err := domain.ClaimedItemFromBytes(kv.Value)
+		if err != nil {
+			continue
+		}
+
+		expired := false
+		if !exists {
+			if time.Since(claimedItem.ClaimedAt) < 30*time.Second {
+				continue
+			}
+			expired = true
+		} else {
 			if record.Owner == q.nodeID && record.ExpiresAt.After(now) {
 				continue
 			}
@@ -1103,10 +1113,6 @@ func (q *Queue) cleanupExpiredClaimLeasesLocked() error {
 
 		_ = q.leaseManager.ForceRelease(leaseKey)
 
-		claimedItem, err := domain.ClaimedItemFromBytes(kv.Value)
-		if err != nil {
-			continue
-		}
 		queueItem := domain.NewQueueItem(claimedItem.Data, claimedItem.Sequence)
 		itemBytes, err := queueItem.ToBytes()
 		if err != nil {
