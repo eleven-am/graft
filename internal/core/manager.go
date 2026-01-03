@@ -194,7 +194,6 @@ func NewWithConfig(config *domain.Config) *Manager {
 	raftAdapter, err := raft.NewAdapter(raft.AdapterConfig{
 		NodeID:        config.NodeID,
 		GossipPort:    config.GossipPort,
-		RaftPort:      config.RaftPort,
 		SecretKey:     []byte(config.Cluster.ID),
 		AdvertiseAddr: config.AdvertiseAddr,
 		Discoverer:    discoverer,
@@ -1100,12 +1099,12 @@ func (m *Manager) joinPeers(ctx context.Context, peers []ports.Peer) bool {
 			"peer_addr", peerAddr,
 			"node_id", m.nodeID,
 			"raft_address", m.config.AdvertiseAddr,
-			"raft_port", m.config.RaftPort)
+			"gossip_port", m.config.GossipPort)
 
 		req := &ports.JoinRequest{
 			NodeID:   m.nodeID,
 			Address:  m.config.AdvertiseAddr,
-			Port:     m.config.RaftPort,
+			Port:     m.config.GossipPort,
 			Metadata: joinMetadata,
 		}
 

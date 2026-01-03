@@ -12,7 +12,6 @@ type Discoverer interface {
 
 type Config struct {
 	NodeID        string       `json:"node_id" yaml:"node_id"`
-	RaftPort      int          `json:"raft_port" yaml:"raft_port"`
 	GossipPort    int          `json:"gossip_port" yaml:"gossip_port"`
 	AdvertiseAddr string       `json:"advertise_addr" yaml:"advertise_addr"`
 	DataDir       string       `json:"data_dir" yaml:"data_dir"`

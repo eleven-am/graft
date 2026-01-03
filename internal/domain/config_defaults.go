@@ -222,8 +222,7 @@ func (c *Config) WithClusterPersistence(persistenceFile string) *Config {
 	return c
 }
 
-func (c *Config) WithPorts(raftPort, gossipPort int) *Config {
-	c.RaftPort = raftPort
+func (c *Config) WithGossipPort(gossipPort int) *Config {
 	c.GossipPort = gossipPort
 	return c
 }
@@ -239,9 +238,6 @@ func (c *Config) Validate() error {
 	}
 	if c.Cluster.ID == "" {
 		return NewConfigError("cluster_id", ErrInvalidInput)
-	}
-	if c.RaftPort < 0 || c.RaftPort > 65535 {
-		return NewConfigError("raft_port", ErrInvalidInput)
 	}
 	if c.GossipPort <= 0 || c.GossipPort > 65535 {
 		return NewConfigError("gossip_port", ErrInvalidInput)

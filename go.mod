@@ -5,7 +5,7 @@ go 1.25.2
 require (
 	dario.cat/mergo v1.0.2
 	github.com/dgraph-io/badger/v3 v3.2103.5
-	github.com/eleven-am/auto-consensus v0.1.6
+	github.com/eleven-am/auto-consensus v0.1.7
 	github.com/goccy/go-json v0.10.5
 	github.com/google/uuid v1.6.0
 	github.com/hashicorp/raft v1.7.3

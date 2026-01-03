@@ -133,8 +133,8 @@ func (cb *ConfigBuilder) WithDiscoverers(discoverers ...Discoverer) *ConfigBuild
 	return cb
 }
 
-func (cb *ConfigBuilder) WithPorts(raftPort, gossipPort int) *ConfigBuilder {
-	cb.config.WithPorts(raftPort, gossipPort)
+func (cb *ConfigBuilder) WithGossipPort(gossipPort int) *ConfigBuilder {
+	cb.config.WithGossipPort(gossipPort)
 	return cb
 }
 

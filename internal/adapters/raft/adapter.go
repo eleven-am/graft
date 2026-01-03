@@ -67,17 +67,16 @@ func (l *lazyFSM) SetEventManager(manager ports.EventManager) {
 }
 
 type AdapterConfig struct {
-	NodeID         string
-	GossipPort     int
-	RaftPort       int
-	SecretKey      []byte
-	AdvertiseAddr  string
-	Discoverer     autoconsensus.Discoverer
-	DataDir        string
-	InMemory       bool
-	ClusterID      string
-	ClusterPolicy  domain.ClusterPolicy
-	Logger         *slog.Logger
+	NodeID        string
+	GossipPort    int
+	SecretKey     []byte
+	AdvertiseAddr string
+	Discoverer    autoconsensus.Discoverer
+	DataDir       string
+	InMemory      bool
+	ClusterID     string
+	ClusterPolicy domain.ClusterPolicy
+	Logger        *slog.Logger
 }
 
 func NewAdapter(cfg AdapterConfig, eventManager ports.EventManager) (*Adapter, error) {
@@ -103,7 +102,6 @@ func NewAdapter(cfg AdapterConfig, eventManager ports.EventManager) (*Adapter, e
 	consensusCfg := autoconsensus.Config{
 		NodeID:         cfg.NodeID,
 		GossipPort:     cfg.GossipPort,
-		RaftPort:       cfg.RaftPort,
 		SecretKey:      cfg.SecretKey,
 		StorageFactory: wrappedFactory,
 		FSM:            lazyFSM,
