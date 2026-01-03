@@ -146,16 +146,6 @@ func NewStorage(cfg StorageConfig, logger *slog.Logger) (*Storage, error) {
 	}, nil
 }
 
-func (s *Storage) resources() *StorageResources {
-	return &StorageResources{
-		LogStore:      s.logStore,
-		StableStore:   s.stableStore,
-		SnapshotStore: s.snapshotStore,
-		StateDB:       s.stateDB,
-		Cleanup:       s.Close,
-	}
-}
-
 // HasExistingState reports whether any durable raft state has been persisted.
 // It inspects the log and snapshot stores, tolerating empty stores when the
 // node has never bootstrapped before.

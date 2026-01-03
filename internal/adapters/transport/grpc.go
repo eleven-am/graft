@@ -229,28 +229,14 @@ func (t *GRPCTransport) RequestJoin(ctx context.Context, req *pb.JoinRequest) (*
 		return t.proxyJoinToLeader(ctx, leaderAddr, req)
 	}
 
-	nodeAddress := fmt.Sprintf("%s:%d", req.Address, req.Port)
-	err := t.raft.AddNode(req.NodeId, nodeAddress)
-	if err != nil {
-		t.logger.Error("failed to add node to raft cluster",
-			"node_id", req.NodeId,
-			"address", nodeAddress,
-			"error", err)
-		return &pb.JoinResponse{
-			Accepted: false,
-			NodeId:   req.NodeId,
-			Message:  fmt.Sprintf("failed to add to cluster: %v", err),
-		}, nil
-	}
-
-	t.logger.Debug("successfully added node to cluster",
+	t.logger.Debug("acknowledged join request - membership handled by gossip",
 		"node_id", req.NodeId,
-		"address", nodeAddress)
+		"address", fmt.Sprintf("%s:%d", req.Address, req.Port))
 
 	return &pb.JoinResponse{
 		Accepted: true,
 		NodeId:   req.NodeId,
-		Message:  "successfully joined cluster",
+		Message:  "join acknowledged - membership handled by gossip layer",
 	}, nil
 }
 

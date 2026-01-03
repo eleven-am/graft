@@ -3,9 +3,7 @@ package graft
 import (
 	"time"
 
-	"github.com/eleven-am/auto-consensus/bootstrap"
-	"github.com/eleven-am/auto-consensus/discovery"
-	"github.com/eleven-am/auto-consensus/gossip"
+	autoconsensus "github.com/eleven-am/auto-consensus"
 	"github.com/eleven-am/graft/internal/domain"
 )
 
@@ -34,31 +32,22 @@ const (
 
 type ClusterConfig = domain.ClusterConfig
 
-type BootstrapConfig = bootstrap.Config
+type MDNSConfig = autoconsensus.MDNSConfig
 
-type MDNSConfig = discovery.MDNSConfig
+type DNSConfig = autoconsensus.DNSConfig
 
-type DNSConfig = discovery.DNSConfig
+type Discoverer = autoconsensus.Discoverer
 
-type NetworkMode = gossip.NetworkMode
-
-const (
-	NetworkModeLAN NetworkMode = gossip.LAN
-	NetworkModeWAN NetworkMode = gossip.WAN
-)
-
-type Discoverer = discovery.Discoverer
-
-func NewMDNSDiscoverer(cfg MDNSConfig) *discovery.MDNSDiscoverer {
-	return discovery.NewMDNS(cfg)
+func NewMDNSDiscoverer(cfg MDNSConfig) Discoverer {
+	return autoconsensus.NewMDNSDiscovery(cfg)
 }
 
-func NewDNSDiscoverer(cfg DNSConfig) *discovery.DNSDiscoverer {
-	return discovery.NewDNS(cfg)
+func NewDNSDiscoverer(cfg DNSConfig) Discoverer {
+	return autoconsensus.NewDNSDiscovery(cfg)
 }
 
-func NewStaticDiscoverer(peers []string) *discovery.StaticDiscoverer {
-	return discovery.NewStatic(peers)
+func NewStaticDiscoverer(peers []string) Discoverer {
+	return autoconsensus.NewStaticDiscovery(peers)
 }
 
 func DefaultConfig() *Config {
