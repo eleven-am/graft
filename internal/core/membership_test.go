@@ -18,7 +18,7 @@ func TestManager_ClusterMembershipEvents(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	manager := New("test-node", "localhost:17222", tempDir, logger)
+	manager := New("test-node", tempDir, logger)
 	if manager == nil {
 		t.Skip("Manager creation failed - requires network infrastructure")
 	}
@@ -159,7 +159,7 @@ func TestManager_MultipleClusterEventHandlers(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	manager := New("test-node", "localhost:17223", tempDir, logger)
+	manager := New("test-node", tempDir, logger)
 	if manager == nil {
 		t.Skip("Manager creation failed - requires network infrastructure")
 	}
@@ -229,7 +229,7 @@ func TestManager_ClusterEventErrorHandling(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	manager := New("test-node", "localhost:17224", tempDir, logger)
+	manager := New("test-node", tempDir, logger)
 	if manager == nil {
 		t.Skip("Manager creation failed - requires network infrastructure")
 	}
@@ -287,7 +287,7 @@ func TestManager_TypeAliases(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	manager := New("test-node", "localhost:17225", tempDir, logger)
+	manager := New("test-node", tempDir, logger)
 	if manager == nil {
 		t.Skip("Manager creation failed - requires network infrastructure")
 	}
@@ -353,7 +353,7 @@ func TestManager_ClusterEventConcurrency(t *testing.T) {
 	defer os.RemoveAll(tempDir)
 
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	manager := New("test-node", "localhost:17226", tempDir, logger)
+	manager := New("test-node", tempDir, logger)
 	if manager == nil {
 		t.Skip("Manager creation failed - requires network infrastructure")
 	}

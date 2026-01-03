@@ -78,11 +78,11 @@ type ConfigBuilder struct {
 	config *Config
 }
 
-func NewConfigBuilder(nodeID, bindAddr, dataDir string) *ConfigBuilder {
+func NewConfigBuilder(nodeID, dataDir string) *ConfigBuilder {
 	config := DefaultConfig()
 	config.NodeID = nodeID
-	config.BindAddr = bindAddr
-	config.AdvertiseAddr = bindAddr
+	config.RaftPort = 7222
+	config.GossipPort = 7946
 	config.DataDir = dataDir
 	return &ConfigBuilder{config: config}
 }
@@ -134,8 +134,8 @@ func (cb *ConfigBuilder) WithDiscoverers(discoverers ...Discoverer) *ConfigBuild
 	return cb
 }
 
-func (cb *ConfigBuilder) WithGossipAddr(bindAddr, advertiseAddr string) *ConfigBuilder {
-	cb.config.WithGossipAddr(bindAddr, advertiseAddr)
+func (cb *ConfigBuilder) WithPorts(raftPort, gossipPort int) *ConfigBuilder {
+	cb.config.WithPorts(raftPort, gossipPort)
 	return cb
 }
 

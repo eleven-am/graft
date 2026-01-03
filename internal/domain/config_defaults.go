@@ -5,10 +5,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/google/uuid"
@@ -157,11 +155,11 @@ func DefaultTracingConfig() TracingConfig {
 	}
 }
 
-func NewConfigFromSimple(nodeID, bindAddr, dataDir string, logger *slog.Logger) *Config {
+func NewConfigFromSimple(nodeID, dataDir string, logger *slog.Logger) *Config {
 	config := DefaultConfig()
 	config.NodeID = nodeID
-	config.BindAddr = bindAddr
-	config.AdvertiseAddr = bindAddr
+	config.RaftPort = 7222
+	config.GossipPort = 7946
 	config.DataDir = dataDir
 	config.Logger = logger
 
@@ -225,9 +223,9 @@ func (c *Config) WithClusterPersistence(persistenceFile string) *Config {
 	return c
 }
 
-func (c *Config) WithGossipAddr(bindAddr, advertiseAddr string) *Config {
-	c.GossipBindAddr = bindAddr
-	c.GossipAdvertiseAddr = advertiseAddr
+func (c *Config) WithPorts(raftPort, gossipPort int) *Config {
+	c.RaftPort = raftPort
+	c.GossipPort = gossipPort
 	return c
 }
 
@@ -243,15 +241,11 @@ func (c *Config) Validate() error {
 	if c.Cluster.ID == "" {
 		return NewConfigError("cluster_id", ErrInvalidInput)
 	}
-	if c.BindAddr == "" {
-		return NewConfigError("bind_addr", ErrInvalidInput)
+	if c.RaftPort <= 0 || c.RaftPort > 65535 {
+		return NewConfigError("raft_port", ErrInvalidInput)
 	}
-	if host, port, err := net.SplitHostPort(c.BindAddr); err != nil || host == "" {
-		return NewConfigError("bind_addr", ErrInvalidInput)
-	} else {
-		if _, err := strconv.Atoi(port); err != nil {
-			return NewConfigError("bind_addr", ErrInvalidInput)
-		}
+	if c.GossipPort <= 0 || c.GossipPort > 65535 {
+		return NewConfigError("gossip_port", ErrInvalidInput)
 	}
 	if c.DataDir == "" {
 		return NewConfigError("data_dir", ErrInvalidInput)

@@ -181,22 +181,8 @@ const (
 	WorkflowStatePaused = core.WorkflowStatePaused
 )
 
-// New creates a new Graft manager with the specified configuration.
-//
-// Parameters:
-//   - nodeID: Unique identifier for this node in the cluster
-//   - bindAddr: Address to bind the node's network services to
-//   - dataDir: Directory path where persistent data will be stored
-//   - logger: Structured logger instance for system logging
-//
-// The manager must be started with Start() before it can process workflows.
-//
-// Example:
-//
-//	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-//	manager := graft.New("node-1", "0.0.0.0:8080", "./data", logger)
-func New(nodeID, bindAddr, dataDir string, logger *slog.Logger) *Manager {
-	return core.New(nodeID, bindAddr, dataDir, logger)
+func New(nodeID, dataDir string, logger *slog.Logger) *Manager {
+	return core.New(nodeID, dataDir, logger)
 }
 
 // NewWithConfig creates a new Graft manager using a comprehensive configuration object.

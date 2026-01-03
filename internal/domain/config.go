@@ -11,14 +11,13 @@ type Discoverer interface {
 }
 
 type Config struct {
-	NodeID              string       `json:"node_id" yaml:"node_id"`
-	BindAddr            string       `json:"bind_addr" yaml:"bind_addr"`
-	AdvertiseAddr       string       `json:"advertise_addr" yaml:"advertise_addr"`
-	GossipBindAddr      string       `json:"gossip_bind_addr" yaml:"gossip_bind_addr"`
-	GossipAdvertiseAddr string       `json:"gossip_advertise_addr" yaml:"gossip_advertise_addr"`
-	DataDir             string       `json:"data_dir" yaml:"data_dir"`
-	Logger              *slog.Logger `json:"-" yaml:"-"`
-	Discoverers         []Discoverer `json:"-" yaml:"-"`
+	NodeID        string       `json:"node_id" yaml:"node_id"`
+	RaftPort      int          `json:"raft_port" yaml:"raft_port"`
+	GossipPort    int          `json:"gossip_port" yaml:"gossip_port"`
+	AdvertiseAddr string       `json:"advertise_addr" yaml:"advertise_addr"`
+	DataDir       string       `json:"data_dir" yaml:"data_dir"`
+	Logger        *slog.Logger `json:"-" yaml:"-"`
+	Discoverers   []Discoverer `json:"-" yaml:"-"`
 
 	Transport      TransportConfig      `json:"transport" yaml:"transport"`
 	Raft           RaftConfig           `json:"raft" yaml:"raft"`
@@ -151,4 +150,3 @@ type TracingConfig struct {
 	ResourceTags     map[string]string `json:"resource_tags,omitempty" yaml:"resource_tags,omitempty"`
 	MaxSpansPerTrace int               `json:"max_spans_per_trace" yaml:"max_spans_per_trace"`
 }
-

@@ -146,8 +146,8 @@ type NodeJoinedEvent = domain.NodeJoinedEvent
 type NodeLeftEvent = domain.NodeLeftEvent
 type LeaderChangedEvent = domain.LeaderChangedEvent
 
-func New(nodeID, bindAddr, dataDir string, logger *slog.Logger) *Manager {
-	config := domain.NewConfigFromSimple(nodeID, bindAddr, dataDir, logger)
+func New(nodeID, dataDir string, logger *slog.Logger) *Manager {
+	config := domain.NewConfigFromSimple(nodeID, dataDir, logger)
 	return NewWithConfig(config)
 }
 
@@ -191,15 +191,10 @@ func NewWithConfig(config *domain.Config) *Manager {
 		discoverer = autoconsensus.NewCascade(discs...)
 	}
 
-	gossipBindAddr := config.GossipBindAddr
-	if gossipBindAddr == "" {
-		gossipBindAddr = config.BindAddr
-	}
-
 	raftAdapter, err := raft.NewAdapter(raft.AdapterConfig{
 		NodeID:        config.NodeID,
-		GossipPort:    extractPort(gossipBindAddr, 7946),
-		RaftPort:      extractPort(config.BindAddr, 7222),
+		GossipPort:    config.GossipPort,
+		RaftPort:      config.RaftPort,
 		SecretKey:     []byte(config.Cluster.ID),
 		AdvertiseAddr: config.AdvertiseAddr,
 		Discoverer:    discoverer,
@@ -435,7 +430,7 @@ func (m *Manager) Stop() error {
 
 func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 	m.grpcPort = grpcPort
-	if err := m.transport.Start(m.ctx, m.config.BindAddr, grpcPort); err != nil {
+	if err := m.transport.Start(m.ctx, "0.0.0.0", grpcPort); err != nil {
 		return domain.NewDomainErrorWithCategory(
 			domain.CategoryNetwork,
 			"failed to start transport",
@@ -459,7 +454,6 @@ func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
 }
 
 func (m *Manager) RegisterNode(node interface{}) error {
-
 	return m.nodeRegistry.RegisterNode(node)
 }
 
@@ -1102,18 +1096,6 @@ func (m *Manager) isWorkflowIntakeAllowed() bool {
 }
 
 func (m *Manager) joinPeers(ctx context.Context, peers []ports.Peer) bool {
-	host, raftPortStr, err := net.SplitHostPort(m.config.BindAddr)
-	if err != nil {
-		host = m.config.BindAddr
-		raftPortStr = "7222"
-	}
-
-	raftPort, err := strconv.Atoi(raftPortStr)
-	if err != nil {
-		m.logger.Error("invalid raft port in bind address", "bind_addr", m.config.BindAddr, "port_str", raftPortStr)
-		return false
-	}
-
 	bootMetadata := metadata.GetGlobalBootstrapMetadata()
 	joinMetadata := metadata.ExtendMetadata(map[string]string{
 		"cluster_id": m.config.Cluster.ID,
@@ -1130,13 +1112,13 @@ func (m *Manager) joinPeers(ctx context.Context, peers []ports.Peer) bool {
 		m.logger.Debug("sending join request",
 			"peer_addr", peerAddr,
 			"node_id", m.nodeID,
-			"raft_address", host,
-			"raft_port", raftPort)
+			"raft_address", m.config.AdvertiseAddr,
+			"raft_port", m.config.RaftPort)
 
 		req := &ports.JoinRequest{
 			NodeID:   m.nodeID,
-			Address:  host,
-			Port:     raftPort,
+			Address:  m.config.AdvertiseAddr,
+			Port:     m.config.RaftPort,
 			Metadata: joinMetadata,
 		}
 
@@ -1315,19 +1297,4 @@ func (m *Manager) awaitLeadership(timeout time.Duration, role string) {
 		"node_id", m.nodeID,
 		"leader_addr", m.raftAdapter.LeaderAddr())
 	m.resumeWorkflowIntake()
-}
-
-func extractPort(addr string, defaultPort int) int {
-	if addr == "" {
-		return defaultPort
-	}
-	_, portStr, err := net.SplitHostPort(addr)
-	if err != nil {
-		return defaultPort
-	}
-	port, err := strconv.Atoi(portStr)
-	if err != nil {
-		return defaultPort
-	}
-	return port
 }
