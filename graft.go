@@ -11,9 +11,9 @@
 //
 // Basic usage:
 //
-//	manager := graft.New("node1", "localhost:8080", "./data", logger)
+//	manager := graft.New("node1", "./data", logger)
 //	manager.RegisterNode(&MyWorkflowNode{})
-//	manager.Start(context.Background(), 8080)
+//	manager.Start(context.Background())
 //
 //	trigger := graft.WorkflowTrigger{
 //	    WorkflowID:   "my-workflow-123",

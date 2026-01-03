@@ -123,39 +123,6 @@ func (_c *MockTransportPort_RegisterEngine_Call) RunAndReturn(run func(ports.Eng
 	return _c
 }
 
-// RegisterLoadSink provides a mock function with given fields: sink
-func (_m *MockTransportPort) RegisterLoadSink(sink ports.LoadSink) {
-	_m.Called(sink)
-}
-
-// MockTransportPort_RegisterLoadSink_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RegisterLoadSink'
-type MockTransportPort_RegisterLoadSink_Call struct {
-	*mock.Call
-}
-
-// RegisterLoadSink is a helper method to define mock.On call
-//   - sink ports.LoadSink
-func (_e *MockTransportPort_Expecter) RegisterLoadSink(sink interface{}) *MockTransportPort_RegisterLoadSink_Call {
-	return &MockTransportPort_RegisterLoadSink_Call{Call: _e.mock.On("RegisterLoadSink", sink)}
-}
-
-func (_c *MockTransportPort_RegisterLoadSink_Call) Run(run func(sink ports.LoadSink)) *MockTransportPort_RegisterLoadSink_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(ports.LoadSink))
-	})
-	return _c
-}
-
-func (_c *MockTransportPort_RegisterLoadSink_Call) Return() *MockTransportPort_RegisterLoadSink_Call {
-	_c.Call.Return()
-	return _c
-}
-
-func (_c *MockTransportPort_RegisterLoadSink_Call) RunAndReturn(run func(ports.LoadSink)) *MockTransportPort_RegisterLoadSink_Call {
-	_c.Run(run)
-	return _c
-}
-
 // RegisterRaft provides a mock function with given fields: raft
 func (_m *MockTransportPort) RegisterRaft(raft ports.RaftNode) {
 	_m.Called(raft)
@@ -189,35 +156,35 @@ func (_c *MockTransportPort_RegisterRaft_Call) RunAndReturn(run func(ports.RaftN
 	return _c
 }
 
-// RegisterService provides a mock function with given fields: registrar
-func (_m *MockTransportPort) RegisterService(registrar func(*grpc.Server)) {
-	_m.Called(registrar)
+// RegisterWithServer provides a mock function with given fields: server
+func (_m *MockTransportPort) RegisterWithServer(server grpc.ServiceRegistrar) {
+	_m.Called(server)
 }
 
-// MockTransportPort_RegisterService_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RegisterService'
-type MockTransportPort_RegisterService_Call struct {
+// MockTransportPort_RegisterWithServer_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RegisterWithServer'
+type MockTransportPort_RegisterWithServer_Call struct {
 	*mock.Call
 }
 
-// RegisterService is a helper method to define mock.On call
-//   - registrar func(*grpc.Server)
-func (_e *MockTransportPort_Expecter) RegisterService(registrar interface{}) *MockTransportPort_RegisterService_Call {
-	return &MockTransportPort_RegisterService_Call{Call: _e.mock.On("RegisterService", registrar)}
+// RegisterWithServer is a helper method to define mock.On call
+//   - server grpc.ServiceRegistrar
+func (_e *MockTransportPort_Expecter) RegisterWithServer(server interface{}) *MockTransportPort_RegisterWithServer_Call {
+	return &MockTransportPort_RegisterWithServer_Call{Call: _e.mock.On("RegisterWithServer", server)}
 }
 
-func (_c *MockTransportPort_RegisterService_Call) Run(run func(registrar func(*grpc.Server))) *MockTransportPort_RegisterService_Call {
+func (_c *MockTransportPort_RegisterWithServer_Call) Run(run func(server grpc.ServiceRegistrar)) *MockTransportPort_RegisterWithServer_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(func(*grpc.Server)))
+		run(args[0].(grpc.ServiceRegistrar))
 	})
 	return _c
 }
 
-func (_c *MockTransportPort_RegisterService_Call) Return() *MockTransportPort_RegisterService_Call {
+func (_c *MockTransportPort_RegisterWithServer_Call) Return() *MockTransportPort_RegisterWithServer_Call {
 	_c.Call.Return()
 	return _c
 }
 
-func (_c *MockTransportPort_RegisterService_Call) RunAndReturn(run func(func(*grpc.Server))) *MockTransportPort_RegisterService_Call {
+func (_c *MockTransportPort_RegisterWithServer_Call) RunAndReturn(run func(grpc.ServiceRegistrar)) *MockTransportPort_RegisterWithServer_Call {
 	_c.Run(run)
 	return _c
 }
@@ -398,54 +365,6 @@ func (_c *MockTransportPort_SendJoinRequest_Call) RunAndReturn(run func(context.
 	return _c
 }
 
-// SendPublishLoad provides a mock function with given fields: ctx, nodeAddr, update
-func (_m *MockTransportPort) SendPublishLoad(ctx context.Context, nodeAddr string, update ports.LoadUpdate) error {
-	ret := _m.Called(ctx, nodeAddr, update)
-
-	if len(ret) == 0 {
-		panic("no return value specified for SendPublishLoad")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, ports.LoadUpdate) error); ok {
-		r0 = rf(ctx, nodeAddr, update)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// MockTransportPort_SendPublishLoad_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SendPublishLoad'
-type MockTransportPort_SendPublishLoad_Call struct {
-	*mock.Call
-}
-
-// SendPublishLoad is a helper method to define mock.On call
-//   - ctx context.Context
-//   - nodeAddr string
-//   - update ports.LoadUpdate
-func (_e *MockTransportPort_Expecter) SendPublishLoad(ctx interface{}, nodeAddr interface{}, update interface{}) *MockTransportPort_SendPublishLoad_Call {
-	return &MockTransportPort_SendPublishLoad_Call{Call: _e.mock.On("SendPublishLoad", ctx, nodeAddr, update)}
-}
-
-func (_c *MockTransportPort_SendPublishLoad_Call) Run(run func(ctx context.Context, nodeAddr string, update ports.LoadUpdate)) *MockTransportPort_SendPublishLoad_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(ports.LoadUpdate))
-	})
-	return _c
-}
-
-func (_c *MockTransportPort_SendPublishLoad_Call) Return(_a0 error) *MockTransportPort_SendPublishLoad_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockTransportPort_SendPublishLoad_Call) RunAndReturn(run func(context.Context, string, ports.LoadUpdate) error) *MockTransportPort_SendPublishLoad_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
 // SendTrigger provides a mock function with given fields: ctx, nodeAddr, trigger
 func (_m *MockTransportPort) SendTrigger(ctx context.Context, nodeAddr string, trigger domain.WorkflowTrigger) error {
 	ret := _m.Called(ctx, nodeAddr, trigger)
@@ -490,99 +409,6 @@ func (_c *MockTransportPort_SendTrigger_Call) Return(_a0 error) *MockTransportPo
 }
 
 func (_c *MockTransportPort_SendTrigger_Call) RunAndReturn(run func(context.Context, string, domain.WorkflowTrigger) error) *MockTransportPort_SendTrigger_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// Start provides a mock function with given fields: ctx, address, port
-func (_m *MockTransportPort) Start(ctx context.Context, address string, port int) error {
-	ret := _m.Called(ctx, address, port)
-
-	if len(ret) == 0 {
-		panic("no return value specified for Start")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func(context.Context, string, int) error); ok {
-		r0 = rf(ctx, address, port)
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// MockTransportPort_Start_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Start'
-type MockTransportPort_Start_Call struct {
-	*mock.Call
-}
-
-// Start is a helper method to define mock.On call
-//   - ctx context.Context
-//   - address string
-//   - port int
-func (_e *MockTransportPort_Expecter) Start(ctx interface{}, address interface{}, port interface{}) *MockTransportPort_Start_Call {
-	return &MockTransportPort_Start_Call{Call: _e.mock.On("Start", ctx, address, port)}
-}
-
-func (_c *MockTransportPort_Start_Call) Run(run func(ctx context.Context, address string, port int)) *MockTransportPort_Start_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(context.Context), args[1].(string), args[2].(int))
-	})
-	return _c
-}
-
-func (_c *MockTransportPort_Start_Call) Return(_a0 error) *MockTransportPort_Start_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockTransportPort_Start_Call) RunAndReturn(run func(context.Context, string, int) error) *MockTransportPort_Start_Call {
-	_c.Call.Return(run)
-	return _c
-}
-
-// Stop provides a mock function with no fields
-func (_m *MockTransportPort) Stop() error {
-	ret := _m.Called()
-
-	if len(ret) == 0 {
-		panic("no return value specified for Stop")
-	}
-
-	var r0 error
-	if rf, ok := ret.Get(0).(func() error); ok {
-		r0 = rf()
-	} else {
-		r0 = ret.Error(0)
-	}
-
-	return r0
-}
-
-// MockTransportPort_Stop_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Stop'
-type MockTransportPort_Stop_Call struct {
-	*mock.Call
-}
-
-// Stop is a helper method to define mock.On call
-func (_e *MockTransportPort_Expecter) Stop() *MockTransportPort_Stop_Call {
-	return &MockTransportPort_Stop_Call{Call: _e.mock.On("Stop")}
-}
-
-func (_c *MockTransportPort_Stop_Call) Run(run func()) *MockTransportPort_Stop_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run()
-	})
-	return _c
-}
-
-func (_c *MockTransportPort_Stop_Call) Return(_a0 error) *MockTransportPort_Stop_Call {
-	_c.Call.Return(_a0)
-	return _c
-}
-
-func (_c *MockTransportPort_Stop_Call) RunAndReturn(run func() error) *MockTransportPort_Stop_Call {
 	_c.Call.Return(run)
 	return _c
 }

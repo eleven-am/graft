@@ -158,7 +158,6 @@ func DefaultTracingConfig() TracingConfig {
 func NewConfigFromSimple(nodeID, dataDir string, logger *slog.Logger) *Config {
 	config := DefaultConfig()
 	config.NodeID = nodeID
-	config.RaftPort = 7222
 	config.GossipPort = 7946
 	config.DataDir = dataDir
 	config.Logger = logger
@@ -241,7 +240,7 @@ func (c *Config) Validate() error {
 	if c.Cluster.ID == "" {
 		return NewConfigError("cluster_id", ErrInvalidInput)
 	}
-	if c.RaftPort <= 0 || c.RaftPort > 65535 {
+	if c.RaftPort < 0 || c.RaftPort > 65535 {
 		return NewConfigError("raft_port", ErrInvalidInput)
 	}
 	if c.GossipPort <= 0 || c.GossipPort > 65535 {

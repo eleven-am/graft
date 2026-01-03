@@ -31,6 +31,7 @@ import (
 	"github.com/eleven-am/graft/internal/domain"
 	"github.com/eleven-am/graft/internal/helpers/metadata"
 	"github.com/eleven-am/graft/internal/ports"
+	"google.golang.org/grpc"
 )
 
 type Manager struct {
@@ -48,11 +49,10 @@ type Manager struct {
 	rateLimiters      ports.RateLimiterProvider
 	tracing           ports.TracingProvider
 
-	config                 *domain.Config
-	logger                 *slog.Logger
-	nodeID                 string
-	grpcPort               int
-	connectorFSM           connectors.FSMAPI
+	config       *domain.Config
+	logger       *slog.Logger
+	nodeID       string
+	connectorFSM connectors.FSMAPI
 	workflowIntakeMu       sync.RWMutex
 	workflowIntakeOk       bool
 	connectorMu            sync.RWMutex
@@ -228,7 +228,6 @@ func NewWithConfig(config *domain.Config) *Manager {
 	connectorRegistryManager := prov.newConnectorRegistry(logger)
 
 	loadBalancerManager := prov.newLoadBalancer(eventManager, config.NodeID, nil, nil, logger)
-	loadBalancerManager.SetTransport(appTransport)
 	cleanup = append(cleanup, func() error {
 		if loadBalancerManager != nil {
 			return loadBalancerManager.Stop()
@@ -301,31 +300,12 @@ func NewWithConfig(config *domain.Config) *Manager {
 	return manager
 }
 
-func (m *Manager) Start(ctx context.Context, grpcPort int) error {
+func (m *Manager) Start(ctx context.Context) error {
 	m.ctx, m.cancel = context.WithCancel(ctx)
 
-	if err := m.startBootstrap(ctx, grpcPort); err != nil {
+	if err := m.startBootstrap(ctx); err != nil {
 		return err
 	}
-
-	m.loadBalancer.SetPeerAddrProvider(func() []string {
-		if m.raftAdapter == nil {
-			return nil
-		}
-		clusterInfo := m.raftAdapter.GetClusterInfo()
-		addrs := make([]string, 0, len(clusterInfo.Members))
-		for _, member := range clusterInfo.Members {
-			if member.ID == m.nodeID {
-				continue
-			}
-			host, _, err := net.SplitHostPort(member.Address)
-			if err != nil {
-				continue
-			}
-			addrs = append(addrs, net.JoinHostPort(host, strconv.Itoa(m.grpcPort)))
-		}
-		return addrs
-	})
 
 	if err := m.loadBalancer.Start(m.ctx); err != nil {
 		return domain.NewDomainErrorWithCategory(
@@ -334,6 +314,29 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 			err,
 			domain.WithComponent("core.Manager.Start"),
 		)
+	}
+
+	if m.raftAdapter != nil {
+		consensusNode := m.raftAdapter.Node()
+		consensusNode.OnMemberJoin(func(member autoconsensus.MemberInfo) {
+			if member.ID != m.nodeID {
+				m.loadBalancer.OnPeerJoin(member.ID, member.Address)
+			}
+		})
+		consensusNode.OnMemberLeave(func(nodeID string) {
+			if nodeID != m.nodeID {
+				m.loadBalancer.OnPeerLeave(nodeID)
+			}
+		})
+
+		m.loadBalancer.SetBroadcaster(func(msg []byte) {
+			m.raftAdapter.Broadcast(msg)
+		})
+		m.raftAdapter.OnBroadcast(func(from string, msg []byte) {
+			if from != m.nodeID {
+				m.loadBalancer.HandleBroadcast(from, msg)
+			}
+		})
 	}
 
 	if err := m.engine.Start(m.ctx); err != nil {
@@ -364,9 +367,6 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	}
 
 	m.transport.RegisterRaft(m.raftAdapter)
-	if sink, ok := m.loadBalancer.(ports.LoadSink); ok {
-		m.transport.RegisterLoadSink(sink)
-	}
 
 	if m.watchers != nil {
 		wctx, wcancel := context.WithCancel(m.ctx)
@@ -412,10 +412,6 @@ func (m *Manager) Stop() error {
 		m.eventManager.Stop()
 	}
 
-	if m.transport != nil {
-		m.transport.Stop()
-	}
-
 	if m.raftAdapter != nil {
 		if err := m.raftAdapter.Stop(); err != nil {
 			m.logger.Error("failed to stop raft adapter", "error", err)
@@ -425,18 +421,12 @@ func (m *Manager) Stop() error {
 	return nil
 }
 
-func (m *Manager) startBootstrap(ctx context.Context, grpcPort int) error {
-	m.grpcPort = grpcPort
-	if err := m.transport.Start(m.ctx, "0.0.0.0", grpcPort); err != nil {
-		return domain.NewDomainErrorWithCategory(
-			domain.CategoryNetwork,
-			"failed to start transport",
-			err,
-			domain.WithComponent("core.Manager.startBootstrap"),
-		)
-	}
-
+func (m *Manager) startBootstrap(ctx context.Context) error {
 	if m.raftAdapter != nil {
+		m.raftAdapter.RegisterService(func(s grpc.ServiceRegistrar) {
+			m.transport.RegisterWithServer(s)
+		})
+
 		if err := m.raftAdapter.Start(ctx); err != nil {
 			return domain.NewDomainErrorWithCategory(
 				domain.CategoryNetwork,

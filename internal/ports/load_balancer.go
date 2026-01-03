@@ -16,12 +16,11 @@ type LoadBalancer interface {
 	IsDraining() bool
 	WaitForDraining(ctx context.Context) error
 
-	SetPeerAddrProvider(provider func() []string)
-	SetTransport(tp TransportPort)
-}
+	SetBroadcaster(fn func(msg []byte))
+	HandleBroadcast(from string, msg []byte)
 
-type LoadSink interface {
-	ReceiveLoadUpdate(update LoadUpdate) error
+	OnPeerJoin(nodeID, address string)
+	OnPeerLeave(nodeID string)
 }
 
 type NodeLoad struct {

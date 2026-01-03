@@ -81,7 +81,6 @@ type ConfigBuilder struct {
 func NewConfigBuilder(nodeID, dataDir string) *ConfigBuilder {
 	config := DefaultConfig()
 	config.NodeID = nodeID
-	config.RaftPort = 7222
 	config.GossipPort = 7946
 	config.DataDir = dataDir
 	return &ConfigBuilder{config: config}

@@ -8,7 +8,6 @@ service GraftNode {
   rpc ProcessTrigger(TriggerRequest) returns (TriggerResponse);
   rpc RequestJoin(JoinRequest) returns (JoinResponse);
   rpc ApplyCommand(ApplyRequest) returns (ApplyResponse);
-  rpc PublishLoad(LoadUpdate) returns (Ack);
 }
 
 message NodeConfig {
@@ -67,20 +66,3 @@ message ApplyResponse {
   string leader_addr = 6;
 }
 
-message LoadUpdate {
-  string node_id = 1;
-  int32 active_workflows = 2;
-  double total_weight = 3;
-  double recent_latency_ms = 4;
-  double recent_error_rate = 5;
-  // Deprecated: capacity was previously used; keep for backward compatibility
-  double capacity = 6;
-  int64 timestamp = 7;
-  // Preferred: normalized pressure (cpu+mem) in range [0..2]
-  double pressure = 8;
-}
-
-message Ack {
-  bool ok = 1;
-  string message = 2;
-}

@@ -8,18 +8,13 @@ import (
 )
 
 type TransportPort interface {
-	Start(ctx context.Context, address string, port int) error
-	Stop() error
-
 	RegisterEngine(engine EnginePort)
 	RegisterRaft(raft RaftNode)
-	RegisterLoadSink(sink LoadSink)
-	RegisterService(registrar func(*grpc.Server))
+	RegisterWithServer(server grpc.ServiceRegistrar)
 
 	SendTrigger(ctx context.Context, nodeAddr string, trigger domain.WorkflowTrigger) error
 	SendJoinRequest(ctx context.Context, nodeAddr string, request *JoinRequest) (*JoinResponse, error)
 	SendApplyCommand(ctx context.Context, nodeAddr string, cmd *domain.Command) (*domain.CommandResult, string, error)
-	SendPublishLoad(ctx context.Context, nodeAddr string, update LoadUpdate) error
 
 	GetLeaderInfo(ctx context.Context, peerAddr string) (leaderID, leaderAddr string, err error)
 	RequestAddVoter(ctx context.Context, leaderAddr, nodeID, nodeAddr string) error

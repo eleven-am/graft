@@ -6,6 +6,8 @@ import (
 	badger "github.com/dgraph-io/badger/v3"
 	domain "github.com/eleven-am/graft/internal/domain"
 
+	grpc "google.golang.org/grpc"
+
 	mock "github.com/stretchr/testify/mock"
 
 	ports "github.com/eleven-am/graft/internal/ports"
@@ -82,6 +84,39 @@ func (_c *MockRaftNode_Apply_Call) Return(_a0 *domain.CommandResult, _a1 error) 
 
 func (_c *MockRaftNode_Apply_Call) RunAndReturn(run func(domain.Command, time.Duration) (*domain.CommandResult, error)) *MockRaftNode_Apply_Call {
 	_c.Call.Return(run)
+	return _c
+}
+
+// Broadcast provides a mock function with given fields: msg
+func (_m *MockRaftNode) Broadcast(msg []byte) {
+	_m.Called(msg)
+}
+
+// MockRaftNode_Broadcast_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'Broadcast'
+type MockRaftNode_Broadcast_Call struct {
+	*mock.Call
+}
+
+// Broadcast is a helper method to define mock.On call
+//   - msg []byte
+func (_e *MockRaftNode_Expecter) Broadcast(msg interface{}) *MockRaftNode_Broadcast_Call {
+	return &MockRaftNode_Broadcast_Call{Call: _e.mock.On("Broadcast", msg)}
+}
+
+func (_c *MockRaftNode_Broadcast_Call) Run(run func(msg []byte)) *MockRaftNode_Broadcast_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].([]byte))
+	})
+	return _c
+}
+
+func (_c *MockRaftNode_Broadcast_Call) Return() *MockRaftNode_Broadcast_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockRaftNode_Broadcast_Call) RunAndReturn(run func([]byte)) *MockRaftNode_Broadcast_Call {
+	_c.Run(run)
 	return _c
 }
 
@@ -397,6 +432,72 @@ func (_c *MockRaftNode_LeaderAddr_Call) Return(_a0 string) *MockRaftNode_LeaderA
 
 func (_c *MockRaftNode_LeaderAddr_Call) RunAndReturn(run func() string) *MockRaftNode_LeaderAddr_Call {
 	_c.Call.Return(run)
+	return _c
+}
+
+// OnBroadcast provides a mock function with given fields: fn
+func (_m *MockRaftNode) OnBroadcast(fn func(string, []byte)) {
+	_m.Called(fn)
+}
+
+// MockRaftNode_OnBroadcast_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'OnBroadcast'
+type MockRaftNode_OnBroadcast_Call struct {
+	*mock.Call
+}
+
+// OnBroadcast is a helper method to define mock.On call
+//   - fn func(string , []byte)
+func (_e *MockRaftNode_Expecter) OnBroadcast(fn interface{}) *MockRaftNode_OnBroadcast_Call {
+	return &MockRaftNode_OnBroadcast_Call{Call: _e.mock.On("OnBroadcast", fn)}
+}
+
+func (_c *MockRaftNode_OnBroadcast_Call) Run(run func(fn func(string, []byte))) *MockRaftNode_OnBroadcast_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(func(string, []byte)))
+	})
+	return _c
+}
+
+func (_c *MockRaftNode_OnBroadcast_Call) Return() *MockRaftNode_OnBroadcast_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockRaftNode_OnBroadcast_Call) RunAndReturn(run func(func(string, []byte))) *MockRaftNode_OnBroadcast_Call {
+	_c.Run(run)
+	return _c
+}
+
+// RegisterService provides a mock function with given fields: fn
+func (_m *MockRaftNode) RegisterService(fn func(grpc.ServiceRegistrar)) {
+	_m.Called(fn)
+}
+
+// MockRaftNode_RegisterService_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RegisterService'
+type MockRaftNode_RegisterService_Call struct {
+	*mock.Call
+}
+
+// RegisterService is a helper method to define mock.On call
+//   - fn func(grpc.ServiceRegistrar)
+func (_e *MockRaftNode_Expecter) RegisterService(fn interface{}) *MockRaftNode_RegisterService_Call {
+	return &MockRaftNode_RegisterService_Call{Call: _e.mock.On("RegisterService", fn)}
+}
+
+func (_c *MockRaftNode_RegisterService_Call) Run(run func(fn func(grpc.ServiceRegistrar))) *MockRaftNode_RegisterService_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(func(grpc.ServiceRegistrar)))
+	})
+	return _c
+}
+
+func (_c *MockRaftNode_RegisterService_Call) Return() *MockRaftNode_RegisterService_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockRaftNode_RegisterService_Call) RunAndReturn(run func(func(grpc.ServiceRegistrar))) *MockRaftNode_RegisterService_Call {
+	_c.Run(run)
 	return _c
 }
 

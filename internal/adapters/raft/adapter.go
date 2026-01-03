@@ -14,6 +14,7 @@ import (
 	"github.com/eleven-am/graft/internal/ports"
 	json "github.com/eleven-am/graft/internal/xjson"
 	"github.com/hashicorp/raft"
+	"google.golang.org/grpc"
 )
 
 type Adapter struct {
@@ -428,6 +429,18 @@ func (a *Adapter) Node() *autoconsensus.Node {
 
 func (a *Adapter) Subscribe() <-chan autoconsensus.StateChange {
 	return a.node.Subscribe()
+}
+
+func (a *Adapter) RegisterService(fn func(grpc.ServiceRegistrar)) {
+	a.node.RegisterService(fn)
+}
+
+func (a *Adapter) Broadcast(msg []byte) {
+	a.node.Broadcast(msg)
+}
+
+func (a *Adapter) OnBroadcast(fn func(from string, msg []byte)) {
+	a.node.OnBroadcast(fn)
 }
 
 var _ ports.RaftNode = (*Adapter)(nil)

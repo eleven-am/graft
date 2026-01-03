@@ -577,160 +577,6 @@ func (x *ApplyResponse) GetLeaderAddr() string {
 	return ""
 }
 
-type LoadUpdate struct {
-	state           protoimpl.MessageState `protogen:"open.v1"`
-	NodeId          string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
-	ActiveWorkflows int32                  `protobuf:"varint,2,opt,name=active_workflows,json=activeWorkflows,proto3" json:"active_workflows,omitempty"`
-	TotalWeight     float64                `protobuf:"fixed64,3,opt,name=total_weight,json=totalWeight,proto3" json:"total_weight,omitempty"`
-	RecentLatencyMs float64                `protobuf:"fixed64,4,opt,name=recent_latency_ms,json=recentLatencyMs,proto3" json:"recent_latency_ms,omitempty"`
-	RecentErrorRate float64                `protobuf:"fixed64,5,opt,name=recent_error_rate,json=recentErrorRate,proto3" json:"recent_error_rate,omitempty"`
-	// Deprecated: capacity was previously used; keep for backward compatibility
-	Capacity  float64 `protobuf:"fixed64,6,opt,name=capacity,proto3" json:"capacity,omitempty"`
-	Timestamp int64   `protobuf:"varint,7,opt,name=timestamp,proto3" json:"timestamp,omitempty"`
-	// Preferred: normalized pressure (cpu+mem) in range [0..2]
-	Pressure      float64 `protobuf:"fixed64,8,opt,name=pressure,proto3" json:"pressure,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *LoadUpdate) Reset() {
-	*x = LoadUpdate{}
-	mi := &file_graft_proto_msgTypes[9]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *LoadUpdate) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*LoadUpdate) ProtoMessage() {}
-
-func (x *LoadUpdate) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_proto_msgTypes[9]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use LoadUpdate.ProtoReflect.Descriptor instead.
-func (*LoadUpdate) Descriptor() ([]byte, []int) {
-	return file_graft_proto_rawDescGZIP(), []int{9}
-}
-
-func (x *LoadUpdate) GetNodeId() string {
-	if x != nil {
-		return x.NodeId
-	}
-	return ""
-}
-
-func (x *LoadUpdate) GetActiveWorkflows() int32 {
-	if x != nil {
-		return x.ActiveWorkflows
-	}
-	return 0
-}
-
-func (x *LoadUpdate) GetTotalWeight() float64 {
-	if x != nil {
-		return x.TotalWeight
-	}
-	return 0
-}
-
-func (x *LoadUpdate) GetRecentLatencyMs() float64 {
-	if x != nil {
-		return x.RecentLatencyMs
-	}
-	return 0
-}
-
-func (x *LoadUpdate) GetRecentErrorRate() float64 {
-	if x != nil {
-		return x.RecentErrorRate
-	}
-	return 0
-}
-
-func (x *LoadUpdate) GetCapacity() float64 {
-	if x != nil {
-		return x.Capacity
-	}
-	return 0
-}
-
-func (x *LoadUpdate) GetTimestamp() int64 {
-	if x != nil {
-		return x.Timestamp
-	}
-	return 0
-}
-
-func (x *LoadUpdate) GetPressure() float64 {
-	if x != nil {
-		return x.Pressure
-	}
-	return 0
-}
-
-type Ack struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Ok            bool                   `protobuf:"varint,1,opt,name=ok,proto3" json:"ok,omitempty"`
-	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Ack) Reset() {
-	*x = Ack{}
-	mi := &file_graft_proto_msgTypes[10]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Ack) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Ack) ProtoMessage() {}
-
-func (x *Ack) ProtoReflect() protoreflect.Message {
-	mi := &file_graft_proto_msgTypes[10]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Ack.ProtoReflect.Descriptor instead.
-func (*Ack) Descriptor() ([]byte, []int) {
-	return file_graft_proto_rawDescGZIP(), []int{10}
-}
-
-func (x *Ack) GetOk() bool {
-	if x != nil {
-		return x.Ok
-	}
-	return false
-}
-
-func (x *Ack) GetMessage() string {
-	if x != nil {
-		return x.Message
-	}
-	return ""
-}
-
 var File_graft_proto protoreflect.FileDescriptor
 
 const file_graft_proto_rawDesc = "" +
@@ -783,26 +629,11 @@ const file_graft_proto_rawDesc = "" +
 	"\x06events\x18\x04 \x03(\v2\f.graft.EventR\x06events\x12\x1b\n" +
 	"\tleader_id\x18\x05 \x01(\tR\bleaderId\x12\x1f\n" +
 	"\vleader_addr\x18\x06 \x01(\tR\n" +
-	"leaderAddr\"\xa1\x02\n" +
-	"\n" +
-	"LoadUpdate\x12\x17\n" +
-	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12)\n" +
-	"\x10active_workflows\x18\x02 \x01(\x05R\x0factiveWorkflows\x12!\n" +
-	"\ftotal_weight\x18\x03 \x01(\x01R\vtotalWeight\x12*\n" +
-	"\x11recent_latency_ms\x18\x04 \x01(\x01R\x0frecentLatencyMs\x12*\n" +
-	"\x11recent_error_rate\x18\x05 \x01(\x01R\x0frecentErrorRate\x12\x1a\n" +
-	"\bcapacity\x18\x06 \x01(\x01R\bcapacity\x12\x1c\n" +
-	"\ttimestamp\x18\a \x01(\x03R\ttimestamp\x12\x1a\n" +
-	"\bpressure\x18\b \x01(\x01R\bpressure\"/\n" +
-	"\x03Ack\x12\x0e\n" +
-	"\x02ok\x18\x01 \x01(\bR\x02ok\x12\x18\n" +
-	"\amessage\x18\x02 \x01(\tR\amessage2\xed\x01\n" +
+	"leaderAddr2\xbf\x01\n" +
 	"\tGraftNode\x12?\n" +
 	"\x0eProcessTrigger\x12\x15.graft.TriggerRequest\x1a\x16.graft.TriggerResponse\x126\n" +
 	"\vRequestJoin\x12\x12.graft.JoinRequest\x1a\x13.graft.JoinResponse\x129\n" +
-	"\fApplyCommand\x12\x13.graft.ApplyRequest\x1a\x14.graft.ApplyResponse\x12,\n" +
-	"\vPublishLoad\x12\x11.graft.LoadUpdate\x1a\n" +
-	".graft.AckB+Z)github.com/eleven-am/graft/internal/protob\x06proto3"
+	"\fApplyCommand\x12\x13.graft.ApplyRequest\x1a\x14.graft.ApplyResponseB+Z)github.com/eleven-am/graft/internal/protob\x06proto3"
 
 var (
 	file_graft_proto_rawDescOnce sync.Once
@@ -816,7 +647,7 @@ func file_graft_proto_rawDescGZIP() []byte {
 	return file_graft_proto_rawDescData
 }
 
-var file_graft_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_graft_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_graft_proto_goTypes = []any{
 	(*NodeConfig)(nil),      // 0: graft.NodeConfig
 	(*WorkflowTrigger)(nil), // 1: graft.WorkflowTrigger
@@ -827,27 +658,23 @@ var file_graft_proto_goTypes = []any{
 	(*ApplyRequest)(nil),    // 6: graft.ApplyRequest
 	(*Event)(nil),           // 7: graft.Event
 	(*ApplyResponse)(nil),   // 8: graft.ApplyResponse
-	(*LoadUpdate)(nil),      // 9: graft.LoadUpdate
-	(*Ack)(nil),             // 10: graft.Ack
-	nil,                     // 11: graft.WorkflowTrigger.MetadataEntry
-	nil,                     // 12: graft.JoinRequest.MetadataEntry
+	nil,                     // 9: graft.WorkflowTrigger.MetadataEntry
+	nil,                     // 10: graft.JoinRequest.MetadataEntry
 }
 var file_graft_proto_depIdxs = []int32{
 	0,  // 0: graft.WorkflowTrigger.initial_nodes:type_name -> graft.NodeConfig
-	11, // 1: graft.WorkflowTrigger.metadata:type_name -> graft.WorkflowTrigger.MetadataEntry
+	9,  // 1: graft.WorkflowTrigger.metadata:type_name -> graft.WorkflowTrigger.MetadataEntry
 	1,  // 2: graft.TriggerRequest.trigger:type_name -> graft.WorkflowTrigger
-	12, // 3: graft.JoinRequest.metadata:type_name -> graft.JoinRequest.MetadataEntry
+	10, // 3: graft.JoinRequest.metadata:type_name -> graft.JoinRequest.MetadataEntry
 	7,  // 4: graft.ApplyResponse.events:type_name -> graft.Event
 	2,  // 5: graft.GraftNode.ProcessTrigger:input_type -> graft.TriggerRequest
 	4,  // 6: graft.GraftNode.RequestJoin:input_type -> graft.JoinRequest
 	6,  // 7: graft.GraftNode.ApplyCommand:input_type -> graft.ApplyRequest
-	9,  // 8: graft.GraftNode.PublishLoad:input_type -> graft.LoadUpdate
-	3,  // 9: graft.GraftNode.ProcessTrigger:output_type -> graft.TriggerResponse
-	5,  // 10: graft.GraftNode.RequestJoin:output_type -> graft.JoinResponse
-	8,  // 11: graft.GraftNode.ApplyCommand:output_type -> graft.ApplyResponse
-	10, // 12: graft.GraftNode.PublishLoad:output_type -> graft.Ack
-	9,  // [9:13] is the sub-list for method output_type
-	5,  // [5:9] is the sub-list for method input_type
+	3,  // 8: graft.GraftNode.ProcessTrigger:output_type -> graft.TriggerResponse
+	5,  // 9: graft.GraftNode.RequestJoin:output_type -> graft.JoinResponse
+	8,  // 10: graft.GraftNode.ApplyCommand:output_type -> graft.ApplyResponse
+	8,  // [8:11] is the sub-list for method output_type
+	5,  // [5:8] is the sub-list for method input_type
 	5,  // [5:5] is the sub-list for extension type_name
 	5,  // [5:5] is the sub-list for extension extendee
 	0,  // [0:5] is the sub-list for field type_name
@@ -864,7 +691,7 @@ func file_graft_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_graft_proto_rawDesc), len(file_graft_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

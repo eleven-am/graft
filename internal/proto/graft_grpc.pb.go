@@ -22,7 +22,6 @@ const (
 	GraftNode_ProcessTrigger_FullMethodName = "/graft.GraftNode/ProcessTrigger"
 	GraftNode_RequestJoin_FullMethodName    = "/graft.GraftNode/RequestJoin"
 	GraftNode_ApplyCommand_FullMethodName   = "/graft.GraftNode/ApplyCommand"
-	GraftNode_PublishLoad_FullMethodName    = "/graft.GraftNode/PublishLoad"
 )
 
 // GraftNodeClient is the client API for GraftNode service.
@@ -32,7 +31,6 @@ type GraftNodeClient interface {
 	ProcessTrigger(ctx context.Context, in *TriggerRequest, opts ...grpc.CallOption) (*TriggerResponse, error)
 	RequestJoin(ctx context.Context, in *JoinRequest, opts ...grpc.CallOption) (*JoinResponse, error)
 	ApplyCommand(ctx context.Context, in *ApplyRequest, opts ...grpc.CallOption) (*ApplyResponse, error)
-	PublishLoad(ctx context.Context, in *LoadUpdate, opts ...grpc.CallOption) (*Ack, error)
 }
 
 type graftNodeClient struct {
@@ -73,16 +71,6 @@ func (c *graftNodeClient) ApplyCommand(ctx context.Context, in *ApplyRequest, op
 	return out, nil
 }
 
-func (c *graftNodeClient) PublishLoad(ctx context.Context, in *LoadUpdate, opts ...grpc.CallOption) (*Ack, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(Ack)
-	err := c.cc.Invoke(ctx, GraftNode_PublishLoad_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // GraftNodeServer is the server API for GraftNode service.
 // All implementations must embed UnimplementedGraftNodeServer
 // for forward compatibility.
@@ -90,7 +78,6 @@ type GraftNodeServer interface {
 	ProcessTrigger(context.Context, *TriggerRequest) (*TriggerResponse, error)
 	RequestJoin(context.Context, *JoinRequest) (*JoinResponse, error)
 	ApplyCommand(context.Context, *ApplyRequest) (*ApplyResponse, error)
-	PublishLoad(context.Context, *LoadUpdate) (*Ack, error)
 	mustEmbedUnimplementedGraftNodeServer()
 }
 
@@ -110,9 +97,6 @@ func (UnimplementedGraftNodeServer) RequestJoin(context.Context, *JoinRequest) (
 func (UnimplementedGraftNodeServer) ApplyCommand(context.Context, *ApplyRequest) (*ApplyResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ApplyCommand not implemented")
 }
-func (UnimplementedGraftNodeServer) PublishLoad(context.Context, *LoadUpdate) (*Ack, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method PublishLoad not implemented")
-}
 func (UnimplementedGraftNodeServer) mustEmbedUnimplementedGraftNodeServer() {}
 func (UnimplementedGraftNodeServer) testEmbeddedByValue()                   {}
 
@@ -124,7 +108,10 @@ type UnsafeGraftNodeServer interface {
 }
 
 func RegisterGraftNodeServer(s grpc.ServiceRegistrar, srv GraftNodeServer) {
-
+	// If the following call pancis, it indicates UnimplementedGraftNodeServer was
+	// embedded by pointer and is nil.  This will cause panics if an
+	// unimplemented method is ever invoked, so we test this at initialization
+	// time to prevent it from happening at runtime later due to I/O.
 	if t, ok := srv.(interface{ testEmbeddedByValue() }); ok {
 		t.testEmbeddedByValue()
 	}
@@ -185,24 +172,6 @@ func _GraftNode_ApplyCommand_Handler(srv interface{}, ctx context.Context, dec f
 	return interceptor(ctx, in, info, handler)
 }
 
-func _GraftNode_PublishLoad_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(LoadUpdate)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(GraftNodeServer).PublishLoad(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: GraftNode_PublishLoad_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(GraftNodeServer).PublishLoad(ctx, req.(*LoadUpdate))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // GraftNode_ServiceDesc is the grpc.ServiceDesc for GraftNode service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -221,10 +190,6 @@ var GraftNode_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ApplyCommand",
 			Handler:    _GraftNode_ApplyCommand_Handler,
-		},
-		{
-			MethodName: "PublishLoad",
-			Handler:    _GraftNode_PublishLoad_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

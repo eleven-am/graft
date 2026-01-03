@@ -5,7 +5,6 @@ package mocks
 import (
 	context "context"
 
-	ports "github.com/eleven-am/graft/internal/ports"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -68,6 +67,40 @@ func (_c *MockLoadBalancer_DeregisterConnectorLoad_Call) RunAndReturn(run func(s
 	return _c
 }
 
+// HandleBroadcast provides a mock function with given fields: from, msg
+func (_m *MockLoadBalancer) HandleBroadcast(from string, msg []byte) {
+	_m.Called(from, msg)
+}
+
+// MockLoadBalancer_HandleBroadcast_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'HandleBroadcast'
+type MockLoadBalancer_HandleBroadcast_Call struct {
+	*mock.Call
+}
+
+// HandleBroadcast is a helper method to define mock.On call
+//   - from string
+//   - msg []byte
+func (_e *MockLoadBalancer_Expecter) HandleBroadcast(from interface{}, msg interface{}) *MockLoadBalancer_HandleBroadcast_Call {
+	return &MockLoadBalancer_HandleBroadcast_Call{Call: _e.mock.On("HandleBroadcast", from, msg)}
+}
+
+func (_c *MockLoadBalancer_HandleBroadcast_Call) Run(run func(from string, msg []byte)) *MockLoadBalancer_HandleBroadcast_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].([]byte))
+	})
+	return _c
+}
+
+func (_c *MockLoadBalancer_HandleBroadcast_Call) Return() *MockLoadBalancer_HandleBroadcast_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockLoadBalancer_HandleBroadcast_Call) RunAndReturn(run func(string, []byte)) *MockLoadBalancer_HandleBroadcast_Call {
+	_c.Run(run)
+	return _c
+}
+
 // IsDraining provides a mock function with no fields
 func (_m *MockLoadBalancer) IsDraining() bool {
 	ret := _m.Called()
@@ -110,6 +143,73 @@ func (_c *MockLoadBalancer_IsDraining_Call) Return(_a0 bool) *MockLoadBalancer_I
 
 func (_c *MockLoadBalancer_IsDraining_Call) RunAndReturn(run func() bool) *MockLoadBalancer_IsDraining_Call {
 	_c.Call.Return(run)
+	return _c
+}
+
+// OnPeerJoin provides a mock function with given fields: nodeID, address
+func (_m *MockLoadBalancer) OnPeerJoin(nodeID string, address string) {
+	_m.Called(nodeID, address)
+}
+
+// MockLoadBalancer_OnPeerJoin_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'OnPeerJoin'
+type MockLoadBalancer_OnPeerJoin_Call struct {
+	*mock.Call
+}
+
+// OnPeerJoin is a helper method to define mock.On call
+//   - nodeID string
+//   - address string
+func (_e *MockLoadBalancer_Expecter) OnPeerJoin(nodeID interface{}, address interface{}) *MockLoadBalancer_OnPeerJoin_Call {
+	return &MockLoadBalancer_OnPeerJoin_Call{Call: _e.mock.On("OnPeerJoin", nodeID, address)}
+}
+
+func (_c *MockLoadBalancer_OnPeerJoin_Call) Run(run func(nodeID string, address string)) *MockLoadBalancer_OnPeerJoin_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string), args[1].(string))
+	})
+	return _c
+}
+
+func (_c *MockLoadBalancer_OnPeerJoin_Call) Return() *MockLoadBalancer_OnPeerJoin_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockLoadBalancer_OnPeerJoin_Call) RunAndReturn(run func(string, string)) *MockLoadBalancer_OnPeerJoin_Call {
+	_c.Run(run)
+	return _c
+}
+
+// OnPeerLeave provides a mock function with given fields: nodeID
+func (_m *MockLoadBalancer) OnPeerLeave(nodeID string) {
+	_m.Called(nodeID)
+}
+
+// MockLoadBalancer_OnPeerLeave_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'OnPeerLeave'
+type MockLoadBalancer_OnPeerLeave_Call struct {
+	*mock.Call
+}
+
+// OnPeerLeave is a helper method to define mock.On call
+//   - nodeID string
+func (_e *MockLoadBalancer_Expecter) OnPeerLeave(nodeID interface{}) *MockLoadBalancer_OnPeerLeave_Call {
+	return &MockLoadBalancer_OnPeerLeave_Call{Call: _e.mock.On("OnPeerLeave", nodeID)}
+}
+
+func (_c *MockLoadBalancer_OnPeerLeave_Call) Run(run func(nodeID string)) *MockLoadBalancer_OnPeerLeave_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(string))
+	})
+	return _c
+}
+
+func (_c *MockLoadBalancer_OnPeerLeave_Call) Return() *MockLoadBalancer_OnPeerLeave_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockLoadBalancer_OnPeerLeave_Call) RunAndReturn(run func(string)) *MockLoadBalancer_OnPeerLeave_Call {
+	_c.Run(run)
 	return _c
 }
 
@@ -160,68 +260,35 @@ func (_c *MockLoadBalancer_RegisterConnectorLoad_Call) RunAndReturn(run func(str
 	return _c
 }
 
-// SetPeerAddrProvider provides a mock function with given fields: provider
-func (_m *MockLoadBalancer) SetPeerAddrProvider(provider func() []string) {
-	_m.Called(provider)
+// SetBroadcaster provides a mock function with given fields: fn
+func (_m *MockLoadBalancer) SetBroadcaster(fn func([]byte)) {
+	_m.Called(fn)
 }
 
-// MockLoadBalancer_SetPeerAddrProvider_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetPeerAddrProvider'
-type MockLoadBalancer_SetPeerAddrProvider_Call struct {
+// MockLoadBalancer_SetBroadcaster_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetBroadcaster'
+type MockLoadBalancer_SetBroadcaster_Call struct {
 	*mock.Call
 }
 
-// SetPeerAddrProvider is a helper method to define mock.On call
-//   - provider func() []string
-func (_e *MockLoadBalancer_Expecter) SetPeerAddrProvider(provider interface{}) *MockLoadBalancer_SetPeerAddrProvider_Call {
-	return &MockLoadBalancer_SetPeerAddrProvider_Call{Call: _e.mock.On("SetPeerAddrProvider", provider)}
+// SetBroadcaster is a helper method to define mock.On call
+//   - fn func([]byte)
+func (_e *MockLoadBalancer_Expecter) SetBroadcaster(fn interface{}) *MockLoadBalancer_SetBroadcaster_Call {
+	return &MockLoadBalancer_SetBroadcaster_Call{Call: _e.mock.On("SetBroadcaster", fn)}
 }
 
-func (_c *MockLoadBalancer_SetPeerAddrProvider_Call) Run(run func(provider func() []string)) *MockLoadBalancer_SetPeerAddrProvider_Call {
+func (_c *MockLoadBalancer_SetBroadcaster_Call) Run(run func(fn func([]byte))) *MockLoadBalancer_SetBroadcaster_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(func() []string))
+		run(args[0].(func([]byte)))
 	})
 	return _c
 }
 
-func (_c *MockLoadBalancer_SetPeerAddrProvider_Call) Return() *MockLoadBalancer_SetPeerAddrProvider_Call {
+func (_c *MockLoadBalancer_SetBroadcaster_Call) Return() *MockLoadBalancer_SetBroadcaster_Call {
 	_c.Call.Return()
 	return _c
 }
 
-func (_c *MockLoadBalancer_SetPeerAddrProvider_Call) RunAndReturn(run func(func() []string)) *MockLoadBalancer_SetPeerAddrProvider_Call {
-	_c.Run(run)
-	return _c
-}
-
-// SetTransport provides a mock function with given fields: tp
-func (_m *MockLoadBalancer) SetTransport(tp ports.TransportPort) {
-	_m.Called(tp)
-}
-
-// MockLoadBalancer_SetTransport_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetTransport'
-type MockLoadBalancer_SetTransport_Call struct {
-	*mock.Call
-}
-
-// SetTransport is a helper method to define mock.On call
-//   - tp ports.TransportPort
-func (_e *MockLoadBalancer_Expecter) SetTransport(tp interface{}) *MockLoadBalancer_SetTransport_Call {
-	return &MockLoadBalancer_SetTransport_Call{Call: _e.mock.On("SetTransport", tp)}
-}
-
-func (_c *MockLoadBalancer_SetTransport_Call) Run(run func(tp ports.TransportPort)) *MockLoadBalancer_SetTransport_Call {
-	_c.Call.Run(func(args mock.Arguments) {
-		run(args[0].(ports.TransportPort))
-	})
-	return _c
-}
-
-func (_c *MockLoadBalancer_SetTransport_Call) Return() *MockLoadBalancer_SetTransport_Call {
-	_c.Call.Return()
-	return _c
-}
-
-func (_c *MockLoadBalancer_SetTransport_Call) RunAndReturn(run func(ports.TransportPort)) *MockLoadBalancer_SetTransport_Call {
+func (_c *MockLoadBalancer_SetBroadcaster_Call) RunAndReturn(run func(func([]byte))) *MockLoadBalancer_SetBroadcaster_Call {
 	_c.Run(run)
 	return _c
 }

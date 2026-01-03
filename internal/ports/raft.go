@@ -5,6 +5,7 @@ import (
 
 	"github.com/dgraph-io/badger/v3"
 	"github.com/eleven-am/graft/internal/domain"
+	"google.golang.org/grpc"
 )
 
 type NodeState int
@@ -112,6 +113,9 @@ type RaftNode interface {
 	GetLeadershipInfo() RaftLeadershipInfo
 	TransferLeadership() error
 	TransferLeadershipTo(serverID string) error
+	RegisterService(fn func(grpc.ServiceRegistrar))
+	Broadcast(msg []byte)
+	OnBroadcast(fn func(from string, msg []byte))
 	Stop() error
 }
 

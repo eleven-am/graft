@@ -2,6 +2,7 @@ package load_balancer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"math"
@@ -58,10 +59,9 @@ type Manager struct {
 	// Minimal mode: no strategy/score caches
 	nodeMetrics map[string]NodeMetrics
 
-	// RPC telemetry publishing
-	transport          ports.TransportPort
-	getPeerAddrs       func() []string
-	publishDebounce    time.Duration
+	// Gossip-based telemetry publishing
+	broadcaster     func(msg []byte)
+	publishDebounce time.Duration
 	publishInterval    time.Duration
 	availabilityWindow time.Duration
 	publishCh          chan struct{}
@@ -537,18 +537,20 @@ func (m *Manager) cleanupStaleNodeMetrics() {
 	}
 }
 
-// SetTransport injects the transport used to publish load updates to peers.
-func (m *Manager) SetTransport(tp ports.TransportPort) {
+func (m *Manager) SetBroadcaster(fn func(msg []byte)) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.transport = tp
+	m.broadcaster = fn
 }
 
-// SetPeerAddrProvider injects a provider to discover peer gRPC addresses.
-func (m *Manager) SetPeerAddrProvider(provider func() []string) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.getPeerAddrs = provider
+func (m *Manager) HandleBroadcast(from string, msg []byte) {
+	var update ports.LoadUpdate
+	if err := json.Unmarshal(msg, &update); err != nil {
+		m.logger.Debug("invalid load broadcast", "from", from, "error", err)
+		return
+	}
+	update.NodeID = from
+	m.ReceiveLoadUpdate(update)
 }
 
 // requestPublish triggers a debounced publish of local metrics.
@@ -588,10 +590,8 @@ func (m *Manager) publisherLoop() {
 
 func (m *Manager) publishLocalMetrics() {
 	m.mu.RLock()
-	tp := m.transport
-	provider := m.getPeerAddrs
+	broadcaster := m.broadcaster
 	baseCtx := m.ctx
-	logger := m.logger
 	update := ports.LoadUpdate{
 		NodeID:          m.nodeID,
 		ActiveWorkflows: int(len(m.executionUnits)),
@@ -603,29 +603,17 @@ func (m *Manager) publishLocalMetrics() {
 	}
 	m.mu.RUnlock()
 
-	if tp == nil || provider == nil {
-		return
-	}
-
 	if baseCtx != nil && baseCtx.Err() != nil {
 		return
 	}
 
-	addresses := provider()
-	for _, addr := range addresses {
-		parent := context.Background()
-		if baseCtx != nil {
-			parent = baseCtx
-		}
-		publishCtx, cancel := context.WithTimeout(parent, time.Second)
-		err := tp.SendPublishLoad(publishCtx, addr, update)
-		cancel()
-		if err != nil && logger != nil {
-			logger.Debug("failed to publish load", "address", addr, "error", err)
-		}
-		if baseCtx != nil && baseCtx.Err() != nil {
-			break
-		}
+	if broadcaster == nil {
+		return
+	}
+
+	data, err := json.Marshal(update)
+	if err == nil {
+		broadcaster(data)
 	}
 }
 
@@ -890,6 +878,31 @@ func (m *Manager) sampleMemPressure() float64 {
 		p = 1
 	}
 	return p
+}
+
+func (m *Manager) OnPeerJoin(nodeID, address string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.nodeMetrics == nil {
+		m.nodeMetrics = make(map[string]NodeMetrics)
+	}
+
+	m.nodeMetrics[nodeID] = NodeMetrics{
+		NodeID:      nodeID,
+		LastUpdated: time.Now(),
+		Available:   true,
+	}
+
+	m.logger.Info("peer joined cluster", "node_id", nodeID, "address", address)
+}
+
+func (m *Manager) OnPeerLeave(nodeID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	delete(m.nodeMetrics, nodeID)
+	m.logger.Info("peer left cluster", "node_id", nodeID)
 }
 
 func parseBytes(s string) (uint64, bool) {

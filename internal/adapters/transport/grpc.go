@@ -2,36 +2,25 @@ package transport
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"log/slog"
 	"net"
 	"time"
 
 	"github.com/eleven-am/graft/internal/domain"
-	"google.golang.org/grpc/credentials"
-	"google.golang.org/grpc/credentials/insecure"
-
-	"crypto/tls"
-	"crypto/x509"
-	"os"
-
-	"github.com/eleven-am/graft/internal/helpers/netutil"
 	"github.com/eleven-am/graft/internal/ports"
 	pb "github.com/eleven-am/graft/internal/proto"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials"
+	"google.golang.org/grpc/credentials/insecure"
 )
 
 type GRPCTransport struct {
 	pb.UnimplementedGraftNodeServer
-	logger   *slog.Logger
-	server   *grpc.Server
-	engine   ports.EnginePort
-	raft     ports.RaftNode
-	loadSink ports.LoadSink
-
-	address    string
-	port       int
-	registrars []func(*grpc.Server)
+	logger *slog.Logger
+	engine ports.EnginePort
+	raft   ports.RaftNode
 
 	cfg domain.TransportConfig
 }
@@ -47,95 +36,6 @@ func NewGRPCTransport(logger *slog.Logger, cfg domain.TransportConfig) *GRPCTran
 	}
 }
 
-func (t *GRPCTransport) Start(ctx context.Context, bindAddr string, port int) error {
-	host, _, err := net.SplitHostPort(bindAddr)
-	if err != nil {
-		host = bindAddr
-	}
-
-	t.address = host
-
-	listener, actualPort, err := netutil.ListenTCP(host, port)
-	if err != nil {
-		return err
-	}
-	cleanupListener := true
-	defer func() {
-		if cleanupListener {
-			_ = listener.Close()
-		}
-	}()
-	t.port = actualPort
-
-	serverOpts := []grpc.ServerOption{}
-	if t.cfg.MaxMessageSizeMB > 0 {
-		bytes := t.cfg.MaxMessageSizeMB * 1024 * 1024
-		serverOpts = append(serverOpts, grpc.MaxRecvMsgSize(bytes), grpc.MaxSendMsgSize(bytes))
-	}
-	if t.cfg.EnableTLS && t.cfg.TLSCertFile != "" && t.cfg.TLSKeyFile != "" {
-		cert, err := tls.LoadX509KeyPair(t.cfg.TLSCertFile, t.cfg.TLSKeyFile)
-		if err != nil {
-			return newTransportConfigError(
-				"failed to load TLS certificates",
-				err,
-				domain.WithContextDetail("cert_file", t.cfg.TLSCertFile),
-				domain.WithContextDetail("key_file", t.cfg.TLSKeyFile),
-			)
-		}
-		tlsCfg := &tls.Config{Certificates: []tls.Certificate{cert}}
-		if t.cfg.TLSCAFile != "" {
-			caPem, err := os.ReadFile(t.cfg.TLSCAFile)
-			if err != nil {
-				return newTransportConfigError(
-					"failed to read TLS CA bundle",
-					err,
-					domain.WithContextDetail("ca_file", t.cfg.TLSCAFile),
-				)
-			}
-			pool := x509.NewCertPool()
-			if !pool.AppendCertsFromPEM(caPem) {
-				return newTransportConfigError(
-					"failed to parse TLS CA bundle",
-					fmt.Errorf("no certificates found"),
-					domain.WithContextDetail("ca_file", t.cfg.TLSCAFile),
-				)
-			}
-			tlsCfg.ClientCAs = pool
-			tlsCfg.ClientAuth = tls.RequireAndVerifyClientCert
-		}
-		serverOpts = append(serverOpts, grpc.Creds(credentials.NewTLS(tlsCfg)))
-	}
-
-	t.server = grpc.NewServer(serverOpts...)
-	pb.RegisterGraftNodeServer(t.server, t)
-
-	for _, registrar := range t.registrars {
-		registrar(t.server)
-	}
-
-	actualAddr := listener.Addr().String()
-	t.logger.Info("starting gRPC transport", "address", actualAddr)
-
-	cleanupListener = false
-	go func() {
-		if err := t.server.Serve(listener); err != nil {
-			t.logger.Error("gRPC server error", "error", err)
-		}
-	}()
-
-	return nil
-}
-
-func (t *GRPCTransport) Stop() error {
-	t.logger.Info("stopping gRPC transport")
-
-	if t.server != nil {
-		t.server.GracefulStop()
-	}
-
-	return nil
-}
-
 func (t *GRPCTransport) RegisterEngine(engine ports.EnginePort) {
 	t.engine = engine
 }
@@ -144,12 +44,8 @@ func (t *GRPCTransport) RegisterRaft(raft ports.RaftNode) {
 	t.raft = raft
 }
 
-func (t *GRPCTransport) RegisterLoadSink(sink ports.LoadSink) {
-	t.loadSink = sink
-}
-
-func (t *GRPCTransport) RegisterService(registrar func(*grpc.Server)) {
-	t.registrars = append(t.registrars, registrar)
+func (t *GRPCTransport) RegisterWithServer(server grpc.ServiceRegistrar) {
+	pb.RegisterGraftNodeServer(server, t)
 }
 
 func (t *GRPCTransport) ProcessTrigger(ctx context.Context, req *pb.TriggerRequest) (*pb.TriggerResponse, error) {
@@ -411,49 +307,6 @@ func (t *GRPCTransport) ApplyCommand(ctx context.Context, req *pb.ApplyRequest) 
 	}, nil
 }
 
-func (t *GRPCTransport) PublishLoad(ctx context.Context, req *pb.LoadUpdate) (*pb.Ack, error) {
-	if req.NodeId == "" {
-		return &pb.Ack{Ok: false, Message: "node_id is required"}, nil
-	}
-
-	if t.loadSink == nil {
-		return &pb.Ack{Ok: false, Message: "no sink registered"}, nil
-	}
-
-	pressure := clampFloat(req.Pressure, 0.0, 2.0)
-	if pressure == 0 {
-
-		pressure = clampFloat(req.Capacity, 0.0, 2.0)
-	}
-
-	update := ports.LoadUpdate{
-		NodeID:          req.NodeId,
-		ActiveWorkflows: int(req.ActiveWorkflows),
-		TotalWeight:     req.TotalWeight,
-		RecentLatencyMs: req.RecentLatencyMs,
-		RecentErrorRate: clampFloat(req.RecentErrorRate, 0.0, 1.0),
-		Pressure:        pressure,
-		Timestamp:       req.Timestamp,
-	}
-
-	if update.TotalWeight < 0 {
-		update.TotalWeight = 0
-	}
-	if update.RecentLatencyMs < 0 {
-		update.RecentLatencyMs = 0
-	}
-
-	err := t.loadSink.ReceiveLoadUpdate(update)
-	if err != nil {
-		t.logger.Error("failed to process load update",
-			"node_id", req.NodeId,
-			"error", err)
-		return &pb.Ack{Ok: false, Message: err.Error()}, nil
-	}
-
-	return &pb.Ack{Ok: true}, nil
-}
-
 func (t *GRPCTransport) SendApplyCommand(ctx context.Context, nodeAddr string, cmd *domain.Command) (*domain.CommandResult, string, error) {
 	cmdBytes, err := cmd.Marshal()
 	if err != nil {
@@ -503,68 +356,6 @@ func (t *GRPCTransport) SendApplyCommand(ctx context.Context, nodeAddr string, c
 	}
 
 	return nil, "", domain.ErrConnection
-}
-
-func (t *GRPCTransport) SendPublishLoad(ctx context.Context, nodeAddr string, update ports.LoadUpdate) error {
-	conn, err := t.getConnection(ctx, nodeAddr)
-	if err != nil {
-		return domain.ErrConnection
-	}
-	defer conn.Close()
-
-	client := pb.NewGraftNodeClient(conn)
-
-	req := &pb.LoadUpdate{
-		NodeId:          update.NodeID,
-		ActiveWorkflows: int32(update.ActiveWorkflows),
-		TotalWeight:     update.TotalWeight,
-		RecentLatencyMs: update.RecentLatencyMs,
-		RecentErrorRate: update.RecentErrorRate,
-		Pressure:        update.Pressure,
-
-		Capacity:  update.Pressure,
-		Timestamp: update.Timestamp,
-	}
-
-	timeoutCtx := ctx
-	if t.cfg.ConnectionTimeout > 0 {
-		var cancel context.CancelFunc
-		timeoutCtx, cancel = context.WithTimeout(ctx, t.cfg.ConnectionTimeout)
-		defer cancel()
-	} else {
-		var cancel context.CancelFunc
-		timeoutCtx, cancel = context.WithTimeout(ctx, 500*time.Millisecond)
-		defer cancel()
-	}
-
-	resp, err := client.PublishLoad(timeoutCtx, req)
-	if err != nil {
-		return domain.ErrTimeout
-	}
-
-	if !resp.Ok {
-		t.logger.Debug("load update rejected",
-			"node_addr", nodeAddr,
-			"message", resp.Message)
-		return newTransportResourceError(
-			"load update rejected",
-			nil,
-			domain.WithContextDetail("node_addr", nodeAddr),
-			domain.WithContextDetail("message", resp.Message),
-		)
-	}
-
-	return nil
-}
-
-func clampFloat(value, min, max float64) float64 {
-	if value < min {
-		return min
-	}
-	if value > max {
-		return max
-	}
-	return value
 }
 
 func (t *GRPCTransport) GetLeaderInfo(ctx context.Context, peerAddr string) (leaderID, leaderAddr string, err error) {

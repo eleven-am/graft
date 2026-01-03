@@ -2,7 +2,7 @@ package load_balancer
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"testing"
@@ -14,7 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestManagerPublishLocalMetricsUsesManagedContext(t *testing.T) {
+func TestManagerPublishLocalMetricsUsesBroadcaster(t *testing.T) {
 	events := &mocks.MockEventManager{}
 	events.On("OnNodeStarted", mock.Anything).Return(nil)
 	events.On("OnNodeCompleted", mock.Anything).Return(nil)
@@ -26,38 +26,30 @@ func TestManagerPublishLocalMetricsUsesManagedContext(t *testing.T) {
 	mgr.totalWeight = 1
 	mgr.recentLatencyMs = 25
 	mgr.pressureFn = func() float64 { return 0.5 }
-
-	tp := mocks.NewMockTransportPort(t)
-	defer tp.AssertExpectations(t)
-	mgr.transport = tp
-	mgr.getPeerAddrs = func() []string { return []string{"addr1", "addr2"} }
 	mgr.ctx, mgr.cancel = context.WithCancel(context.Background())
 
-	calls := 0
-	tp.EXPECT().SendPublishLoad(mock.Anything, "addr1", mock.Anything).Run(func(ctx context.Context, _ string, _ ports.LoadUpdate) {
-		calls++
-		deadline, ok := ctx.Deadline()
-		if !ok {
-			t.Fatalf("expected context with deadline")
-		}
-		remaining := time.Until(deadline)
-		if remaining <= 0 || remaining > time.Second {
-			t.Fatalf("unexpected timeout window: %v", remaining)
-		}
-	}).Return(errors.New("send failed"))
-	tp.EXPECT().SendPublishLoad(mock.Anything, "addr2", mock.Anything).Run(func(ctx context.Context, _ string, _ ports.LoadUpdate) {
-		calls++
-		if ctx.Err() != nil {
-			t.Fatalf("expected active context for second publish")
-		}
-	}).Return(nil)
+	var broadcasted []byte
+	mgr.broadcaster = func(msg []byte) {
+		broadcasted = msg
+	}
 
 	mgr.publishLocalMetrics()
-	require.Equal(t, 2, calls)
+
+	require.NotNil(t, broadcasted, "expected broadcaster to be called")
+
+	var update ports.LoadUpdate
+	err := json.Unmarshal(broadcasted, &update)
+	require.NoError(t, err)
+	require.Equal(t, "node-a", update.NodeID)
+	require.Equal(t, 1, update.ActiveWorkflows)
+	require.InDelta(t, 1.0, update.TotalWeight, 0.0001)
+	require.InDelta(t, 25.0, update.RecentLatencyMs, 0.0001)
+	require.InDelta(t, 0.5, update.Pressure, 0.0001)
 
 	mgr.cancel()
+	broadcasted = nil
 	mgr.publishLocalMetrics()
-	require.Equal(t, 2, calls, "no additional publishes expected after cancellation")
+	require.Nil(t, broadcasted, "no broadcast expected after context cancellation")
 }
 
 func TestManagerConvertToNodeMetrics(t *testing.T) {
