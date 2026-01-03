@@ -418,16 +418,30 @@ func (f *FSM) Restore(rc io.ReadCloser) error {
 		return err
 	}
 
-	if err := f.db.Update(func(txn *badger.Txn) error {
-		for key, value := range snapshot.Data {
-			if err := txn.Set([]byte(key), value); err != nil {
-				return err
-			}
+	keys := make([]string, 0, len(snapshot.Data))
+	for k := range snapshot.Data {
+		keys = append(keys, k)
+	}
+
+	const batchSize = 1000
+	for i := 0; i < len(keys); i += batchSize {
+		end := i + batchSize
+		if end > len(keys) {
+			end = len(keys)
 		}
-		return nil
-	}); err != nil {
-		f.logger.Error("failed to restore FSM data", "error", err)
-		return err
+		batch := keys[i:end]
+
+		if err := f.db.Update(func(txn *badger.Txn) error {
+			for _, key := range batch {
+				if err := txn.Set([]byte(key), snapshot.Data[key]); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			f.logger.Error("failed to restore FSM data batch", "error", err, "batch_start", i, "batch_end", end)
+			return err
+		}
 	}
 
 	f.logger.Info("FSM restore completed", "keys_restored", len(snapshot.Data), "versions_restored", len(snapshot.Versions))
