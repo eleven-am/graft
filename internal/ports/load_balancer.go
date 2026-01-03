@@ -15,6 +15,9 @@ type LoadBalancer interface {
 	StopDraining() error
 	IsDraining() bool
 	WaitForDraining(ctx context.Context) error
+
+	SetPeerAddrProvider(provider func() []string)
+	SetTransport(tp TransportPort)
 }
 
 type LoadSink interface {

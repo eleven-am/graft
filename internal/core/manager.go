@@ -222,35 +222,13 @@ func NewWithConfig(config *domain.Config) *Manager {
 
 	raftAdapter.SetEventManager(eventManager)
 
-	if s, ok := appStorage.(interface{ SetEventManager(ports.EventManager) }); ok {
-		s.SetEventManager(eventManager)
-	}
+	appStorage.SetEventManager(eventManager)
 
 	nodeRegistryManager := prov.newNodeRegistry(logger)
 	connectorRegistryManager := prov.newConnectorRegistry(logger)
 
 	loadBalancerManager := prov.newLoadBalancer(eventManager, config.NodeID, nil, nil, logger)
-
-	if lb, ok := loadBalancerManager.(interface {
-		SetTransport(ports.TransportPort)
-		SetPeerAddrProvider(func() []string)
-	}); ok {
-		lb.SetTransport(appTransport)
-		lb.SetPeerAddrProvider(func() []string {
-			if raftAdapter == nil {
-				return nil
-			}
-			clusterInfo := raftAdapter.GetClusterInfo()
-			addrs := make([]string, 0, len(clusterInfo.Members))
-			for _, member := range clusterInfo.Members {
-				if member.ID == config.NodeID {
-					continue
-				}
-				addrs = append(addrs, member.Address)
-			}
-			return addrs
-		})
-	}
+	loadBalancerManager.SetTransport(appTransport)
 	cleanup = append(cleanup, func() error {
 		if loadBalancerManager != nil {
 			return loadBalancerManager.Stop()
@@ -329,6 +307,25 @@ func (m *Manager) Start(ctx context.Context, grpcPort int) error {
 	if err := m.startBootstrap(ctx, grpcPort); err != nil {
 		return err
 	}
+
+	m.loadBalancer.SetPeerAddrProvider(func() []string {
+		if m.raftAdapter == nil {
+			return nil
+		}
+		clusterInfo := m.raftAdapter.GetClusterInfo()
+		addrs := make([]string, 0, len(clusterInfo.Members))
+		for _, member := range clusterInfo.Members {
+			if member.ID == m.nodeID {
+				continue
+			}
+			host, _, err := net.SplitHostPort(member.Address)
+			if err != nil {
+				continue
+			}
+			addrs = append(addrs, net.JoinHostPort(host, strconv.Itoa(m.grpcPort)))
+		}
+		return addrs
+	})
 
 	if err := m.loadBalancer.Start(m.ctx); err != nil {
 		return domain.NewDomainErrorWithCategory(

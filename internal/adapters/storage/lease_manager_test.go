@@ -81,8 +81,9 @@ func (m *memoryStorage) CleanExpired() (int, error)           { panic("not imple
 func (m *memoryStorage) RunInTransaction(func(tx ports.Transaction) error) error {
 	return errors.New("not implemented")
 }
-func (m *memoryStorage) SetRaftNode(ports.RaftNode) {}
-func (m *memoryStorage) Close() error               { return nil }
+func (m *memoryStorage) SetRaftNode(ports.RaftNode)         {}
+func (m *memoryStorage) SetEventManager(ports.EventManager) {}
+func (m *memoryStorage) Close() error                       { return nil }
 
 func TestLeaseManagerTryAcquire(t *testing.T) {
 	storage := newMemoryStorage()

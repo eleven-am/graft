@@ -32,6 +32,7 @@ type StoragePort interface {
 	RunInTransaction(fn func(tx Transaction) error) error
 
 	SetRaftNode(node RaftNode)
+	SetEventManager(ev EventManager)
 	Close() error
 }
 

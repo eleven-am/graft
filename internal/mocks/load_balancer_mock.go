@@ -5,6 +5,7 @@ package mocks
 import (
 	context "context"
 
+	ports "github.com/eleven-am/graft/internal/ports"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -156,6 +157,72 @@ func (_c *MockLoadBalancer_RegisterConnectorLoad_Call) Return(_a0 error) *MockLo
 
 func (_c *MockLoadBalancer_RegisterConnectorLoad_Call) RunAndReturn(run func(string, float64) error) *MockLoadBalancer_RegisterConnectorLoad_Call {
 	_c.Call.Return(run)
+	return _c
+}
+
+// SetPeerAddrProvider provides a mock function with given fields: provider
+func (_m *MockLoadBalancer) SetPeerAddrProvider(provider func() []string) {
+	_m.Called(provider)
+}
+
+// MockLoadBalancer_SetPeerAddrProvider_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetPeerAddrProvider'
+type MockLoadBalancer_SetPeerAddrProvider_Call struct {
+	*mock.Call
+}
+
+// SetPeerAddrProvider is a helper method to define mock.On call
+//   - provider func() []string
+func (_e *MockLoadBalancer_Expecter) SetPeerAddrProvider(provider interface{}) *MockLoadBalancer_SetPeerAddrProvider_Call {
+	return &MockLoadBalancer_SetPeerAddrProvider_Call{Call: _e.mock.On("SetPeerAddrProvider", provider)}
+}
+
+func (_c *MockLoadBalancer_SetPeerAddrProvider_Call) Run(run func(provider func() []string)) *MockLoadBalancer_SetPeerAddrProvider_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(func() []string))
+	})
+	return _c
+}
+
+func (_c *MockLoadBalancer_SetPeerAddrProvider_Call) Return() *MockLoadBalancer_SetPeerAddrProvider_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockLoadBalancer_SetPeerAddrProvider_Call) RunAndReturn(run func(func() []string)) *MockLoadBalancer_SetPeerAddrProvider_Call {
+	_c.Run(run)
+	return _c
+}
+
+// SetTransport provides a mock function with given fields: tp
+func (_m *MockLoadBalancer) SetTransport(tp ports.TransportPort) {
+	_m.Called(tp)
+}
+
+// MockLoadBalancer_SetTransport_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetTransport'
+type MockLoadBalancer_SetTransport_Call struct {
+	*mock.Call
+}
+
+// SetTransport is a helper method to define mock.On call
+//   - tp ports.TransportPort
+func (_e *MockLoadBalancer_Expecter) SetTransport(tp interface{}) *MockLoadBalancer_SetTransport_Call {
+	return &MockLoadBalancer_SetTransport_Call{Call: _e.mock.On("SetTransport", tp)}
+}
+
+func (_c *MockLoadBalancer_SetTransport_Call) Run(run func(tp ports.TransportPort)) *MockLoadBalancer_SetTransport_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(ports.TransportPort))
+	})
+	return _c
+}
+
+func (_c *MockLoadBalancer_SetTransport_Call) Return() *MockLoadBalancer_SetTransport_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockLoadBalancer_SetTransport_Call) RunAndReturn(run func(ports.TransportPort)) *MockLoadBalancer_SetTransport_Call {
+	_c.Run(run)
 	return _c
 }
 

@@ -96,9 +96,7 @@ func (e *Engine) Start(ctx context.Context) error {
 	e.logger.Info("starting workflow engine", "worker_count", e.config.WorkerCount)
 
 	e.ctx, e.cancel = context.WithCancel(ctx)
-	if starter, ok := e.queue.(interface{ Start(context.Context) error }); ok {
-		_ = starter.Start(e.ctx)
-	}
+	_ = e.queue.Start(e.ctx)
 	for i := 0; i < e.config.WorkerCount; i++ {
 		e.wg.Add(1)
 		go e.processWork()

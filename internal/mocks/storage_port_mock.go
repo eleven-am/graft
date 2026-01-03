@@ -1073,6 +1073,39 @@ func (_c *MockStoragePort_RunInTransaction_Call) RunAndReturn(run func(func(port
 	return _c
 }
 
+// SetEventManager provides a mock function with given fields: ev
+func (_m *MockStoragePort) SetEventManager(ev ports.EventManager) {
+	_m.Called(ev)
+}
+
+// MockStoragePort_SetEventManager_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetEventManager'
+type MockStoragePort_SetEventManager_Call struct {
+	*mock.Call
+}
+
+// SetEventManager is a helper method to define mock.On call
+//   - ev ports.EventManager
+func (_e *MockStoragePort_Expecter) SetEventManager(ev interface{}) *MockStoragePort_SetEventManager_Call {
+	return &MockStoragePort_SetEventManager_Call{Call: _e.mock.On("SetEventManager", ev)}
+}
+
+func (_c *MockStoragePort_SetEventManager_Call) Run(run func(ev ports.EventManager)) *MockStoragePort_SetEventManager_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		run(args[0].(ports.EventManager))
+	})
+	return _c
+}
+
+func (_c *MockStoragePort_SetEventManager_Call) Return() *MockStoragePort_SetEventManager_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockStoragePort_SetEventManager_Call) RunAndReturn(run func(ports.EventManager)) *MockStoragePort_SetEventManager_Call {
+	_c.Run(run)
+	return _c
+}
+
 // SetRaftNode provides a mock function with given fields: node
 func (_m *MockStoragePort) SetRaftNode(node ports.RaftNode) {
 	_m.Called(node)

@@ -8,6 +8,7 @@ import (
 )
 
 type QueuePort interface {
+	Start(ctx context.Context) error
 	Enqueue(item []byte) error
 	Peek() (item []byte, exists bool, err error)
 	Claim() (item []byte, claimID string, exists bool, err error)
