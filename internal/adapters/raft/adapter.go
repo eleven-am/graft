@@ -174,6 +174,13 @@ func (a *Adapter) Apply(cmd domain.Command, timeout time.Duration) (*domain.Comm
 		return result, nil
 	}
 
+	if data, ok := resp.([]byte); ok && len(data) > 0 {
+		var result domain.CommandResult
+		if err := json.Unmarshal(data, &result); err == nil {
+			return &result, nil
+		}
+	}
+
 	return &domain.CommandResult{Success: false, Error: "unexpected response type"}, nil
 }
 
