@@ -305,22 +305,22 @@ func (q *Queue) Release(claimID string) error {
 		return err
 	}
 
-	type workItemMeta struct {
-		ProcessAfter time.Time `json:"process_after"`
-		Deferrals    int       `json:"deferrals,omitempty"`
-	}
-
-	var meta workItemMeta
+	var itemData map[string]interface{}
 	updatedData := claimedItem.Data
-	if err := json.Unmarshal(claimedItem.Data, &meta); err == nil {
-		meta.Deferrals++
+	if err := json.Unmarshal(claimedItem.Data, &itemData); err == nil {
+		deferrals := 0
+		if d, ok := itemData["deferrals"].(float64); ok {
+			deferrals = int(d)
+		}
+		deferrals++
+
 		const deferralLimit = 10
-		if meta.Deferrals >= deferralLimit {
+		if deferrals >= deferralLimit {
 			seq, seqErr := q.getNextDeadLetterSequence()
 			if seqErr != nil {
 				return seqErr
 			}
-			dlqItem := domain.NewDeadLetterQueueItem(claimedItem.Data, fmt.Sprintf("exceeded deferrals (%d)", deferralLimit), meta.Deferrals, seq)
+			dlqItem := domain.NewDeadLetterQueueItem(claimedItem.Data, fmt.Sprintf("exceeded deferrals (%d)", deferralLimit), deferrals, seq)
 			dlqBytes, encErr := dlqItem.ToBytes()
 			if encErr != nil {
 				return encErr
@@ -339,8 +339,9 @@ func (q *Queue) Release(claimID string) error {
 		}
 
 		delay := 50*time.Millisecond + time.Duration(rand.Intn(150))*time.Millisecond
-		meta.ProcessAfter = time.Now().Add(delay)
-		if newBytes, encErr := json.Marshal(meta); encErr == nil {
+		itemData["deferrals"] = deferrals
+		itemData["process_after"] = time.Now().Add(delay)
+		if newBytes, encErr := json.Marshal(itemData); encErr == nil {
 			updatedData = newBytes
 		}
 	}
