@@ -38,7 +38,7 @@ func DefaultTransportConfig() TransportConfig {
 func DefaultRaftConfig() RaftConfig {
 	return RaftConfig{
 		SnapshotInterval:   120 * time.Second,
-		SnapshotThreshold:  1024,
+		SnapshotThreshold:  32768,
 		MaxSnapshots:       5,
 		MaxJoinAttempts:    10,
 		HeartbeatTimeout:   1000 * time.Millisecond,
@@ -46,7 +46,7 @@ func DefaultRaftConfig() RaftConfig {
 		CommitTimeout:      500 * time.Millisecond,
 		MaxAppendEntries:   64,
 		ShutdownOnRemove:   true,
-		TrailingLogs:       10240,
+		TrailingLogs:       20480,
 		LeaderLeaseTimeout: 500 * time.Millisecond,
 
 		DiscoveryTimeout: 30 * time.Second,

@@ -42,7 +42,7 @@ func DefaultRaftConfig(nodeID, clusterID, bindAddr, advertiseAddr, dataDir strin
 		DataDir:            dataDir,
 		ClusterPolicy:      clusterPolicy,
 		SnapshotInterval:   120 * time.Second,
-		SnapshotThreshold:  1024,
+		SnapshotThreshold:  32768,
 		MaxSnapshots:       5,
 		MaxJoinAttempts:    5,
 		HeartbeatTimeout:   1000 * time.Millisecond,
@@ -50,7 +50,7 @@ func DefaultRaftConfig(nodeID, clusterID, bindAddr, advertiseAddr, dataDir strin
 		CommitTimeout:      500 * time.Millisecond,
 		MaxAppendEntries:   64,
 		ShutdownOnRemove:   true,
-		TrailingLogs:       10240,
+		TrailingLogs:       20480,
 		LeaderLeaseTimeout: 500 * time.Millisecond,
 	}
 }
