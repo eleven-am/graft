@@ -257,6 +257,99 @@ type logCompat struct {
 	raft.LogStore
 }
 
+const batchDeleteSize = 5000
+
+func (l logCompat) DeleteRange(min, max uint64) error {
+	type badgerStore interface {
+		GetDB() *badger.DB
+	}
+
+	store, ok := l.LogStore.(badgerStore)
+	if !ok {
+		return l.LogStore.DeleteRange(min, max)
+	}
+
+	db := store.GetDB()
+	if db == nil {
+		return l.LogStore.DeleteRange(min, max)
+	}
+
+	prefixDBLogs := []byte("logs-")
+
+	buildLogsKey := func(idx uint64) []byte {
+		bs := append([]byte{}, prefixDBLogs...)
+		b := make([]byte, 8)
+		b[0] = byte(idx >> 56)
+		b[1] = byte(idx >> 48)
+		b[2] = byte(idx >> 40)
+		b[3] = byte(idx >> 32)
+		b[4] = byte(idx >> 24)
+		b[5] = byte(idx >> 16)
+		b[6] = byte(idx >> 8)
+		b[7] = byte(idx)
+		return append(bs, b...)
+	}
+
+	parseIndexByLogsKey := func(key []byte) uint64 {
+		rawkey := key[len(prefixDBLogs):]
+		if len(rawkey) < 8 {
+			return 0
+		}
+		return uint64(rawkey[0])<<56 | uint64(rawkey[1])<<48 |
+			uint64(rawkey[2])<<40 | uint64(rawkey[3])<<32 |
+			uint64(rawkey[4])<<24 | uint64(rawkey[5])<<16 |
+			uint64(rawkey[6])<<8 | uint64(rawkey[7])
+	}
+
+	for {
+		var keysToDelete [][]byte
+
+		err := db.View(func(txn *badger.Txn) error {
+			iter := txn.NewIterator(badger.DefaultIteratorOptions)
+			defer iter.Close()
+
+			minKey := buildLogsKey(min)
+			for iter.Seek(minKey); iter.ValidForPrefix(prefixDBLogs); iter.Next() {
+				item := iter.Item()
+				idx := parseIndexByLogsKey(item.Key())
+				if idx > max {
+					break
+				}
+				keysToDelete = append(keysToDelete, item.KeyCopy(nil))
+				if len(keysToDelete) >= batchDeleteSize {
+					break
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+
+		if len(keysToDelete) == 0 {
+			break
+		}
+
+		err = db.Update(func(txn *badger.Txn) error {
+			for _, key := range keysToDelete {
+				if err := txn.Delete(key); err != nil {
+					return err
+				}
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+
+		if len(keysToDelete) < batchDeleteSize {
+			break
+		}
+	}
+
+	return nil
+}
+
 func (l logCompat) GetLog(index uint64, out *raft.Log) error {
 	if err := l.LogStore.GetLog(index, out); isNotFound(err) {
 		return raft.ErrLogNotFound
