@@ -145,6 +145,20 @@ func setupAggressiveEngine(t *testing.T) (*Engine, *TestNodeRegistry, func()) {
 						if err := txn.Delete([]byte(op.Key)); err != nil {
 							return err
 						}
+					case domain.CommandDeleteIfExists:
+						_, err := txn.Get([]byte(op.Key))
+						if err != nil {
+							if err == badger.ErrKeyNotFound {
+								result.Success = false
+								result.Error = "key not found"
+								result.BatchResults = append(result.BatchResults, domain.Result{Key: op.Key, Success: false, Error: "key not found"})
+								return fmt.Errorf("key not found: %s", op.Key)
+							}
+							return err
+						}
+						if err := txn.Delete([]byte(op.Key)); err != nil {
+							return err
+						}
 					}
 				}
 				return nil
