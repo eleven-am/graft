@@ -313,7 +313,7 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 		pressure float64
 	}
 
-	const defaultRemotePressure = 0.5
+	localPressure := m.collectLocalPressure()
 
 	cands := make([]candidate, 0, len(filteredLoad))
 	for id, load := range filteredLoad {
@@ -321,7 +321,7 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 			continue
 		}
 		active := int(load.TotalWeight)
-		c := candidate{id: id, active: active, pressure: defaultRemotePressure}
+		c := candidate{id: id, active: active, pressure: localPressure}
 
 		if id != m.nodeID {
 			m.mu.RLock()
@@ -329,8 +329,6 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 				c.pressure = nm.Pressure
 			}
 			m.mu.RUnlock()
-		} else {
-			c.pressure = 0
 		}
 		cands = append(cands, c)
 	}
@@ -338,8 +336,6 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 	if len(cands) == 0 {
 		return m.handleFailurePolicy("no candidates available", nil), nil
 	}
-
-	localPressure := m.collectLocalPressure()
 
 	minActive := math.MaxInt32
 	for _, c := range cands {
@@ -351,9 +347,6 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 	winners := make([]candidate, 0, len(cands))
 	for _, c := range cands {
 		if c.active == minActive {
-			if c.id == m.nodeID {
-				c.pressure = localPressure
-			}
 			winners = append(winners, c)
 		}
 	}
