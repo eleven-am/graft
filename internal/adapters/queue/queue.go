@@ -222,11 +222,18 @@ func (q *Queue) Claim() (item []byte, claimID string, exists bool, err error) {
 
 			claimedKey := domain.QueueClaimedKey(q.name, claimID)
 			ops := []ports.WriteOp{
-				{Type: ports.OpDelete, Key: currentKey},
+				{Type: ports.OpDeleteIfExists, Key: currentKey},
 				{Type: ports.OpPut, Key: claimedKey, Value: claimedBytes},
 			}
 
 			if err := q.storage.BatchWrite(ops); err != nil {
+				if strings.Contains(err.Error(), "key not found") {
+					currentKey, value, itemExists, err = q.storage.GetNextAfter(prefix, currentKey)
+					if err != nil {
+						return nil, "", false, err
+					}
+					continue
+				}
 				return nil, "", false, err
 			}
 

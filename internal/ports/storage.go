@@ -78,4 +78,5 @@ const (
 	OpPut OpType = iota
 	OpDelete
 	OpExpire
+	OpDeleteIfExists
 )

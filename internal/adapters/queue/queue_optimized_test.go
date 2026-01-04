@@ -70,7 +70,7 @@ func TestQueue_OptimizedOperations(t *testing.T) {
 
 				mockStorage.On("BatchWrite", mock.MatchedBy(func(ops []ports.WriteOp) bool {
 					return len(ops) == 2 &&
-						ops[0].Type == ports.OpDelete &&
+						ops[0].Type == ports.OpDeleteIfExists &&
 						ops[1].Type == ports.OpPut
 				})).Return(nil).Once()
 			},

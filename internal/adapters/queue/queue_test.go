@@ -143,7 +143,7 @@ func TestQueue_Claim(t *testing.T) {
 		"queue:test:ready:00000000000000000001", itemBytes, true, nil).Once()
 	mockStorage.On("BatchWrite", mock.MatchedBy(func(ops []ports.WriteOp) bool {
 		return len(ops) == 2 &&
-			ops[0].Type == ports.OpDelete &&
+			ops[0].Type == ports.OpDeleteIfExists &&
 			ops[0].Key == "queue:test:ready:00000000000000000001" &&
 			ops[1].Type == ports.OpPut &&
 			len(ops[1].Key) > 0 &&
@@ -401,7 +401,7 @@ func TestQueue_ClaimSkipsDeferredBeyondLimit(t *testing.T) {
 		if len(ops) != 2 {
 			return false
 		}
-		return ops[0].Type == ports.OpDelete && ops[0].Key == keys[deferredCount] &&
+		return ops[0].Type == ports.OpDeleteIfExists && ops[0].Key == keys[deferredCount] &&
 			ops[1].Type == ports.OpPut
 	})).Return(nil).Once()
 
@@ -496,7 +496,7 @@ func TestQueue_EnqueueClaimComplete(t *testing.T) {
 		"queue:test:ready:00000000000000000001", itemBytes, true, nil).Once()
 
 	mockStorage.On("BatchWrite", mock.MatchedBy(func(ops []ports.WriteOp) bool {
-		return len(ops) == 2 && ops[0].Type == ports.OpDelete
+		return len(ops) == 2 && ops[0].Type == ports.OpDeleteIfExists
 	})).Return(nil).Once()
 
 	mockStorage.On("Delete", mock.AnythingOfType("string")).Return(nil).Once()

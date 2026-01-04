@@ -17,6 +17,7 @@ const (
 	CommandTypeAtomicIncrement
 	CommandTypeDev
 	CommandTypeNoop
+	CommandDeleteIfExists
 )
 
 type Command struct {
@@ -173,6 +174,8 @@ func (c CommandType) String() string {
 		return "DEV_COMMAND"
 	case CommandTypeNoop:
 		return "NOOP"
+	case CommandDeleteIfExists:
+		return "DELETE_IF_EXISTS"
 	default:
 		return "UNKNOWN"
 	}

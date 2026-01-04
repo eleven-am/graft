@@ -347,6 +347,26 @@ func (f *FSM) applyBatch(cmd domain.Command) *domain.CommandResult {
 				f.versions[op.Key] = newVersion
 				results = append(results, domain.Result{Key: op.Key, Success: true, Version: newVersion})
 				events = append(events, f.emitEvent(domain.EventCAS, op.Key, newVersion, cmd.RequestID))
+
+			case domain.CommandDeleteIfExists:
+				_, err := txn.Get([]byte(op.Key))
+				if err != nil {
+					if errors.Is(err, badger.ErrKeyNotFound) {
+						results = append(results, domain.Result{Key: op.Key, Success: false, Error: "key not found"})
+						continue
+					}
+					return err
+				}
+				versionKey := fmt.Sprintf("v:%s", op.Key)
+				if err := txn.Delete([]byte(op.Key)); err != nil {
+					return err
+				}
+				if err := txn.Delete([]byte(versionKey)); err != nil {
+					return err
+				}
+				delete(f.versions, op.Key)
+				results = append(results, domain.Result{Key: op.Key, Success: true})
+				events = append(events, domain.Event{Type: domain.EventDelete, Key: op.Key, NodeID: f.nodeID, Timestamp: time.Now(), RequestID: cmd.RequestID})
 			}
 		}
 		return nil

@@ -128,7 +128,7 @@ func TestQueue_ClaimedIndex_AddAndRemove(t *testing.T) {
 	).Once()
 
 	storage.On("BatchWrite", mock.MatchedBy(func(ops []ports.WriteOp) bool {
-		return len(ops) == 2 && ops[0].Type == ports.OpDelete && strings.HasPrefix(ops[1].Key, "queue:test:claimed:")
+		return len(ops) == 2 && ops[0].Type == ports.OpDeleteIfExists && strings.HasPrefix(ops[1].Key, "queue:test:claimed:")
 	})).Return(nil).Once()
 
 	_, claimID, exists, err := q.Claim()

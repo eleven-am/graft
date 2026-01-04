@@ -233,6 +233,11 @@ func (s *AppStorage) BatchWrite(ops []ports.WriteOp) error {
 				Type: domain.CommandDelete,
 				Key:  op.Key,
 			})
+		case ports.OpDeleteIfExists:
+			batchOps = append(batchOps, domain.BatchOp{
+				Type: domain.CommandDeleteIfExists,
+				Key:  op.Key,
+			})
 		default:
 			return domain.ErrInvalidInput
 		}
@@ -250,6 +255,14 @@ func (s *AppStorage) BatchWrite(ops []ports.WriteOp) error {
 
 	if !result.Success {
 		return errors.New(result.Error)
+	}
+
+	if result.BatchResults != nil {
+		for _, r := range result.BatchResults {
+			if !r.Success {
+				return fmt.Errorf("batch op failed for key %s: %s", r.Key, r.Error)
+			}
+		}
 	}
 
 	s.waitForVersionsAndBroadcast(result.Events)
