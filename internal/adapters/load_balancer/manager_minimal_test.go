@@ -55,6 +55,7 @@ func TestTieBreakLexOrder(t *testing.T) {
 	cfg := &Config{}
 
 	m := NewManager(events, "node-a", nil, cfg, nil)
+	m.pressureFn = func() float64 { return 0 }
 
 	m.executionUnits["wf-1"] = 1
 	m.totalWeight = 1
@@ -102,6 +103,7 @@ func TestConnectorLoadInfluencesScheduling(t *testing.T) {
 
 	cfg := &Config{}
 	m := NewManager(events, "node-a", nil, cfg, nil)
+	m.pressureFn = func() float64 { return 0 }
 
 	if err := m.RegisterConnectorLoad("conn-1", 1); err != nil {
 		t.Fatalf("unexpected error registering connector load: %v", err)

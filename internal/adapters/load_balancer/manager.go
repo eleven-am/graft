@@ -208,6 +208,7 @@ func (m *Manager) subscribeToEvents() error {
 }
 
 func (m *Manager) initializeNodeLoad() error {
+	_ = m.sampleCPUUsage()
 	return nil
 }
 
@@ -224,7 +225,7 @@ func (m *Manager) onNodeStarted(event *domain.NodeStartedEvent) {
 
 	m.mu.Unlock()
 
-	m.requestPublish()
+	go m.publishLocalMetrics()
 }
 
 func (m *Manager) onNodeCompleted(event *domain.NodeCompletedEvent) {
@@ -312,13 +313,15 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 		pressure float64
 	}
 
+	const defaultRemotePressure = 0.5
+
 	cands := make([]candidate, 0, len(filteredLoad))
 	for id, load := range filteredLoad {
 		if load == nil {
 			continue
 		}
 		active := int(load.TotalWeight)
-		c := candidate{id: id, active: active}
+		c := candidate{id: id, active: active, pressure: defaultRemotePressure}
 
 		if id != m.nodeID {
 			m.mu.RLock()
@@ -326,6 +329,8 @@ func (m *Manager) ShouldExecuteNode(nodeID string, workflowID string, nodeName s
 				c.pressure = nm.Pressure
 			}
 			m.mu.RUnlock()
+		} else {
+			c.pressure = 0
 		}
 		cands = append(cands, c)
 	}
@@ -858,26 +863,31 @@ func (m *Manager) sampleCPUUsage() float64 {
 	return usage
 }
 
-// sampleMemPressure estimates memory pressure using Alloc vs GOMEMLIMIT (bytes), if present.
 func (m *Manager) sampleMemPressure() float64 {
-	limitStr := os.Getenv("GOMEMLIMIT")
-	if limitStr == "" {
-		return 0
-	}
-	limitBytes, ok := parseBytes(limitStr)
-	if !ok || limitBytes == 0 {
-		return 0
-	}
 	var ms runtime.MemStats
 	runtime.ReadMemStats(&ms)
-	alloc := ms.Alloc
-	p := float64(alloc) / float64(limitBytes)
-	if p < 0 {
-		p = 0
-	} else if p > 1 {
-		p = 1
+
+	limitStr := os.Getenv("GOMEMLIMIT")
+	if limitStr != "" {
+		limitBytes, ok := parseBytes(limitStr)
+		if ok && limitBytes > 0 {
+			p := float64(ms.Alloc) / float64(limitBytes)
+			if p > 1 {
+				p = 1
+			}
+			return p
+		}
 	}
-	return p
+
+	if ms.Sys > 0 {
+		p := float64(ms.Alloc) / float64(ms.Sys)
+		if p > 1 {
+			p = 1
+		}
+		return p
+	}
+
+	return 0
 }
 
 func (m *Manager) OnPeerJoin(nodeID, address string) {
